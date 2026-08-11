@@ -1,122 +1,144 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { useEffect, useState } from "react";
+import { createPublicClient, http } from "viem";
+import { bsc } from "viem/chains";
 
-function App() {
-  const [count, setCount] = useState(0)
+const IDENTITY_REGISTRY_ADDRESS = "0xfA09B3397fAC75424422C4D28b1729E3D4f659D7";
 
-  return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+const IDENTITY_REGISTRY_ABI = [
+  { inputs: [], name: "totalSupply", outputs: [{ internalType: "uint256", name: "", type: "uint256" }], stateMutability: "view", type: "function" },
+  { inputs: [{ internalType: "uint256", name: "index", type: "uint256" }], name: "tokenByIndex", outputs: [{ internalType: "uint256", name: "", type: "uint256" }], stateMutability: "view", type: "function" },
+  { inputs: [{ internalType: "uint256", name: "tokenId", type: "uint256" }], name: "tokenURI", outputs: [{ internalType: "string", name: "", type: "string" }], stateMutability: "view", type: "function" },
+  { inputs: [{ internalType: "uint256", name: "tokenId", type: "uint256" }], name: "ownerOf", outputs: [{ internalType: "address", name: "", type: "address" }], stateMutability: "view", type: "function" },
+];
 
-      <div className="ticks"></div>
+const client = createPublicClient({ chain: bsc, transport: http("https://bsc-dataseed.binance.org") });
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+function shortAddr(addr) {
+  if (!addr) return "";
+  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
 
-export default App
+export default function App() {
+  const [status, setStatus] = useState("connecting");
+  const [totalAgents, setTotalAgents] = useState(null);
+  const [agents, setAgents] = useState([]);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    async function run() {
+      try {
+        setStatus("connecting");
+        const total = await client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "totalSupply" });
+        if (cancelled) return;
+        setTotalAgents(Number(total));
+        setStatus("loading");
+
+        const count = Number(total);
+        const sampleSize = Math.min(count, 12);
+        const results = [];
+
+        for (let i = 0; i < sampleSize; i++) {
+          const index = count - 1 - i;
+          try {
+            const tokenId = await client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "tokenByIndex", args: [BigInt(index)] });
+            const [uri, owner] = await Promise.all([
+              client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "tokenURI", args: [tokenId] }),
+              client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "ownerOf", args: [tokenId] }),
+            ]);
+            results.push({ agentId: tokenId.toString(), uri, owner });
+          } catch (innerErr) {
+            console.warn("Skipped agent at index", index, innerErr);
+          }
+          if (!cancelled) setAgents([...results]);
+        }
+        if (!cancelled) setStatus("ready");
+      } catch (err) {
+        console.error(err);
+        if (!cancelled) {
+          setErrorMsg(err.message || "Something went wrong reading the chain.");
+          setStatus("error");
+        }
+      }
+    }
+    run();
+    return () => { cancelled = true; };
+  }, []);
+
+  return (
+    <div style={styles.page}>
+      <header style={styles.header}>
+        <div style={styles.eyebrow}>BNB Smart Chain · Live Onchain Data</div>
+        <h1 style={styles.title}>Agent Registry</h1>
+        <p style={styles.subtitle}>Reading directly from the BRC8004 Identity Registry contract on BNB Chain mainnet. No mock data — every row below is a real registered agent.</p>
+      </header>
+
+      <section style={styles.statsRow}>
+        <div style={styles.statCard}>
+          <div style={styles.statLabel}>Total registered agents</div>
+          <div style={styles.statValue}>{totalAgents === null ? "—" : totalAgents.toLocaleString()}</div>
+        </div>
+        <div style={styles.statCard}>
+          <div style={styles.statLabel}>Status</div>
+          <div style={styles.statValue}><StatusPill status={status} /></div>
+        </div>
+        <div style={styles.statCard}>
+          <div style={styles.statLabel}>Contract</div>
+          <a style={styles.contractLink} href={`https://bscscan.com/address/${IDENTITY_REGISTRY_ADDRESS}`} target="_blank" rel="noreferrer">{shortAddr(IDENTITY_REGISTRY_ADDRESS)} ↗</a>
+        </div>
+      </section>
+
+      {status === "error" && <div style={styles.errorBox}>Couldn't read from the chain: {errorMsg}</div>}
+
+      <section style={styles.list}>
+        {agents.length === 0 && status !== "error" && <div style={styles.loadingRow}>Fetching agents from BNB Chain…</div>}
+        {agents.map((agent) => (
+          <div key={agent.agentId} style={styles.card}>
+            <div style={styles.cardTop}>
+              <span style={styles.agentId}>Agent #{agent.agentId}</span>
+              <a style={styles.ownerLink} href={`https://bscscan.com/address/${agent.owner}`} target="_blank" rel="noreferrer">Owner: {shortAddr(agent.owner)} ↗</a>
+            </div>
+            <div style={styles.uriRow}>
+              <span style={styles.uriLabel}>Registration file:</span>
+              <span style={styles.uriValue}>{agent.uri || "(empty)"}</span>
+            </div>
+          </div>
+        ))}
+      </section>
+    </div>
+  );
+}
+
+function StatusPill({ status }) {
+  const map = {
+    connecting: { text: "Connecting…", bg: "#3a3a2e", fg: "#e8d98a" },
+    loading: { text: "Loading agents…", bg: "#2e3a3a", fg: "#8adede" },
+    ready: { text: "Live", bg: "#1f3a2e", fg: "#7ee2a8" },
+    error: { text: "Error", bg: "#3a1f1f", fg: "#e88a8a" },
+  };
+  const s = map[status] || map.connecting;
+  return <span style={{ display: "inline-block", padding: "4px 10px", borderRadius: 999, fontSize: 13, fontWeight: 600, background: s.bg, color: s.fg }}>{s.text}</span>;
+}
+
+const styles = {
+  page: { minHeight: "100vh", background: "#0d0f10", color: "#e8e6e1", fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", padding: "48px 24px 80px" },
+  header: { maxWidth: 780, margin: "0 auto 40px" },
+  eyebrow: { fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: "#f0b90b", fontWeight: 700, marginBottom: 12 },
+  title: { fontSize: 40, fontWeight: 800, margin: "0 0 12px", letterSpacing: "-0.02em" },
+  subtitle: { fontSize: 16, lineHeight: 1.6, color: "#a3a09a", maxWidth: 560 },
+  statsRow: { maxWidth: 780, margin: "0 auto 32px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 },
+  statCard: { background: "#17191a", border: "1px solid #26282a", borderRadius: 12, padding: "16px 18px" },
+  statLabel: { fontSize: 12, color: "#7a776f", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" },
+  statValue: { fontSize: 22, fontWeight: 700 },
+  contractLink: { fontSize: 15, color: "#f0b90b", textDecoration: "none", fontWeight: 600 },
+  errorBox: { maxWidth: 780, margin: "0 auto 24px", background: "#2a1616", border: "1px solid #4a2323", color: "#f0a3a3", padding: "14px 18px", borderRadius: 10, fontSize: 14 },
+  list: { maxWidth: 780, margin: "0 auto", display: "flex", flexDirection: "column", gap: 10 },
+  loadingRow: { color: "#7a776f", fontSize: 14, padding: "20px 0" },
+  card: { background: "#17191a", border: "1px solid #26282a", borderRadius: 12, padding: "16px 18px" },
+  cardTop: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 },
+  agentId: { fontWeight: 700, fontSize: 15 },
+  ownerLink: { fontSize: 13, color: "#8a8880", textDecoration: "none" },
+  uriRow: { display: "flex", gap: 8, fontSize: 13, color: "#a3a09a", wordBreak: "break-all" },
+  uriLabel: { color: "#5f5d57", flexShrink: 0 },
+  uriValue: { color: "#c9c6bf" },
+};
