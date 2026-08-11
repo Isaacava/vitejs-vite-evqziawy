@@ -52,7 +52,7 @@ export default function App() {
         setStatus("connecting");
         log("Step 1: requesting totalSupply…");
         const total = await withTimeout(
-          client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "totalSupply" }),
+          client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "totalSupply" }) as Promise<bigint>,
           8000,
           "totalSupply"
         );
@@ -69,7 +69,7 @@ export default function App() {
         const tokenIds = await Promise.all(
           indexes.map((index) =>
             withTimeout(
-              client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "tokenByIndex", args: [BigInt(index)] }),
+              client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "tokenByIndex", args: [BigInt(index)] }) as Promise<bigint>,
               8000,
               `tokenByIndex(${index})`
             ).catch((e) => {
@@ -87,8 +87,8 @@ export default function App() {
           validTokenIds.map(async (tokenId) => {
             try {
               const [uri, owner] = await Promise.all([
-                withTimeout(client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "tokenURI", args: [tokenId] }), 8000, `tokenURI(${tokenId})`),
-                withTimeout(client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "ownerOf", args: [tokenId] }), 8000, `ownerOf(${tokenId})`),
+                withTimeout(client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "tokenURI", args: [tokenId] }) as Promise<string>, 8000, `tokenURI(${tokenId})`),
+                withTimeout(client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "ownerOf", args: [tokenId] }) as Promise<Address>, 8000, `ownerOf(${tokenId})`),
               ]);
               return { agentId: tokenId.toString(), uri: uri as string, owner: owner as Address } as Agent;
             } catch (e) {
