@@ -14,11 +14,14 @@ type Agent = {
 
 type Status = "connecting" | "loading" | "ready" | "error";
 
-const IDENTITY_REGISTRY_ADDRESS = "0xfA09B3397fAC75424422C4D28b1729E3D4f659D7";
+const IDENTITY_REGISTRY_ADDRESS = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432";
 
+// Canonical ERC-8004 IdentityRegistry (erc-8004/erc-8004-contracts),
+// deployed at the same address across chains via deterministic deployment,
+// including BSC mainnet. ERC721URIStorage-based — no tokenByIndex, so we
+// probe agentIds directly via ownerOf() and treat a revert as "not minted".
 const IDENTITY_REGISTRY_ABI = [
   { inputs: [], name: "totalSupply", outputs: [{ internalType: "uint256", name: "", type: "uint256" }], stateMutability: "view", type: "function" },
-  { inputs: [{ internalType: "uint256", name: "agentId", type: "uint256" }], name: "exists", outputs: [{ internalType: "bool", name: "", type: "bool" }], stateMutability: "view", type: "function" },
   { inputs: [{ internalType: "uint256", name: "tokenId", type: "uint256" }], name: "tokenURI", outputs: [{ internalType: "string", name: "", type: "string" }], stateMutability: "view", type: "function" },
   { inputs: [{ internalType: "uint256", name: "tokenId", type: "uint256" }], name: "ownerOf", outputs: [{ internalType: "address", name: "", type: "address" }], stateMutability: "view", type: "function" },
 ];
@@ -88,50 +91,54 @@ export default function App() {
       try {
         setStatus("connecting");
         log("Step 1: requesting totalSupply…");
-        const total = await withTimeout(
-          client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "totalSupply" }) as Promise<bigint>,
-          8000,
-          "totalSupply"
-        );
+        let total: bigint;
+        try {
+          total = await withTimeout(
+            client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "totalSupply" }) as Promise<bigint>,
+            8000,
+            "totalSupply"
+          );
+          log(`Step 1 done: totalSupply = ${total.toString()}`);
+        } catch (e) {
+          log(`totalSupply not available (${e instanceof Error ? e.message : String(e)}), using fallback probe window`);
+          total = 60n;
+        }
         if (cancelled) return;
-        log(`Step 1 done: totalSupply = ${total.toString()}`);
         setTotalAgents(Number(total));
         setStatus("loading");
 
         const count = Number(total);
-        const probeSize = Math.min(count + 5, 40);
+        const probeSize = Math.min(Math.max(count, 30) + 10, 80);
         const candidateIds = Array.from({ length: probeSize }, (_, i) => i + 1);
         log(`Step 2: probing ${probeSize} candidate agent IDs for existence…`);
 
-        const existsResults = await Promise.all(
+        const ownerResults = await Promise.all(
           candidateIds.map((id) =>
             withTimeout(
-              client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "exists", args: [BigInt(id)] }) as Promise<boolean>,
+              client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "ownerOf", args: [BigInt(id)] }) as Promise<Address>,
               8000,
-              `exists(${id})`
-            ).catch((e) => {
-              log(`exists(${id}) failed: ${e.message}`);
-              return false;
-            })
+              `ownerOf(${id})`
+            ).catch(() => null)
           )
         );
 
-        const validTokenIds = candidateIds
-          .filter((_, i) => existsResults[i])
-          .map((id) => BigInt(id));
-        log(`Step 2 done: found ${validTokenIds.length} existing agent IDs`);
+        const validAgents = candidateIds
+          .map((id, i) => ({ id: BigInt(id), owner: ownerResults[i] }))
+          .filter((a): a is { id: bigint; owner: Address } => a.owner !== null);
+        log(`Step 2 done: found ${validAgents.length} existing agent IDs`);
 
-        log("Step 3: fetching tokenURI + owner for each…");
+        log("Step 3: fetching tokenURI for each…");
         const details = await Promise.all(
-          validTokenIds.map(async (tokenId) => {
+          validAgents.map(async ({ id: tokenId, owner }) => {
             try {
-              const [uri, owner] = await Promise.all([
-                withTimeout(client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "tokenURI", args: [tokenId] }) as Promise<string>, 8000, `tokenURI(${tokenId})`),
-                withTimeout(client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "ownerOf", args: [tokenId] }) as Promise<Address>, 8000, `ownerOf(${tokenId})`),
-              ]);
+              const uri = await withTimeout(
+                client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "tokenURI", args: [tokenId] }) as Promise<string>,
+                8000,
+                `tokenURI(${tokenId})`
+              );
               return { agentId: tokenId.toString(), uri: uri as string, owner: owner as Address } as Agent;
             } catch (e) {
-              log(`Details for tokenId ${tokenId} failed: ${e instanceof Error ? e.message : String(e)}`);
+              log(`tokenURI for tokenId ${tokenId} failed: ${e instanceof Error ? e.message : String(e)}`);
               return null;
             }
           })
@@ -185,13 +192,15 @@ export default function App() {
       <header style={styles.header}>
         <div style={styles.eyebrow}>BNB Smart Chain · Live Onchain Data</div>
         <h1 style={styles.title}>Agent Registry</h1>
-        <p style={styles.subtitle}>Reading directly from the BRC8004 Identity Registry contract on BNB Chain mainnet. No mock data — every row below is a real registered agent.</p>
+        <p style={styles.subtitle}>
+          Reading directly from the canonical ERC-8004 Identity Registry contract — the same address deployed across every EVM chain, including BNB Smart Chain mainnet. No mock data — every row below is a real registered agent.
+        </p>
       </header>
 
       <section style={styles.statsRow}>
         <div style={styles.statCard}>
-          <div style={styles.statLabel}>Total registered agents</div>
-          <div style={styles.statValue}>{totalAgents === null ? "—" : totalAgents.toLocaleString()}</div>
+          <div style={styles.statLabel}>Agents found</div>
+          <div style={styles.statValue}>{agents.length === 0 && status !== "ready" ? "—" : agents.length.toLocaleString()}</div>
         </div>
         <div style={styles.statCard}>
           <div style={styles.statLabel}>Status</div>
