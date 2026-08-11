@@ -74,7 +74,6 @@ async function fetchAgentMetadata(uri: string): Promise<{ name?: string; descrip
 
 export default function App() {
   const [status, setStatus] = useState<Status>("connecting");
-  const [totalAgents, setTotalAgents] = useState<number | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
   const [debugLog, setDebugLog] = useState<string[]>([]);
@@ -104,7 +103,6 @@ export default function App() {
           total = 60n;
         }
         if (cancelled) return;
-        setTotalAgents(Number(total));
         setStatus("loading");
 
         const count = Number(total);
