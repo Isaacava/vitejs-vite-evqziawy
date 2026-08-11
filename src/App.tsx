@@ -19,7 +19,11 @@ const IDENTITY_REGISTRY_ABI = [
   { inputs: [{ internalType: "uint256", name: "tokenId", type: "uint256" }], name: "ownerOf", outputs: [{ internalType: "address", name: "", type: "address" }], stateMutability: "view", type: "function" },
 ];
 
-const client = createPublicClient({ chain: bsc, transport: http("https://bsc-dataseed.binance.org") });
+const client = createPublicClient({
+  chain: bsc,
+  transport: http("https://bsc.publicnode.com"),
+  batch: { multicall: true },
+});
 
 function shortAddr(addr?: string) {
   if (!addr) return "";
@@ -34,33 +38,76 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+
     async function run() {
       try {
         setStatus("connecting");
-        const total = await client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "totalSupply" });
+        const total = await client.readContract({
+          address: IDENTITY_REGISTRY_ADDRESS,
+          abi: IDENTITY_REGISTRY_ABI,
+          functionName: "totalSupply",
+        });
         if (cancelled) return;
         setTotalAgents(Number(total));
         setStatus("loading");
 
         const count = Number(total);
         const sampleSize = Math.min(count, 12);
-        const results: Agent[] = [];
+        const indexes = Array.from({ length: sampleSize }, (_, i) => count - 1 - i);
 
-        for (let i = 0; i < sampleSize; i++) {
-          const index = count - 1 - i;
-          try {
-            const tokenId = await client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "tokenByIndex", args: [BigInt(index)] });
-            const [uri, owner] = await Promise.all([
-              client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "tokenURI", args: [tokenId] }),
-              client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "ownerOf", args: [tokenId] }),
-            ]);
-            results.push({ agentId: (tokenId as bigint).toString(), uri: uri as string, owner: owner as Address });
-          } catch (innerErr) {
-            console.warn("Skipped agent at index", index, innerErr);
-          }
-          if (!cancelled) setAgents([...results]);
+        const tokenIds = await Promise.all(
+          indexes.map((index) =>
+            client
+              .readContract({
+                address: IDENTITY_REGISTRY_ADDRESS,
+                abi: IDENTITY_REGISTRY_ABI,
+                functionName: "tokenByIndex",
+                args: [BigInt(index)],
+              })
+              .catch((e) => {
+                console.warn("tokenByIndex failed for index", index, e);
+                return null;
+              })
+          )
+        );
+
+        const validTokenIds = tokenIds.filter((t): t is bigint => t !== null);
+
+        const details = await Promise.all(
+          validTokenIds.map(async (tokenId) => {
+            try {
+              const [uri, owner] = await Promise.all([
+                client.readContract({
+                  address: IDENTITY_REGISTRY_ADDRESS,
+                  abi: IDENTITY_REGISTRY_ABI,
+                  functionName: "tokenURI",
+                  args: [tokenId],
+                }),
+                client.readContract({
+                  address: IDENTITY_REGISTRY_ADDRESS,
+                  abi: IDENTITY_REGISTRY_ABI,
+                  functionName: "ownerOf",
+                  args: [tokenId],
+                }),
+              ]);
+              return {
+                agentId: tokenId.toString(),
+                uri: uri as string,
+                owner: owner as Address,
+              } as Agent;
+            } catch (e) {
+              console.warn("Details failed for tokenId", tokenId, e);
+              return null;
+            }
+          })
+        );
+
+        const results = details.filter((d): d is Agent => d !== null);
+
+        if (!cancelled) {
+          setAgents(results);
+          setStatus("ready");
         }
-        if (!cancelled) setStatus("ready");
       } catch (err) {
         console.error(err);
         if (!cancelled) {
@@ -70,8 +117,11 @@ export default function App() {
         }
       }
     }
+
     run();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return (
@@ -79,7 +129,9 @@ export default function App() {
       <header style={styles.header}>
         <div style={styles.eyebrow}>BNB Smart Chain · Live Onchain Data</div>
         <h1 style={styles.title}>Agent Registry</h1>
-        <p style={styles.subtitle}>Reading directly from the BRC8004 Identity Registry contract on BNB Chain mainnet. No mock data — every row below is a real registered agent.</p>
+        <p style={styles.subtitle}>
+          Reading directly from the BRC8004 Identity Registry contract on BNB Chain mainnet. No mock data — every row below is a real registered agent.
+        </p>
       </header>
 
       <section style={styles.statsRow}>
@@ -93,7 +145,9 @@ export default function App() {
         </div>
         <div style={styles.statCard}>
           <div style={styles.statLabel}>Contract</div>
-          <a style={styles.contractLink} href={`https://bscscan.com/address/${IDENTITY_REGISTRY_ADDRESS}`} target="_blank" rel="noreferrer">{shortAddr(IDENTITY_REGISTRY_ADDRESS)} ↗</a>
+          <a style={styles.contractLink} href={`https://bscscan.com/address/${IDENTITY_REGISTRY_ADDRESS}`} target="_blank" rel="noreferrer">
+            {shortAddr(IDENTITY_REGISTRY_ADDRESS)} ↗
+          </a>
         </div>
       </section>
 
@@ -105,7 +159,9 @@ export default function App() {
           <div key={agent.agentId} style={styles.card}>
             <div style={styles.cardTop}>
               <span style={styles.agentId}>Agent #{agent.agentId}</span>
-              <a style={styles.ownerLink} href={`https://bscscan.com/address/${agent.owner}`} target="_blank" rel="noreferrer">Owner: {shortAddr(agent.owner)} ↗</a>
+              <a style={styles.ownerLink} href={`https://bscscan.com/address/${agent.owner}`} target="_blank" rel="noreferrer">
+                Owner: {shortAddr(agent.owner)} ↗
+              </a>
             </div>
             <div style={styles.uriRow}>
               <span style={styles.uriLabel}>Registration file:</span>
@@ -126,7 +182,11 @@ function StatusPill({ status }: { status: Status }) {
     error: { text: "Error", bg: "#3a1f1f", fg: "#e88a8a" },
   };
   const s = map[status] || map.connecting;
-  return <span style={{ display: "inline-block", padding: "4px 10px", borderRadius: 999, fontSize: 13, fontWeight: 600, background: s.bg, color: s.fg }}>{s.text}</span>;
+  return (
+    <span style={{ display: "inline-block", padding: "4px 10px", borderRadius: 999, fontSize: 13, fontWeight: 600, background: s.bg, color: s.fg }}>
+      {s.text}
+    </span>
+  );
 }
 
 const styles = {
