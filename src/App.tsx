@@ -2,7 +2,16 @@ import { useEffect, useState } from "react";
 import { createPublicClient, http, type Address } from "viem";
 import { bsc } from "viem/chains";
 
-type Agent = { agentId: string; uri: string; owner: string };
+type Agent = {
+  agentId: string;
+  uri: string;
+  owner: string;
+  name?: string;
+  description?: string;
+  image?: string;
+  metadataError?: boolean;
+};
+
 type Status = "connecting" | "loading" | "ready" | "error";
 
 const IDENTITY_REGISTRY_ADDRESS = "0xfA09B3397fAC75424422C4D28b1729E3D4f659D7";
@@ -30,6 +39,34 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
     promise,
     new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Timed out after ${ms}ms: ${label}`)), ms)),
   ]);
+}
+
+function resolveUri(uri: string): string {
+  if (uri.startsWith("ipfs://")) {
+    return `https://ipfs.io/ipfs/${uri.slice("ipfs://".length)}`;
+  }
+  return uri;
+}
+
+async function fetchAgentMetadata(uri: string): Promise<{ name?: string; description?: string; image?: string }> {
+  if (uri.startsWith("data:application/json")) {
+    const commaIndex = uri.indexOf(",");
+    const payload = uri.slice(commaIndex + 1);
+    const isBase64 = uri.slice(0, commaIndex).includes("base64");
+    const jsonText = isBase64 ? atob(payload) : decodeURIComponent(payload);
+    const parsed = JSON.parse(jsonText);
+    return { name: parsed.name, description: parsed.description, image: parsed.image };
+  }
+
+  const resolved = resolveUri(uri);
+  const res = await withTimeout(fetch(resolved), 6000, `fetch ${resolved}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const parsed = await res.json();
+  return {
+    name: parsed.name,
+    description: parsed.description,
+    image: parsed.image ? resolveUri(parsed.image) : undefined,
+  };
 }
 
 export default function App() {
@@ -81,8 +118,7 @@ export default function App() {
 
         const validTokenIds = candidateIds
           .filter((_, i) => existsResults[i])
-          .map((id) => BigInt(id))
-          .slice(-12);
+          .map((id) => BigInt(id));
         log(`Step 2 done: found ${validTokenIds.length} existing agent IDs`);
 
         log("Step 3: fetching tokenURI + owner for each…");
@@ -108,6 +144,27 @@ export default function App() {
           setAgents(results);
           setStatus("ready");
         }
+
+        log("Step 4: fetching agent metadata (name/image)…");
+        results.forEach(async (agent) => {
+          try {
+            const meta = await fetchAgentMetadata(agent.uri);
+            if (cancelled) return;
+            setAgents((prev) =>
+              prev.map((a) =>
+                a.agentId === agent.agentId
+                  ? { ...a, name: meta.name, description: meta.description, image: meta.image }
+                  : a
+              )
+            );
+          } catch (e) {
+            log(`Metadata fetch failed for agent ${agent.agentId}: ${e instanceof Error ? e.message : String(e)}`);
+            if (cancelled) return;
+            setAgents((prev) =>
+              prev.map((a) => (a.agentId === agent.agentId ? { ...a, metadataError: true } : a))
+            );
+          }
+        });
       } catch (err) {
         console.error(err);
         log(`FATAL: ${err instanceof Error ? err.message : String(err)}`);
@@ -159,13 +216,26 @@ export default function App() {
         {agents.length === 0 && status !== "error" && <div style={styles.loadingRow}>Fetching agents from BNB Chain…</div>}
         {agents.map((agent) => (
           <div key={agent.agentId} style={styles.card}>
-            <div style={styles.cardTop}>
-              <span style={styles.agentId}>Agent #{agent.agentId}</span>
-              <a style={styles.ownerLink} href={`https://bscscan.com/address/${agent.owner}`} target="_blank" rel="noreferrer">Owner: {shortAddr(agent.owner)} ↗</a>
-            </div>
-            <div style={styles.uriRow}>
-              <span style={styles.uriLabel}>Registration file:</span>
-              <span style={styles.uriValue}>{agent.uri || "(empty)"}</span>
+            <div style={styles.cardBody}>
+              {agent.image && (
+                <img
+                  src={agent.image}
+                  alt={agent.name || `Agent ${agent.agentId}`}
+                  style={styles.agentImage}
+                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                />
+              )}
+              <div style={styles.cardText}>
+                <div style={styles.cardTop}>
+                  <span style={styles.agentId}>{agent.name || `Agent #${agent.agentId}`}</span>
+                  <a style={styles.ownerLink} href={`https://bscscan.com/address/${agent.owner}`} target="_blank" rel="noreferrer">Owner: {shortAddr(agent.owner)} ↗</a>
+                </div>
+                {agent.description && <div style={styles.agentDescription}>{agent.description}</div>}
+                <div style={styles.uriRow}>
+                  <span style={styles.uriLabel}>{agent.metadataError ? "Registration file (could not load preview):" : "Registration file:"}</span>
+                  <span style={styles.uriValue}>{agent.uri || "(empty)"}</span>
+                </div>
+              </div>
             </div>
           </div>
         ))}
@@ -203,6 +273,10 @@ const styles = {
   list: { maxWidth: 780, margin: "0 auto", display: "flex", flexDirection: "column" as const, gap: 10 },
   loadingRow: { color: "#7a776f", fontSize: 14, padding: "20px 0" },
   card: { background: "#17191a", border: "1px solid #26282a", borderRadius: 12, padding: "16px 18px" },
+  cardBody: { display: "flex", gap: 14, alignItems: "flex-start" as const },
+  agentImage: { width: 56, height: 56, borderRadius: 10, objectFit: "cover" as const, flexShrink: 0, background: "#0d0f10", border: "1px solid #26282a" },
+  cardText: { flex: 1, minWidth: 0 },
+  agentDescription: { fontSize: 13, color: "#a3a09a", lineHeight: 1.5, marginBottom: 8 },
   cardTop: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap" as const, gap: 8 },
   agentId: { fontWeight: 700, fontSize: 15 },
   ownerLink: { fontSize: 13, color: "#8a8880", textDecoration: "none" },
