@@ -9,7 +9,7 @@ const IDENTITY_REGISTRY_ADDRESS = "0xfA09B3397fAC75424422C4D28b1729E3D4f659D7";
 
 const IDENTITY_REGISTRY_ABI = [
   { inputs: [], name: "totalSupply", outputs: [{ internalType: "uint256", name: "", type: "uint256" }], stateMutability: "view", type: "function" },
-  { inputs: [{ internalType: "uint256", name: "index", type: "uint256" }], name: "tokenByIndex", outputs: [{ internalType: "uint256", name: "", type: "uint256" }], stateMutability: "view", type: "function" },
+  { inputs: [{ internalType: "uint256", name: "agentId", type: "uint256" }], name: "exists", outputs: [{ internalType: "bool", name: "", type: "bool" }], stateMutability: "view", type: "function" },
   { inputs: [{ internalType: "uint256", name: "tokenId", type: "uint256" }], name: "tokenURI", outputs: [{ internalType: "string", name: "", type: "string" }], stateMutability: "view", type: "function" },
   { inputs: [{ internalType: "uint256", name: "tokenId", type: "uint256" }], name: "ownerOf", outputs: [{ internalType: "address", name: "", type: "address" }], stateMutability: "view", type: "function" },
 ];
@@ -62,25 +62,28 @@ export default function App() {
         setStatus("loading");
 
         const count = Number(total);
-        const sampleSize = Math.min(count, 12);
-        const indexes = Array.from({ length: sampleSize }, (_, i) => count - 1 - i);
-        log(`Step 2: fetching ${sampleSize} tokenIds…`);
+        const probeSize = Math.min(count + 5, 40);
+        const candidateIds = Array.from({ length: probeSize }, (_, i) => i + 1);
+        log(`Step 2: probing ${probeSize} candidate agent IDs for existence…`);
 
-        const tokenIds = await Promise.all(
-          indexes.map((index) =>
+        const existsResults = await Promise.all(
+          candidateIds.map((id) =>
             withTimeout(
-              client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "tokenByIndex", args: [BigInt(index)] }) as Promise<bigint>,
+              client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "exists", args: [BigInt(id)] }) as Promise<boolean>,
               8000,
-              `tokenByIndex(${index})`
+              `exists(${id})`
             ).catch((e) => {
-              log(`tokenByIndex(${index}) failed: ${e.message}`);
-              return null;
+              log(`exists(${id}) failed: ${e.message}`);
+              return false;
             })
           )
         );
 
-        const validTokenIds = tokenIds.filter((t): t is bigint => t !== null);
-        log(`Step 2 done: got ${validTokenIds.length} valid tokenIds`);
+        const validTokenIds = candidateIds
+          .filter((_, i) => existsResults[i])
+          .map((id) => BigInt(id))
+          .slice(-12);
+        log(`Step 2 done: found ${validTokenIds.length} existing agent IDs`);
 
         log("Step 3: fetching tokenURI + owner for each…");
         const details = await Promise.all(
