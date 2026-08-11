@@ -54,7 +54,7 @@ export default function App() {
               client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "tokenURI", args: [tokenId] }),
               client.readContract({ address: IDENTITY_REGISTRY_ADDRESS, abi: IDENTITY_REGISTRY_ABI, functionName: "ownerOf", args: [tokenId] }),
             ]);
-            results.push({ agentId: tokenId.toString(), uri: uri as string, owner: owner as Address });
+            results.push({ agentId: (tokenId as bigint).toString(), uri: uri as string, owner: owner as Address });
           } catch (innerErr) {
             console.warn("Skipped agent at index", index, innerErr);
           }
