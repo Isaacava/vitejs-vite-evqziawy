@@ -32,7 +32,8 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           START_ID: ${{ github.event.inputs.start_id || '1' }}
           END_ID: ${{ github.event.inputs.end_id || '2000' }}
-          CONCURRENCY: "8"
+          CONCURRENCY: "5"
         run: node index-agents.mjs
