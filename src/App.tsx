@@ -13,6 +13,7 @@ type Agent = {
 };
 
 type Status = "loading" | "ready" | "error";
+type ActivateState = "idle" | "confirming" | "activating" | "done" | "error";
 
 const SUPABASE_URL = "https://sfbxpscbevnmoppgkjcr.supabase.co";
 const SUPABASE_ANON_KEY =
@@ -28,6 +29,22 @@ const CATEGORIES: { key: string; label: string }[] = [
   { key: "health_factor", label: "Health Factor" },
   { key: "other", label: "Other" },
 ];
+
+const CATEGORY_LABELS: Record<string, string> = {
+  rebalancing: "Rebalancing",
+  grid_trading: "Grid Trading",
+  yield: "Yield",
+  health_factor: "Health Factor",
+  other: "Other",
+};
+
+const CATEGORY_COLORS: Record<string, string> = {
+  rebalancing: "#c9a3f0",
+  grid_trading: "#8adede",
+  yield: "#7ee2a8",
+  health_factor: "#e88a8a",
+  other: "#7a776f",
+};
 
 function shortAddr(addr?: string) {
   if (!addr) return "";
@@ -52,6 +69,7 @@ export default function App() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState("all");
   const [page, setPage] = useState(0);
+  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 300);
@@ -130,6 +148,10 @@ export default function App() {
     [totalCount]
   );
 
+  if (selectedAgent) {
+    return <AgentDetail agent={selectedAgent} onBack={() => setSelectedAgent(null)} />;
+  }
+
   return (
     <div style={styles.page}>
       <div style={styles.container}>
@@ -190,7 +212,11 @@ export default function App() {
           )}
 
           {agents.map((agent) => (
-            <div key={agent.agent_id} style={styles.card}>
+            <button
+              key={agent.agent_id}
+              style={styles.card}
+              onClick={() => setSelectedAgent(agent)}
+            >
               <div style={styles.cardTop}>
                 {agent.image ? (
                   <img
@@ -211,17 +237,10 @@ export default function App() {
               <div style={styles.cardName}>{agent.name || `Agent #${agent.agent_id}`}</div>
               {agent.description && <div style={styles.cardDesc}>{agent.description}</div>}
               <div style={styles.cardFooter}>
-                <a
-                  style={styles.ownerLink}
-                  href={`https://bscscan.com/address/${agent.owner}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {shortAddr(agent.owner)}
-                </a>
+                <span style={styles.ownerLink}>{shortAddr(agent.owner)}</span>
                 <span style={styles.idLabel}>#{agent.agent_id}</span>
               </div>
-            </div>
+            </button>
           ))}
         </div>
 
@@ -251,22 +270,146 @@ export default function App() {
   );
 }
 
+function AgentDetail({ agent, onBack }: { agent: Agent; onBack: () => void }) {
+  const [activateState, setActivateState] = useState<ActivateState>("idle");
+
+  function handleActivate() {
+    setActivateState("confirming");
+  }
+
+  function confirmActivate() {
+    setActivateState("activating");
+    // Simulated activation — no real payment or agent invocation happens here.
+    // A production version would call the agent's service endpoint and
+    // settle payment via Binance x402 at this step.
+    setTimeout(() => {
+      setActivateState("done");
+    }, 1600);
+  }
+
+  return (
+    <div style={styles.page}>
+      <div style={styles.detailContainer}>
+        <button style={styles.backBtn} onClick={onBack}>
+          ← Back to agents
+        </button>
+
+        <div style={styles.detailCard}>
+          <div style={styles.detailHeader}>
+            {agent.image ? (
+              <img
+                src={agent.image}
+                alt=""
+                style={styles.detailAvatar}
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).style.display = "none";
+                }}
+              />
+            ) : (
+              <div style={{ ...styles.detailAvatarFallback, background: avatarColor(agent.agent_id) }}>
+                {(agent.name || "A")[0].toUpperCase()}
+              </div>
+            )}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={styles.detailNameRow}>
+                <h1 style={styles.detailName}>{agent.name || `Agent #${agent.agent_id}`}</h1>
+                <CategoryBadge category={agent.category} />
+              </div>
+              <div style={styles.detailMeta}>
+                Agent #{agent.agent_id} · {agent.chain === "bsc" ? "BNB Smart Chain" : agent.chain}
+              </div>
+            </div>
+          </div>
+
+          {agent.description && <p style={styles.detailDesc}>{agent.description}</p>}
+
+          <div style={styles.detailInfoGrid}>
+            <div style={styles.infoBox}>
+              <div style={styles.infoLabel}>Owner</div>
+              <a
+                style={styles.infoLink}
+                href={`https://bscscan.com/address/${agent.owner}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {shortAddr(agent.owner)} ↗
+              </a>
+            </div>
+            <div style={styles.infoBox}>
+              <div style={styles.infoLabel}>Registry</div>
+              <a
+                style={styles.infoLink}
+                href="https://bscscan.com/address/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"
+                target="_blank"
+                rel="noreferrer"
+              >
+                ERC-8004 Identity ↗
+              </a>
+            </div>
+            <div style={styles.infoBox}>
+              <div style={styles.infoLabel}>Registration file</div>
+              <div style={styles.infoValueSmall}>
+                {agent.uri.startsWith("data:") ? "Inline (onchain)" : "External"}
+              </div>
+            </div>
+          </div>
+
+          <div style={styles.activateSection}>
+            {activateState === "idle" && (
+              <button style={styles.activateBtn} onClick={handleActivate}>
+                Activate Agent
+              </button>
+            )}
+
+            {activateState === "confirming" && (
+              <div style={styles.confirmBox}>
+                <div style={styles.confirmTitle}>Confirm activation</div>
+                <p style={styles.confirmText}>
+                  This will hire <strong>{agent.name || `Agent #${agent.agent_id}`}</strong> to
+                  begin its {CATEGORY_LABELS[agent.category] || "task"} service. Payment is
+                  settled via Binance x402.
+                </p>
+                <div style={styles.confirmActions}>
+                  <button style={styles.confirmBtn} onClick={confirmActivate}>
+                    Confirm & Pay
+                  </button>
+                  <button style={styles.cancelBtn} onClick={() => setActivateState("idle")}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {activateState === "activating" && (
+              <div style={styles.activatingBox}>
+                <span style={styles.spinner} />
+                Activating agent…
+              </div>
+            )}
+
+            {activateState === "done" && (
+              <div style={styles.doneBox}>
+                <div style={styles.doneTitle}>✓ Agent activated</div>
+                <p style={styles.doneText}>
+                  {agent.name || `Agent #${agent.agent_id}`} is now working on your{" "}
+                  {CATEGORY_LABELS[agent.category] || "task"}.
+                </p>
+              </div>
+            )}
+
+            <p style={styles.demoNote}>
+              Demo flow — no real funds are moved. A production build settles payment through
+              Binance x402 and invokes the agent's live service endpoint.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CategoryBadge({ category }: { category: string }) {
-  const labels: Record<string, string> = {
-    rebalancing: "Rebalancing",
-    grid_trading: "Grid Trading",
-    yield: "Yield",
-    health_factor: "Health Factor",
-    other: "Other",
-  };
-  const colors: Record<string, string> = {
-    rebalancing: "#c9a3f0",
-    grid_trading: "#8adede",
-    yield: "#7ee2a8",
-    health_factor: "#e88a8a",
-    other: "#7a776f",
-  };
-  const color = colors[category] || colors.other;
+  const color = CATEGORY_COLORS[category] || CATEGORY_COLORS.other;
   return (
     <span
       style={{
@@ -279,42 +422,74 @@ function CategoryBadge({ category }: { category: string }) {
         padding: "3px 8px",
         textTransform: "uppercase",
         letterSpacing: "0.03em",
+        whiteSpace: "nowrap",
       }}
     >
-      {labels[category] || category}
+      {CATEGORY_LABELS[category] || category}
     </span>
   );
 }
 
-const styles = {
+const styles: Record<string, React.CSSProperties> = {
   page: { minHeight: "100vh", background: "#0b0d0e", color: "#e8e6e1", fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" },
   container: { maxWidth: 1040, margin: "0 auto", padding: "32px 20px 80px" },
   header: { marginBottom: 20 },
   title: { fontSize: 30, fontWeight: 800, margin: "0 0 6px", letterSpacing: "-0.02em", background: "linear-gradient(90deg, #ffffff, #f0b90b)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" },
   subtitle: { fontSize: 14, color: "#8a8880", margin: 0 },
-  tabRow: { display: "flex", flexWrap: "wrap" as const, gap: 8, marginBottom: 16 },
+  tabRow: { display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 },
   tab: { display: "flex", alignItems: "center", gap: 6, background: "#151718", border: "1px solid #26282a", borderRadius: 999, color: "#a3a09a", fontSize: 13, fontWeight: 600, padding: "8px 14px", cursor: "pointer" },
   tabActive: { background: "rgba(240,185,11,0.12)", border: "1px solid #f0b90b", color: "#f0b90b" },
   tabCount: { fontSize: 11, opacity: 0.7 },
-  toolbar: { display: "flex", flexWrap: "wrap" as const, gap: 10, marginBottom: 16, justifyContent: "space-between", alignItems: "center" },
-  searchWrap: { position: "relative" as const, flex: "1 1 260px" },
-  searchIcon: { position: "absolute" as const, left: 14, top: "50%", transform: "translateY(-50%)", color: "#5f5d57", fontSize: 16 },
-  searchInput: { width: "100%", boxSizing: "border-box" as const, background: "#151718", border: "1px solid #26282a", borderRadius: 10, padding: "11px 14px 11px 38px", color: "#e8e6e1", fontSize: 14, outline: "none" },
+  toolbar: { display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 16, justifyContent: "space-between", alignItems: "center" },
+  searchWrap: { position: "relative", flex: "1 1 260px" },
+  searchIcon: { position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#5f5d57", fontSize: 16 },
+  searchInput: { width: "100%", boxSizing: "border-box", background: "#151718", border: "1px solid #26282a", borderRadius: 10, padding: "11px 14px 11px 38px", color: "#e8e6e1", fontSize: 14, outline: "none" },
   countBadge: { fontSize: 12, color: "#f0b90b", background: "rgba(240,185,11,0.1)", border: "1px solid rgba(240,185,11,0.25)", borderRadius: 999, padding: "6px 12px", fontWeight: 600 },
   errorBox: { marginBottom: 16, background: "#2a1616", border: "1px solid #4a2323", color: "#f0a3a3", padding: "14px 18px", borderRadius: 10, fontSize: 14 },
   grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 },
   loadingRow: { gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: 10, color: "#7a776f", fontSize: 14, padding: "32px 16px", justifyContent: "center" },
   spinner: { width: 14, height: 14, borderRadius: "50%", border: "2px solid #26282a", borderTopColor: "#f0b90b", display: "inline-block" },
-  card: { background: "#111314", border: "1px solid #26282a", borderRadius: 14, padding: "16px", display: "flex", flexDirection: "column" as const, gap: 8 },
+  card: { background: "#111314", border: "1px solid #26282a", borderRadius: 14, padding: "16px", display: "flex", flexDirection: "column", gap: 8, textAlign: "left", cursor: "pointer", font: "inherit", color: "inherit" },
   cardTop: { display: "flex", alignItems: "center", justifyContent: "space-between" },
-  avatar: { width: 40, height: 40, borderRadius: 10, objectFit: "cover" as const, background: "#0b0d0e", border: "1px solid #26282a" },
+  avatar: { width: 40, height: 40, borderRadius: 10, objectFit: "cover", background: "#0b0d0e", border: "1px solid #26282a" },
   avatarFallback: { width: 40, height: 40, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 16, color: "#0b0d0e" },
-  cardName: { fontSize: 15, fontWeight: 700, color: "#f2f0eb", whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" },
-  cardDesc: { fontSize: 12.5, color: "#8a8880", lineHeight: 1.5, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const, overflow: "hidden" },
+  cardName: { fontSize: 15, fontWeight: 700, color: "#f2f0eb", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  cardDesc: { fontSize: 12.5, color: "#8a8880", lineHeight: 1.5, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" },
   cardFooter: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "auto", paddingTop: 8, borderTop: "1px solid #1c1e1f" },
-  ownerLink: { fontSize: 12, color: "#7a776f", textDecoration: "none", fontFamily: "monospace" },
+  ownerLink: { fontSize: 12, color: "#7a776f", fontFamily: "monospace" },
   idLabel: { fontSize: 12, color: "#5f5d57" },
   pagination: { display: "flex", alignItems: "center", justifyContent: "center", gap: 16, marginTop: 24 },
   pageBtn: { background: "#151718", border: "1px solid #26282a", borderRadius: 8, color: "#e8e6e1", fontSize: 13, padding: "8px 16px", cursor: "pointer" },
   pageLabel: { fontSize: 13, color: "#7a776f" },
+
+  detailContainer: { maxWidth: 640, margin: "0 auto", padding: "24px 20px 80px" },
+  backBtn: { background: "transparent", border: "none", color: "#8a8880", fontSize: 14, padding: "8px 0", marginBottom: 12, cursor: "pointer" },
+  detailCard: { background: "#111314", border: "1px solid #26282a", borderRadius: 16, padding: 24 },
+  detailHeader: { display: "flex", gap: 16, alignItems: "flex-start", marginBottom: 16 },
+  detailAvatar: { width: 64, height: 64, borderRadius: 14, objectFit: "cover", background: "#0b0d0e", border: "1px solid #26282a", flexShrink: 0 },
+  detailAvatarFallback: { width: 64, height: 64, borderRadius: 14, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 24, color: "#0b0d0e", flexShrink: 0 },
+  detailNameRow: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" },
+  detailName: { fontSize: 20, fontWeight: 800, margin: 0, color: "#f2f0eb" },
+  detailMeta: { fontSize: 13, color: "#7a776f", marginTop: 4 },
+  detailDesc: { fontSize: 14.5, color: "#c9c6bf", lineHeight: 1.6, marginBottom: 20 },
+  detailInfoGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 24 },
+  infoBox: { background: "#151718", border: "1px solid #26282a", borderRadius: 10, padding: "12px 14px" },
+  infoLabel: { fontSize: 11, color: "#5f5d57", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 },
+  infoLink: { fontSize: 13, color: "#f0b90b", textDecoration: "none", fontWeight: 600 },
+  infoValueSmall: { fontSize: 13, color: "#c9c6bf" },
+
+  activateSection: { borderTop: "1px solid #1c1e1f", paddingTop: 20 },
+  activateBtn: { width: "100%", background: "#f0b90b", border: "none", borderRadius: 12, color: "#0b0d0e", fontSize: 15, fontWeight: 700, padding: "14px 20px", cursor: "pointer" },
+  confirmBox: { background: "#151718", border: "1px solid #26282a", borderRadius: 12, padding: 16 },
+  confirmTitle: { fontSize: 14, fontWeight: 700, color: "#f2f0eb", marginBottom: 8 },
+  confirmText: { fontSize: 13, color: "#a3a09a", lineHeight: 1.5, marginBottom: 14 },
+  confirmActions: { display: "flex", gap: 10 },
+  confirmBtn: { flex: 1, background: "#f0b90b", border: "none", borderRadius: 10, color: "#0b0d0e", fontSize: 14, fontWeight: 700, padding: "11px", cursor: "pointer" },
+  cancelBtn: { flex: 1, background: "transparent", border: "1px solid #26282a", borderRadius: 10, color: "#a3a09a", fontSize: 14, fontWeight: 600, padding: "11px", cursor: "pointer" },
+  activatingBox: { display: "flex", alignItems: "center", gap: 10, justifyContent: "center", color: "#8a8880", fontSize: 14, padding: "14px 0" },
+  doneBox: { background: "rgba(126,226,168,0.08)", border: "1px solid rgba(126,226,168,0.3)", borderRadius: 12, padding: 16 },
+  doneTitle: { fontSize: 15, fontWeight: 700, color: "#7ee2a8", marginBottom: 6 },
+  doneText: { fontSize: 13, color: "#a3a09a", lineHeight: 1.5, margin: 0 },
+  demoNote: { fontSize: 11.5, color: "#5f5d57", marginTop: 12, lineHeight: 1.5 },
 };
+
