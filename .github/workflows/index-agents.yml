@@ -1,0 +1,38 @@
+name: Index ERC-8004 Agents
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_id:
+        description: "Start agent ID"
+        required: false
+        default: "1"
+      end_id:
+        description: "End agent ID"
+        required: false
+        default: "2000"
+  schedule:
+    - cron: "0 4 * * *"
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install @supabase/supabase-js viem
+
+      - name: Run indexer
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          START_ID: ${{ github.event.inputs.start_id || '1' }}
+          END_ID: ${{ github.event.inputs.end_id || '2000' }}
+          CONCURRENCY: "8"
+        run: node index-agents.mjs
