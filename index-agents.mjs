@@ -33,6 +33,49 @@ function resolveUri(uri) {
   return uri;
 }
 
+const CATEGORY_RULES = [
+  {
+    category: "health_factor",
+    keywords: [
+      "health factor", "liquidation", "collateral ratio", "loan monitor",
+      "borrow position", "safety ratio", "ltv", "loan-to-value", "margin call",
+      "lending risk", "position health",
+    ],
+  },
+  {
+    category: "grid_trading",
+    keywords: [
+      "grid trading", "grid bot", "range trading", "grid strategy",
+      "price grid", "grid range", "trading grid", "market making",
+    ],
+  },
+  {
+    category: "yield",
+    keywords: [
+      "yield", "apy", "auto-compound", "autocompound", "vault rotation",
+      "vault", "staking reward", "farming", "liquidity mining", "earn",
+      "moolah", "lending pool", "stablecoin vault",
+    ],
+  },
+  {
+    category: "rebalancing",
+    keywords: [
+      "rebalance", "rebalancing", "portfolio balance", "asset allocation",
+      "auto-rotate", "auto rotate", "position rotation", "reallocation",
+    ],
+  },
+];
+
+function categorizeAgent(name, description) {
+  const text = `${name || ""} ${description || ""}`.toLowerCase();
+  for (const rule of CATEGORY_RULES) {
+    if (rule.keywords.some((kw) => text.includes(kw))) {
+      return rule.category;
+    }
+  }
+  return "other";
+}
+
 async function fetchAgentMetadata(uri) {
   if (uri.startsWith("data:application/json")) {
     const commaIndex = uri.indexOf(",");
@@ -105,6 +148,7 @@ async function processAgent(id) {
       description: meta.description || null,
       image: meta.image || null,
       chain: "bsc",
+      category: categorizeAgent(meta.name, meta.description),
     });
 
     if (error) {
@@ -112,7 +156,7 @@ async function processAgent(id) {
       return false;
     }
 
-    console.log(`  ✓ agent ${id} — ${meta.name || "(no name)"}`);
+    console.log(`  ✓ agent ${id} — ${meta.name || "(no name)"} [${categorizeAgent(meta.name, meta.description)}]`);
     return true;
   } catch (e) {
     return null;
