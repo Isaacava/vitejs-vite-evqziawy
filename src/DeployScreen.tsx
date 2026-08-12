@@ -9,7 +9,6 @@ import {
 import { bscTestnet } from "viem/chains";
 import { EthereumProvider } from "@walletconnect/ethereum-provider";
 import {
-  JOB_ESCROW_ABI,
   JOB_ESCROW_BYTECODE,
 } from "./contractArtifacts";
 
@@ -17,7 +16,8 @@ const WALLETCONNECT_PROJECT_ID =
   "1dbe8fd5e4974ae7c80d074c4082b5a0";
 
 const BSC_TESTNET_CHAIN_ID = 97;
-const FEE_SAFETY_BPS = 2000n; // 20%
+
+const FEE_SAFETY_BPS = 2000n;
 
 const publicClient = createPublicClient({
   chain: bscTestnet,
@@ -46,7 +46,13 @@ type Diagnostics = {
   approvedSession?: string;
 };
 
-function normalizeChainId(value: unknown): number {
+type WalletConnectSessionInfo = {
+  approvedChains: string[];
+};
+
+function normalizeChainId(
+  value: unknown
+): number {
   if (typeof value === "number") {
     return value;
   }
@@ -56,13 +62,17 @@ function normalizeChainId(value: unknown): number {
   }
 
   if (typeof value === "string") {
-    const valueTrimmed = value.trim();
+    const trimmed = value.trim();
 
-    if (valueTrimmed.toLowerCase().startsWith("0x")) {
-      return parseInt(valueTrimmed, 16);
+    if (
+      trimmed
+        .toLowerCase()
+        .startsWith("0x")
+    ) {
+      return parseInt(trimmed, 16);
     }
 
-    const decimal = Number(valueTrimmed);
+    const decimal = Number(trimmed);
 
     if (Number.isFinite(decimal)) {
       return decimal;
@@ -70,135 +80,159 @@ function normalizeChainId(value: unknown): number {
   }
 
   throw new Error(
-    `Unable to determine wallet chain ID. Received: ${String(value)}`
+    `Unable to determine wallet chain ID. Received: ${String(
+      value
+    )}`
   );
 }
 
 async function getChainInfo(
   provider: EIP1193Provider
 ) {
-  const result = await provider.request({
-    method: "eth_chainId",
-  });
+  const result =
+    await provider.request({
+      method: "eth_chainId",
+    });
 
   return {
     raw: String(result),
-    chainId: normalizeChainId(result),
+    chainId:
+      normalizeChainId(result),
   };
 }
 
-function formatTbnb(value: bigint): string {
-  return Number(formatEther(value)).toFixed(8);
+function formatTbnb(
+  value: bigint
+): string {
+  return Number(
+    formatEther(value)
+  ).toFixed(8);
 }
 
-function addSafetyMargin(value: bigint): bigint {
+function addSafetyMargin(
+  fee: bigint
+): bigint {
   return (
-    value +
-    (value * FEE_SAFETY_BPS) /
+    fee +
+    (fee * FEE_SAFETY_BPS) /
       10000n
   );
 }
 
-function toRpcQuantity(value: bigint): string {
-  return `0x${value.toString(16)}`;
+function toRpcQuantity(
+  value: bigint
+): `0x${string}` {
+  return `0x${value.toString(
+    16
+  )}`;
 }
 
 function getApprovedChains(
-  provider: EthereumProvider
+  session: WalletConnectSessionInfo | null
 ): string[] {
-  const session = provider.session;
-
-  if (!session) {
-    return [];
-  }
-
-  const accounts =
-    session.namespaces?.eip155?.accounts;
-
-  if (!accounts) {
-    return [];
-  }
-
-  return accounts.map((account) => {
-    const parts = account.split(":");
-
-    return parts.length >= 2
-      ? `eip155:${parts[1]}`
-      : account;
-  });
+  return session?.approvedChains ?? [];
 }
 
 export default function DeployScreen() {
   const [state, setState] =
-    useState<DeployState>("idle");
+    useState<DeployState>(
+      "idle"
+    );
 
   const [provider, setProvider] =
-    useState<EIP1193Provider | null>(null);
+    useState<EIP1193Provider | null>(
+      null
+    );
 
-  const [wcProvider, setWcProvider] =
-    useState<EthereumProvider | null>(null);
+  const [
+    sessionInfo,
+    setSessionInfo,
+  ] =
+    useState<WalletConnectSessionInfo | null>(
+      null
+    );
 
   const [address, setAddress] =
-    useState<string | null>(null);
+    useState<string | null>(
+      null
+    );
 
   const [txHash, setTxHash] =
-    useState<string | null>(null);
+    useState<string | null>(
+      null
+    );
 
-  const [contractAddress, setContractAddress] =
-    useState<string | null>(null);
+  const [
+    contractAddress,
+    setContractAddress,
+  ] =
+    useState<string | null>(
+      null
+    );
 
   const [error, setError] =
-    useState<string | null>(null);
+    useState<string | null>(
+      null
+    );
 
-  const [diagnostics, setDiagnostics] =
-    useState<Diagnostics>({});
+  const [
+    diagnostics,
+    setDiagnostics,
+  ] =
+    useState<Diagnostics>(
+      {}
+    );
 
   async function connect() {
-    setState("connecting");
+    setState(
+      "connecting"
+    );
+
     setError(null);
     setTxHash(null);
-    setContractAddress(null);
+    setContractAddress(
+      null
+    );
     setDiagnostics({});
 
     try {
-      const ethereumProvider =
-        await EthereumProvider.init({
-          projectId:
-            WALLETCONNECT_PROJECT_ID,
+      const wcProvider =
+        await EthereumProvider.init(
+          {
+            projectId:
+              WALLETCONNECT_PROJECT_ID,
 
-          /*
-           * Reown recommends optionalChains
-           * rather than required chains.
-           */
-          optionalChains: [
-            BSC_TESTNET_CHAIN_ID,
-          ],
+            optionalChains: [
+              BSC_TESTNET_CHAIN_ID,
+            ],
 
-          showQrModal: true,
+            showQrModal: true,
 
-          metadata: {
-            name: "JobEscrow Deployer",
-            description:
-              "Deploy JobEscrow to BNB Smart Chain Testnet",
-            url: window.location.origin,
-            icons: [],
-          },
+            metadata: {
+              name:
+                "JobEscrow Deployer",
 
-          /*
-           * Explicit RPC for BSC Testnet.
-           * This keeps the read-side provider
-           * tied to the intended chain.
-           */
-          rpcMap: {
-            [BSC_TESTNET_CHAIN_ID]:
-              "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
-          },
-        });
+              description:
+                "Deploy JobEscrow to BNB Smart Chain Testnet",
 
-      await ethereumProvider.connect();
+              url:
+                window.location
+                  .origin,
+
+              icons: [],
+            },
+
+            rpcMap: {
+              [BSC_TESTNET_CHAIN_ID]:
+                "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+            },
+          }
+        );
+
+      await wcProvider.connect();
 
       const accounts =
-        ethereumProvider.accounts as string[];
+        wcProvider.accounts as string[];
 
       if (
         !accounts ||
@@ -212,23 +246,52 @@ export default function DeployScreen() {
       const connectedAddress =
         accounts[0];
 
+      const walletProvider =
+        wcProvider as unknown as EIP1193Provider;
+
       const chainInfo =
         await getChainInfo(
-          ethereumProvider as unknown as EIP1193Provider
+          walletProvider
         );
 
       console.log(
-        "Wallet chain:",
+        "WalletConnect chain:",
         chainInfo
       );
 
       /*
-       * Inspect the actual WalletConnect
-       * session that the wallet approved.
+       * Read the approved WalletConnect
+       * session namespaces.
        */
+      const namespace =
+        wcProvider.session
+          ?.namespaces?.eip155;
+
+      const approvedAccounts: string[] =
+        Array.isArray(
+          namespace?.accounts
+        )
+          ? namespace.accounts
+          : [];
+
       const approvedChains =
-        getApprovedChains(
-          ethereumProvider
+        approvedAccounts.map(
+          (
+            account: string
+          ) => {
+            const parts =
+              account.split(
+                ":"
+              );
+
+            if (
+              parts.length >= 2
+            ) {
+              return `eip155:${parts[1]}`;
+            }
+
+            return account;
+          }
         );
 
       console.log(
@@ -242,18 +305,19 @@ export default function DeployScreen() {
       ) {
         throw new Error(
           [
-            `Wallet is not on BNB Smart Chain Testnet.`,
-            ``,
+            "Wallet is not connected to BNB Smart Chain Testnet.",
+            "",
             `Provider chain ID: ${chainInfo.chainId}`,
             `Required chain ID: ${BSC_TESTNET_CHAIN_ID}`,
-            ``,
-            `Please switch the wallet to BNB Smart Chain Testnet and reconnect.`,
+            "",
+            "Switch the wallet to BNB Smart Chain Testnet and reconnect.",
           ].join("\n")
         );
       }
 
       if (
-        approvedChains.length > 0 &&
+        approvedChains.length >
+          0 &&
         !approvedChains.includes(
           `eip155:${BSC_TESTNET_CHAIN_ID}`
         )
@@ -266,21 +330,26 @@ export default function DeployScreen() {
               ", "
             )}`,
             "",
-            "Disconnect the existing WalletConnect session and reconnect on BSC Testnet.",
+            "Disconnect the existing WalletConnect session and reconnect.",
           ].join("\n")
         );
       }
+
+      const nextSessionInfo: WalletConnectSessionInfo =
+        {
+          approvedChains,
+        };
 
       setAddress(
         connectedAddress
       );
 
       setProvider(
-        ethereumProvider as unknown as EIP1193Provider
+        walletProvider
       );
 
-      setWcProvider(
-        ethereumProvider
+      setSessionInfo(
+        nextSessionInfo
       );
 
       setDiagnostics({
@@ -291,12 +360,17 @@ export default function DeployScreen() {
           chainInfo.chainId,
 
         approvedSession:
-          approvedChains.length > 0
-            ? approvedChains.join(", ")
+          approvedChains.length >
+          0
+            ? approvedChains.join(
+                ", "
+              )
             : "Unavailable",
       });
 
-      setState("connected");
+      setState(
+        "connected"
+      );
     } catch (e) {
       console.error(
         "WalletConnect connection error:",
@@ -312,7 +386,10 @@ export default function DeployScreen() {
   }
 
   async function analyzeDeployment() {
-    if (!provider || !address) {
+    if (
+      !provider ||
+      !address
+    ) {
       setError(
         "Connect your wallet before checking deployment."
       );
@@ -327,7 +404,9 @@ export default function DeployScreen() {
 
     try {
       const chainInfo =
-        await getChainInfo(provider);
+        await getChainInfo(
+          provider
+        );
 
       if (
         chainInfo.chainId !==
@@ -350,25 +429,30 @@ export default function DeployScreen() {
       }
 
       const balance =
-        await publicClient.getBalance({
-          address:
-            address as `0x${string}`,
-        });
+        await publicClient.getBalance(
+          {
+            address:
+              address as `0x${string}`,
+          }
+        );
 
       const gasEstimate =
-        await publicClient.estimateGas({
-          account:
-            address as `0x${string}`,
+        await publicClient.estimateGas(
+          {
+            account:
+              address as `0x${string}`,
 
-          data:
-            JOB_ESCROW_BYTECODE as Hex,
-        });
+            data:
+              JOB_ESCROW_BYTECODE as Hex,
+          }
+        );
 
       const gasPrice =
         await publicClient.getGasPrice();
 
       const estimatedFee =
-        gasEstimate * gasPrice;
+        gasEstimate *
+        gasPrice;
 
       const recommendedMinimum =
         addSafetyMargin(
@@ -379,42 +463,48 @@ export default function DeployScreen() {
         balance >=
         recommendedMinimum;
 
-      setDiagnostics({
-        ...diagnostics,
+      setDiagnostics(
+        (
+          previous
+        ) => ({
+          ...previous,
 
-        rawChainId:
-          chainInfo.raw,
+          rawChainId:
+            chainInfo.raw,
 
-        chainId:
-          chainInfo.chainId,
+          chainId:
+            chainInfo.chainId,
 
-        balance:
-          `${formatTbnb(
-            balance
-          )} tBNB`,
+          balance:
+            `${formatTbnb(
+              balance
+            )} tBNB`,
 
-        gasEstimate:
-          gasEstimate.toString(),
+          gasEstimate:
+            gasEstimate.toString(),
 
-        gasPrice:
-          `${formatEther(
-            gasPrice
-          )} BNB`,
+          gasPrice:
+            `${formatEther(
+              gasPrice
+            )} BNB`,
 
-        estimatedFee:
-          `${formatTbnb(
-            estimatedFee
-          )} tBNB`,
+          estimatedFee:
+            `${formatTbnb(
+              estimatedFee
+            )} tBNB`,
 
-        recommendedMinimum:
-          `${formatTbnb(
-            recommendedMinimum
-          )} tBNB`,
+          recommendedMinimum:
+            `${formatTbnb(
+              recommendedMinimum
+            )} tBNB`,
 
-        enoughBalance,
-      });
+          enoughBalance,
+        })
+      );
 
-      setState("connected");
+      setState(
+        "connected"
+      );
     } catch (e) {
       console.error(
         "Deployment analysis failed:",
@@ -430,7 +520,10 @@ export default function DeployScreen() {
   }
 
   async function deploy() {
-    if (!provider || !address) {
+    if (
+      !provider ||
+      !address
+    ) {
       setError(
         "Wallet is not connected."
       );
@@ -446,11 +539,13 @@ export default function DeployScreen() {
     try {
       /*
        * -----------------------------------------
-       * 1. Verify current chain
+       * 1. Check chain again.
        * -----------------------------------------
        */
       const chainInfo =
-        await getChainInfo(provider);
+        await getChainInfo(
+          provider
+        );
 
       if (
         chainInfo.chainId !==
@@ -463,60 +558,66 @@ export default function DeployScreen() {
 
       /*
        * -----------------------------------------
-       * 2. Inspect approved session
+       * 2. Check WalletConnect session.
        * -----------------------------------------
        */
-      if (wcProvider) {
-        const approvedChains =
-          getApprovedChains(
-            wcProvider
-          );
-
-        console.log(
-          "Deployment approved chains:",
-          approvedChains
+      const approvedChains =
+        getApprovedChains(
+          sessionInfo
         );
 
-        if (
-          approvedChains.length > 0 &&
-          !approvedChains.includes(
-            `eip155:${BSC_TESTNET_CHAIN_ID}`
-          )
-        ) {
-          throw new Error(
-            `WalletConnect session is not approved for eip155:${BSC_TESTNET_CHAIN_ID}. Reconnect the wallet on BSC Testnet.`
-          );
-        }
+      if (
+        approvedChains.length >
+          0 &&
+        !approvedChains.includes(
+          `eip155:${BSC_TESTNET_CHAIN_ID}`
+        )
+      ) {
+        throw new Error(
+          [
+            "WalletConnect session is not approved for BSC Testnet.",
+            "",
+            `Approved chains: ${approvedChains.join(
+              ", "
+            )}`,
+            "",
+            "Disconnect and reconnect the wallet on BSC Testnet.",
+          ].join("\n")
+        );
       }
 
       /*
        * -----------------------------------------
-       * 3. Balance
+       * 3. Check balance.
        * -----------------------------------------
        */
       const balance =
-        await publicClient.getBalance({
-          address:
-            address as `0x${string}`,
-        });
+        await publicClient.getBalance(
+          {
+            address:
+              address as `0x${string}`,
+          }
+        );
 
       /*
        * -----------------------------------------
-       * 4. Gas estimate
+       * 4. Estimate gas.
        * -----------------------------------------
        */
       const gasEstimate =
-        await publicClient.estimateGas({
-          account:
-            address as `0x${string}`,
+        await publicClient.estimateGas(
+          {
+            account:
+              address as `0x${string}`,
 
-          data:
-            JOB_ESCROW_BYTECODE as Hex,
-        });
+            data:
+              JOB_ESCROW_BYTECODE as Hex,
+          }
+        );
 
       /*
        * -----------------------------------------
-       * 5. Gas price
+       * 5. Current gas price.
        * -----------------------------------------
        */
       const gasPrice =
@@ -524,11 +625,12 @@ export default function DeployScreen() {
 
       /*
        * -----------------------------------------
-       * 6. Deployment fee
+       * 6. Calculate deployment cost.
        * -----------------------------------------
        */
       const estimatedFee =
-        gasEstimate * gasPrice;
+        gasEstimate *
+        gasPrice;
 
       const recommendedMinimum =
         addSafetyMargin(
@@ -556,56 +658,53 @@ export default function DeployScreen() {
         );
       }
 
-      setDiagnostics({
-        rawChainId:
-          chainInfo.raw,
+      setDiagnostics(
+        (
+          previous
+        ) => ({
+          ...previous,
 
-        chainId:
-          chainInfo.chainId,
+          rawChainId:
+            chainInfo.raw,
 
-        balance:
-          `${formatTbnb(
-            balance
-          )} tBNB`,
+          chainId:
+            chainInfo.chainId,
 
-        gasEstimate:
-          gasEstimate.toString(),
+          balance:
+            `${formatTbnb(
+              balance
+            )} tBNB`,
 
-        gasPrice:
-          `${formatEther(
-            gasPrice
-          )} BNB`,
+          gasEstimate:
+            gasEstimate.toString(),
 
-        estimatedFee:
-          `${formatTbnb(
-            estimatedFee
-          )} tBNB`,
+          gasPrice:
+            `${formatEther(
+              gasPrice
+            )} BNB`,
 
-        recommendedMinimum:
-          `${formatTbnb(
-            recommendedMinimum
-          )} tBNB`,
+          estimatedFee:
+            `${formatTbnb(
+              estimatedFee
+            )} tBNB`,
 
-        enoughBalance: true,
-      });
+          recommendedMinimum:
+            `${formatTbnb(
+              recommendedMinimum
+            )} tBNB`,
+
+          enoughBalance:
+            true,
+        })
+      );
 
       /*
        * -----------------------------------------
-       * 7. RAW WalletConnect transaction
+       * 7. Build raw EIP-1193 transaction.
        *
-       * This is deliberately NOT:
-       *
-       * walletClient.deployContract()
-       *
-       * We directly call EIP-1193:
-       *
-       * eth_sendTransaction
-       *
-       * Omitting "to" makes this a contract
-       * creation request.
+       * No "to" field means contract creation.
        * -----------------------------------------
        */
-
       const transaction = {
         from:
           address as `0x${string}`,
@@ -623,7 +722,8 @@ export default function DeployScreen() {
             gasPrice
           ),
 
-        value: "0x0",
+        value:
+          "0x0" as const,
       };
 
       console.log(
@@ -631,23 +731,46 @@ export default function DeployScreen() {
         transaction
       );
 
+      /*
+       * EIP-1193 providers support
+       * eth_sendTransaction, but the exact
+       * TypeScript overload exposed by the
+       * provider package is too narrow for this
+       * raw contract-creation request.
+       *
+       * The runtime call is still standard
+       * EIP-1193.
+       */
+      const eip1193 =
+        provider as EIP1193Provider & {
+          request: (
+            args: {
+              method: string;
+              params?: unknown[];
+            }
+          ) => Promise<unknown>;
+        };
+
       let hash: string;
 
       try {
         const result =
-          await provider.request({
-            method:
-              "eth_sendTransaction",
+          await eip1193.request(
+            {
+              method:
+                "eth_sendTransaction",
 
-            params: [
-              transaction,
-            ],
-          });
+              params: [
+                transaction,
+              ],
+            }
+          );
 
-        hash = String(result);
+        hash =
+          String(result);
       } catch (walletError) {
         console.error(
-          "Raw WalletConnect transaction error:",
+          "Wallet transaction error:",
           walletError
         );
 
@@ -655,31 +778,38 @@ export default function DeployScreen() {
           [
             "Wallet rejected or failed the raw deployment transaction.",
             "",
-            formatError(walletError),
+            formatError(
+              walletError
+            ),
             "",
-            "The request was sent directly through EIP-1193 eth_sendTransaction.",
+            "The request was sent directly using EIP-1193 eth_sendTransaction.",
           ].join("\n")
         );
       }
 
-      if (!hash) {
+      if (
+        !hash ||
+        hash === "undefined" ||
+        hash === "null"
+      ) {
         throw new Error(
           "Wallet did not return a transaction hash."
         );
       }
 
       setTxHash(
-        hash as `0x${string}`
+        hash
       );
 
-      setState("confirming");
+      setState(
+        "confirming"
+      );
 
       /*
        * -----------------------------------------
-       * 8. Wait for confirmation
+       * 8. Wait for the blockchain receipt.
        * -----------------------------------------
        */
-
       const receipt =
         await publicClient.waitForTransactionReceipt(
           {
@@ -714,7 +844,9 @@ export default function DeployScreen() {
         receipt.contractAddress
       );
 
-      setState("done");
+      setState(
+        "done"
+      );
     } catch (e) {
       console.error(
         "Deployment failed:",
@@ -732,15 +864,18 @@ export default function DeployScreen() {
   function reset() {
     setError(null);
     setTxHash(null);
-    setContractAddress(null);
-
+    setContractAddress(
+      null
+    );
     setDiagnostics({});
 
     if (
       provider &&
       address
     ) {
-      setState("connected");
+      setState(
+        "connected"
+      );
     } else {
       setState("idle");
     }
@@ -765,15 +900,25 @@ export default function DeployScreen() {
           {state === "idle" && (
             <>
               <div style={styles.infoBox}>
-                <div style={styles.infoTitle}>
+                <div
+                  style={
+                    styles.infoTitle
+                  }
+                >
                   Testnet Deployment
                 </div>
 
-                <p style={styles.infoText}>
-                  Connect your wallet and the
+                <p
+                  style={
+                    styles.infoText
+                  }
+                >
+                  Connect your wallet. The
                   application will verify the
-                  WalletConnect session, network,
-                  balance and deployment fee.
+                  network, WalletConnect session,
+                  balance and gas cost before
+                  requesting the deployment
+                  signature.
                 </p>
 
                 <a
@@ -787,7 +932,9 @@ export default function DeployScreen() {
               </div>
 
               <button
-                style={styles.primaryButton}
+                style={
+                  styles.primaryButton
+                }
                 onClick={connect}
               >
                 Connect Wallet
@@ -798,7 +945,9 @@ export default function DeployScreen() {
           {state ===
             "connecting" && (
             <div style={styles.status}>
-              <span style={styles.spinner} />
+              <span
+                style={styles.spinner}
+              />
               Connecting wallet…
             </div>
           )}
@@ -818,7 +967,11 @@ export default function DeployScreen() {
                 {address}
               </div>
 
-              <div style={styles.infoPanel}>
+              <div
+                style={
+                  styles.infoPanel
+                }
+              >
                 <InfoRow
                   label="Raw chain ID"
                   value={
@@ -828,7 +981,7 @@ export default function DeployScreen() {
                 />
 
                 <InfoRow
-                  label="Normalized chain ID"
+                  label="Chain ID"
                   value={
                     diagnostics.chainId !==
                     undefined
@@ -951,8 +1104,7 @@ export default function DeployScreen() {
                       styles.spinner
                     }
                   />
-                  Calculating deployment
-                  requirements…
+                  Calculating deployment cost…
                 </div>
               )}
 
@@ -964,25 +1116,21 @@ export default function DeployScreen() {
                       styles.spinner
                     }
                   />
-                  Confirm the raw contract
-                  deployment in your wallet…
+                  Confirm the contract deployment
+                  in your wallet…
                 </div>
               )}
 
               {state ===
                 "confirming" && (
-                <div>
-                  <div
-                    style={
-                      styles.status
-                    }
-                  >
+                <>
+                  <div style={styles.status}>
                     <span
                       style={
                         styles.spinner
                       }
                     />
-                    Waiting for BSC Testnet
+                    Waiting for blockchain
                     confirmation…
                   </div>
 
@@ -995,10 +1143,10 @@ export default function DeployScreen() {
                         styles.linkBlock
                       }
                     >
-                      View transaction ↗
+                      View transaction on BscScan ↗
                     </a>
                   )}
-                </div>
+                </>
               )}
             </>
           )}
@@ -1006,14 +1154,22 @@ export default function DeployScreen() {
           {state === "done" &&
             contractAddress && (
               <div style={styles.doneBox}>
-                <div style={styles.doneTitle}>
+                <div
+                  style={
+                    styles.doneTitle
+                  }
+                >
                   ✓ JobEscrow deployed
                   successfully
                 </div>
 
-                <p style={styles.doneText}>
-                  The contract has been deployed
-                  to BNB Smart Chain Testnet.
+                <p
+                  style={
+                    styles.doneText
+                  }
+                >
+                  The contract has been successfully
+                  deployed to BNB Smart Chain Testnet.
                 </p>
 
                 <div style={styles.label}>
@@ -1050,7 +1206,7 @@ export default function DeployScreen() {
                       styles.linkBlock
                     }
                   >
-                    View transaction on BscScan ↗
+                    View deployment transaction ↗
                   </a>
                 )}
 
@@ -1070,7 +1226,9 @@ export default function DeployScreen() {
           {state === "error" && (
             <div style={styles.errorBox}>
               <div
-                style={styles.errorTitle}
+                style={
+                  styles.errorTitle
+                }
               >
                 Deployment Error
               </div>
@@ -1152,7 +1310,9 @@ function formatError(
     return error.message;
   }
 
-  if (typeof error === "string") {
+  if (
+    typeof error === "string"
+  ) {
     return error;
   }
 
@@ -1194,8 +1354,8 @@ const styles: Record<
 
   subtitle: {
     fontSize: 13,
-    lineHeight: 1.6,
     color: "#8b8982",
+    lineHeight: 1.6,
     marginBottom: 24,
   },
 
@@ -1217,15 +1377,15 @@ const styles: Record<
   },
 
   infoTitle: {
-    color: "#f0b90b",
     fontSize: 14,
     fontWeight: 800,
+    color: "#f0b90b",
     marginBottom: 8,
   },
 
   infoText: {
-    color: "#aaa69e",
     fontSize: 13,
+    color: "#aaa69e",
     lineHeight: 1.6,
     margin: "0 0 8px",
   },
