@@ -1,22 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
-import { createWalletClient, custom, parseEther, type Address } from "viem";
+import { createWalletClient, custom, parseEther, type Address, type EIP1193Provider } from "viem";
 import { bsc } from "viem/chains";
+import { EthereumProvider } from "@walletconnect/ethereum-provider";
 
-declare global {
-  interface Window {
-    ethereum?: {
-      request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
-      on?: (event: string, handler: (...args: unknown[]) => void) => void;
-      removeListener?: (event: string, handler: (...args: unknown[]) => void) => void;
-    };
-  }
-}
+const WALLETCONNECT_PROJECT_ID = "e2cede9b7a12cd850161e85bc7fc61ce";
 
 type WalletState = {
   address: Address | null;
   connecting: boolean;
   error: string | null;
+  provider: EIP1193Provider | null;
 };
 
 type Agent = {
@@ -88,33 +82,49 @@ export default function App() {
   const [activeCategory, setActiveCategory] = useState("all");
   const [page, setPage] = useState(0);
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
-  const [wallet, setWallet] = useState<WalletState>({ address: null, connecting: false, error: null });
+  const [wallet, setWallet] = useState<WalletState>({
+    address: null,
+    connecting: false,
+    error: null,
+    provider: null,
+  });
 
   async function connectWallet() {
-    if (!window.ethereum) {
-      setWallet((w) => ({ ...w, error: "No wallet found. Install MetaMask or Trust Wallet to continue." }));
-      return;
-    }
     setWallet((w) => ({ ...w, connecting: true, error: null }));
     try {
-      const accounts = (await window.ethereum.request({ method: "eth_requestAccounts" })) as string[];
-      // Ensure we're on BNB Smart Chain (chainId 0x38 = 56) — switch if needed.
-      try {
-        await window.ethereum.request({
-          method: "wallet_switchEthereumChain",
-          params: [{ chainId: "0x38" }],
-        });
-      } catch {
-        // If the chain isn't added to the wallet yet, this will fail silently
-        // here; the transaction step will surface a clearer error if the
-        // wrong network is still active.
+      const provider = await EthereumProvider.init({
+        projectId: WALLETCONNECT_PROJECT_ID,
+        chains: [56], // BNB Smart Chain mainnet
+        showQrModal: true,
+        metadata: {
+          name: "Agent Registry",
+          description: "ERC-8004 agent marketplace on BNB Smart Chain",
+          url: window.location.origin,
+          icons: [],
+        },
+      });
+
+      // This opens the WalletConnect modal — a QR code on desktop, or a
+      // direct list of installed wallet apps to deep-link into on mobile.
+      await provider.connect();
+
+      const accounts = provider.accounts as string[];
+      if (!accounts || accounts.length === 0) {
+        throw new Error("No account returned from wallet.");
       }
-      setWallet({ address: accounts[0] as Address, connecting: false, error: null });
+
+      setWallet({
+        address: accounts[0] as Address,
+        connecting: false,
+        error: null,
+        provider: provider as unknown as EIP1193Provider,
+      });
     } catch (e) {
       setWallet({
         address: null,
         connecting: false,
-        error: e instanceof Error ? e.message : "Wallet connection was rejected.",
+        error: e instanceof Error ? e.message : "Wallet connection was rejected or failed.",
+        provider: null,
       });
     }
   }
@@ -348,7 +358,7 @@ function AgentDetail({
   }
 
   async function confirmActivate() {
-    if (!wallet.address || !window.ethereum) return;
+    if (!wallet.address || !wallet.provider) return;
     if (!isValidOwner) {
       setTxError("This agent's owner address isn't valid — can't send payment.");
       setActivateState("error");
@@ -359,7 +369,7 @@ function AgentDetail({
     try {
       const walletClient = createWalletClient({
         chain: bsc,
-        transport: custom(window.ethereum),
+        transport: custom(wallet.provider),
       });
 
       // Real onchain transaction: a small activation payment sent directly
@@ -455,7 +465,7 @@ function AgentDetail({
             {!wallet.address && (
               <>
                 <button style={styles.activateBtn} onClick={onConnectWallet} disabled={wallet.connecting}>
-                  {wallet.connecting ? "Connecting…" : "Connect Wallet to Activate"}
+                  {wallet.connecting ? "Opening wallet connect…" : "Connect Wallet to Activate"}
                 </button>
                 {wallet.error && <p style={styles.errorText}>{wallet.error}</p>}
               </>
