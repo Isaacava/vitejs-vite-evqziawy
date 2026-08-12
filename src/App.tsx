@@ -92,21 +92,29 @@ export default function App() {
   async function connectWallet() {
     setWallet((w) => ({ ...w, connecting: true, error: null }));
     try {
-      const provider = await EthereumProvider.init({
-        projectId: WALLETCONNECT_PROJECT_ID,
-        chains: [56], // BNB Smart Chain mainnet
-        showQrModal: true,
-        metadata: {
-          name: "Agent Registry",
-          description: "ERC-8004 agent marketplace on BNB Smart Chain",
-          url: window.location.origin,
-          icons: [],
-        },
-      });
+      console.log("Initializing WalletConnect provider…");
+      const provider = await Promise.race([
+        EthereumProvider.init({
+          projectId: WALLETCONNECT_PROJECT_ID,
+          chains: [56], // BNB Smart Chain mainnet
+          showQrModal: true,
+          metadata: {
+            name: "Agent Registry",
+            description: "ERC-8004 agent marketplace on BNB Smart Chain",
+            url: window.location.origin,
+            icons: [],
+          },
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("WalletConnect init timed out after 15s")), 15000)
+        ),
+      ]);
+      console.log("WalletConnect provider initialized, opening connect flow…");
 
       // This opens the WalletConnect modal — a QR code on desktop, or a
       // direct list of installed wallet apps to deep-link into on mobile.
       await provider.connect();
+      console.log("WalletConnect connect() resolved");
 
       const accounts = provider.accounts as string[];
       if (!accounts || accounts.length === 0) {
@@ -120,6 +128,7 @@ export default function App() {
         provider: provider as unknown as EIP1193Provider,
       });
     } catch (e) {
+      console.error("WalletConnect connection failed:", e);
       setWallet({
         address: null,
         connecting: false,
