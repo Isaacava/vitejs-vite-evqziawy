@@ -20,6 +20,17 @@ const WALLETCONNECT_PROJECT_ID =
 
 const BSC_TESTNET_CHAIN_ID = 97;
 
+// Safety margin for the displayed maximum fee.
+// This is NOT added to the transaction itself.
+// It is only used to decide whether the balance is
+// comfortably above the estimated deployment fee.
+const FEE_SAFETY_BPS = 2000n; // +20%
+
+const publicClient = createPublicClient({
+  chain: bscTestnet,
+  transport: http(),
+});
+
 type DeployState =
   | "idle"
   | "connecting"
@@ -35,21 +46,13 @@ type Diagnostics = {
   rawChainId?: string;
   balance?: string;
   gasEstimate?: string;
+  gasPrice?: string;
+  estimatedFee?: string;
+  maxFeeWithBuffer?: string;
+  enoughBalance?: boolean;
+  shortfall?: string;
 };
 
-const publicClient = createPublicClient({
-  chain: bscTestnet,
-  transport: http(),
-});
-
-/**
- * Normalize chain IDs returned by different wallet providers.
- *
- * Examples:
- * "97"   -> 97
- * "0x61" -> 97
- * 97     -> 97
- */
 function normalizeChainId(value: unknown): number {
   if (typeof value === "number") {
     return value;
@@ -60,33 +63,29 @@ function normalizeChainId(value: unknown): number {
   }
 
   if (typeof value === "string") {
-    const valueTrimmed = value.trim();
+    const trimmed = value.trim();
 
-    if (valueTrimmed.toLowerCase().startsWith("0x")) {
-      return parseInt(valueTrimmed, 16);
+    if (trimmed.toLowerCase().startsWith("0x")) {
+      return parseInt(trimmed, 16);
     }
 
-    const decimalValue = Number(valueTrimmed);
+    const decimal = Number(trimmed);
 
-    if (Number.isFinite(decimalValue)) {
-      return decimalValue;
+    if (Number.isFinite(decimal)) {
+      return decimal;
     }
   }
 
   throw new Error(
-    `Unable to determine wallet chain ID. Received: ${String(value)}`
+    `Unable to determine wallet chain ID. Received: ${String(
+      value
+    )}`
   );
 }
 
-/**
- * Read chain ID from the connected wallet provider.
- */
 async function getChainInfo(
   walletProvider: EIP1193Provider
-): Promise<{
-  raw: string;
-  chainId: number;
-}> {
+) {
   const result = await walletProvider.request({
     method: "eth_chainId",
   });
@@ -95,6 +94,20 @@ async function getChainInfo(
     raw: String(result),
     chainId: normalizeChainId(result),
   };
+}
+
+function formatTbnb(value: bigint): string {
+  return Number(formatEther(value)).toFixed(8);
+}
+
+function calculateMaxFeeWithBuffer(
+  fee: bigint
+): bigint {
+  return (
+    fee +
+    (fee * FEE_SAFETY_BPS) /
+      10000n
+  );
 }
 
 export default function DeployScreen() {
@@ -119,9 +132,6 @@ export default function DeployScreen() {
   const [diagnostics, setDiagnostics] =
     useState<Diagnostics>({});
 
-  /**
-   * Connect WalletConnect wallet.
-   */
   async function connect() {
     setState("connecting");
     setError(null);
@@ -148,7 +158,7 @@ export default function DeployScreen() {
           metadata: {
             name: "JobEscrow Deployer",
             description:
-              "One-time JobEscrow deployment to BNB Smart Chain Testnet",
+              "Deploy JobEscrow to BNB Smart Chain Testnet",
             url: window.location.origin,
             icons: [],
           },
@@ -159,9 +169,12 @@ export default function DeployScreen() {
       const accounts =
         wcProvider.accounts as string[];
 
-      if (!accounts || accounts.length === 0) {
+      if (
+        !accounts ||
+        accounts.length === 0
+      ) {
         throw new Error(
-          "No wallet account was returned."
+          "Wallet connected but no account was returned."
         );
       }
 
@@ -174,18 +187,11 @@ export default function DeployScreen() {
         );
 
       console.log(
-        "WalletConnect raw chain ID:",
-        chainInfo.raw
+        "WalletConnect chain:",
+        chainInfo
       );
 
-      console.log(
-        "WalletConnect normalized chain ID:",
-        chainInfo.chainId
-      );
-
-      setAddress(
-        connectedAddress
-      );
+      setAddress(connectedAddress);
 
       setProvider(
         wcProvider as unknown as EIP1193Provider
@@ -199,11 +205,6 @@ export default function DeployScreen() {
           chainInfo.chainId,
       });
 
-      /**
-       * IMPORTANT:
-       *
-       * "97" and "0x61" both become 97.
-       */
       if (
         chainInfo.chainId !==
         BSC_TESTNET_CHAIN_ID
@@ -216,22 +217,16 @@ export default function DeployScreen() {
       setState("connected");
     } catch (e) {
       console.error(
-        "Wallet connection failed:",
+        "Wallet connection error:",
         e
       );
 
-      setError(
-        formatError(e)
-      );
-
+      setError(formatError(e));
       setState("error");
     }
   }
 
-  /**
-   * Verify everything before deployment.
-   */
-  async function checkDeployment() {
+  async function analyzeDeployment() {
     if (!provider || !address) {
       setError(
         "Connect your wallet before checking deployment."
@@ -246,9 +241,9 @@ export default function DeployScreen() {
     setError(null);
 
     try {
-      /**
-       * Check network.
-       */
+      // --------------------------------------------------
+      // 1. Network
+      // --------------------------------------------------
       const chainInfo =
         await getChainInfo(provider);
 
@@ -261,27 +256,18 @@ export default function DeployScreen() {
         );
       }
 
-      /**
-       * Check wallet balance.
-       */
+      // --------------------------------------------------
+      // 2. Balance
+      // --------------------------------------------------
       const balance =
         await publicClient.getBalance({
           address:
             address as `0x${string}`,
         });
 
-      const formattedBalance =
-        formatEther(balance);
-
-      if (balance === 0n) {
-        throw new Error(
-          "Your wallet has 0 BNB on BNB Smart Chain Testnet. Get testnet BNB before deploying."
-        );
-      }
-
-      /**
-       * Check bytecode.
-       */
+      // --------------------------------------------------
+      // 3. Validate bytecode
+      // --------------------------------------------------
       if (
         !JOB_ESCROW_BYTECODE ||
         typeof JOB_ESCROW_BYTECODE !==
@@ -302,17 +288,9 @@ export default function DeployScreen() {
         );
       }
 
-      if (
-        JOB_ESCROW_BYTECODE.length < 100
-      ) {
-        throw new Error(
-          "JobEscrow bytecode appears to be incomplete."
-        );
-      }
-
-      /**
-       * Estimate deployment gas.
-       */
+      // --------------------------------------------------
+      // 4. Estimate gas
+      // --------------------------------------------------
       const gasEstimate =
         await publicClient.estimateGas({
           account:
@@ -322,6 +300,36 @@ export default function DeployScreen() {
             JOB_ESCROW_BYTECODE as Hex,
         });
 
+      // --------------------------------------------------
+      // 5. Current gas price
+      // --------------------------------------------------
+      const gasPrice =
+        await publicClient.getGasPrice();
+
+      // --------------------------------------------------
+      // 6. Estimated deployment fee
+      //
+      // fee = gas * gas price
+      // --------------------------------------------------
+      const estimatedFee =
+        gasEstimate * gasPrice;
+
+      // --------------------------------------------------
+      // 7. Add 20% display safety buffer
+      // --------------------------------------------------
+      const maxFeeWithBuffer =
+        calculateMaxFeeWithBuffer(
+          estimatedFee
+        );
+
+      const enoughBalance =
+        balance >= maxFeeWithBuffer;
+
+      const shortfall =
+        enoughBalance
+          ? 0n
+          : maxFeeWithBuffer - balance;
+
       setDiagnostics({
         rawChainId:
           chainInfo.raw,
@@ -330,30 +338,46 @@ export default function DeployScreen() {
           chainInfo.chainId,
 
         balance:
-          formattedBalance,
+          formatTbnb(balance),
 
         gasEstimate:
           gasEstimate.toString(),
+
+        gasPrice:
+          `${formatEther(gasPrice)} BNB`,
+
+        estimatedFee:
+          `${formatTbnb(
+            estimatedFee
+          )} tBNB`,
+
+        maxFeeWithBuffer:
+          `${formatTbnb(
+            maxFeeWithBuffer
+          )} tBNB`,
+
+        enoughBalance,
+
+        shortfall:
+          shortfall > 0n
+            ? `${formatTbnb(
+                shortfall
+              )} tBNB`
+            : "0",
       });
 
       setState("connected");
     } catch (e) {
       console.error(
-        "Deployment check failed:",
+        "Deployment analysis failed:",
         e
       );
 
-      setError(
-        formatError(e)
-      );
-
+      setError(formatError(e));
       setState("error");
     }
   }
 
-  /**
-   * Deploy JobEscrow.
-   */
   async function deploy() {
     if (!provider || !address) {
       setError(
@@ -369,17 +393,11 @@ export default function DeployScreen() {
     setError(null);
 
     try {
-      /**
-       * Re-check chain immediately before
-       * requesting the wallet signature.
-       */
+      // --------------------------------------------------
+      // Re-check network
+      // --------------------------------------------------
       const chainInfo =
         await getChainInfo(provider);
-
-      console.log(
-        "Deployment chain:",
-        chainInfo
-      );
 
       if (
         chainInfo.chainId !==
@@ -390,25 +408,18 @@ export default function DeployScreen() {
         );
       }
 
-      /**
-       * Check balance.
-       */
+      // --------------------------------------------------
+      // Get latest balance
+      // --------------------------------------------------
       const balance =
         await publicClient.getBalance({
           address:
             address as `0x${string}`,
         });
 
-      if (balance === 0n) {
-        throw new Error(
-          "Insufficient testnet BNB. Your wallet has 0 BNB."
-        );
-      }
-
-      /**
-       * Estimate deployment gas before
-       * opening the wallet confirmation.
-       */
+      // --------------------------------------------------
+      // Re-estimate gas
+      // --------------------------------------------------
       const gasEstimate =
         await publicClient.estimateGas({
           account:
@@ -418,6 +429,76 @@ export default function DeployScreen() {
             JOB_ESCROW_BYTECODE as Hex,
         });
 
+      // --------------------------------------------------
+      // Get latest gas price
+      // --------------------------------------------------
+      const gasPrice =
+        await publicClient.getGasPrice();
+
+      const estimatedFee =
+        gasEstimate * gasPrice;
+
+      const maxFeeWithBuffer =
+        calculateMaxFeeWithBuffer(
+          estimatedFee
+        );
+
+      const enoughBalance =
+        balance >= maxFeeWithBuffer;
+
+      if (!enoughBalance) {
+        const shortfall =
+          maxFeeWithBuffer - balance;
+
+        setDiagnostics({
+          rawChainId:
+            chainInfo.raw,
+
+          chainId:
+            chainInfo.chainId,
+
+          balance:
+            formatTbnb(balance),
+
+          gasEstimate:
+            gasEstimate.toString(),
+
+          gasPrice:
+            `${formatEther(
+              gasPrice
+            )} BNB`,
+
+          estimatedFee:
+            `${formatTbnb(
+              estimatedFee
+            )} tBNB`,
+
+          maxFeeWithBuffer:
+            `${formatTbnb(
+              maxFeeWithBuffer
+            )} tBNB`,
+
+          enoughBalance: false,
+
+          shortfall:
+            `${formatTbnb(
+              shortfall
+            )} tBNB`,
+        });
+
+        throw new Error(
+          `Insufficient testnet BNB.\n\nBalance: ${formatTbnb(
+            balance
+          )} tBNB\nEstimated fee: ${formatTbnb(
+            estimatedFee
+          )} tBNB\nRecommended minimum: ${formatTbnb(
+            maxFeeWithBuffer
+          )} tBNB\nShortfall: ${formatTbnb(
+            shortfall
+          )} tBNB\n\nGet more BNB Smart Chain Testnet BNB before deploying.`
+        );
+      }
+
       setDiagnostics({
         rawChainId:
           chainInfo.raw,
@@ -426,15 +507,34 @@ export default function DeployScreen() {
           chainInfo.chainId,
 
         balance:
-          formatEther(balance),
+          formatTbnb(balance),
 
         gasEstimate:
           gasEstimate.toString(),
+
+        gasPrice:
+          `${formatEther(
+            gasPrice
+          )} BNB`,
+
+        estimatedFee:
+          `${formatTbnb(
+            estimatedFee
+          )} tBNB`,
+
+        maxFeeWithBuffer:
+          `${formatTbnb(
+            maxFeeWithBuffer
+          )} tBNB`,
+
+        enoughBalance: true,
+
+        shortfall: "0",
       });
 
-      /**
-       * Create wallet client.
-       */
+      // --------------------------------------------------
+      // Create wallet client
+      // --------------------------------------------------
       const walletClient =
         createWalletClient({
           account:
@@ -447,12 +547,11 @@ export default function DeployScreen() {
             custom(provider),
         });
 
-      /**
-       * Send deployment transaction.
-       */
+      // --------------------------------------------------
+      // Wallet confirmation
+      // --------------------------------------------------
       let hash:
-        | `0x${string}`
-        | undefined;
+        | `0x${string}`;
 
       try {
         hash =
@@ -465,6 +564,9 @@ export default function DeployScreen() {
 
             bytecode:
               JOB_ESCROW_BYTECODE,
+
+            // Let the wallet/provider choose
+            // the final gas settings.
           });
       } catch (walletError) {
         console.error(
@@ -480,12 +582,11 @@ export default function DeployScreen() {
       }
 
       setTxHash(hash);
-
       setState("confirming");
 
-      /**
-       * Wait for transaction confirmation.
-       */
+      // --------------------------------------------------
+      // Wait for receipt
+      // --------------------------------------------------
       const receipt =
         await publicClient.waitForTransactionReceipt(
           {
@@ -511,7 +612,7 @@ export default function DeployScreen() {
         !receipt.contractAddress
       ) {
         throw new Error(
-          "Deployment succeeded but no contract address was returned."
+          "Deployment succeeded, but no contract address was returned."
         );
       }
 
@@ -526,17 +627,11 @@ export default function DeployScreen() {
         e
       );
 
-      setError(
-        formatError(e)
-      );
-
+      setError(formatError(e));
       setState("error");
     }
   }
 
-  /**
-   * Reset screen.
-   */
   function reset() {
     setError(null);
     setTxHash(null);
@@ -554,31 +649,41 @@ export default function DeployScreen() {
     <div style={styles.page}>
       <div style={styles.container}>
         <h1 style={styles.title}>
-          Deploy JobEscrow
+          JobEscrow Deployment
         </h1>
 
         <p style={styles.subtitle}>
-          One-time deployment to BNB Smart Chain{" "}
-          <strong>Testnet</strong>.
+          Deploy JobEscrow to{" "}
+          <strong>
+            BNB Smart Chain Testnet
+          </strong>
+          .
           <br />
-          Required chain ID:{" "}
-          <strong>97</strong>.
-          <br />
-          You'll need free testnet BNB for gas.
+          Chain ID: <strong>97</strong>
         </p>
 
         <div style={styles.card}>
+          {/* ------------------------------------------ */}
           {/* IDLE */}
+          {/* ------------------------------------------ */}
+
           {state === "idle" && (
             <>
               <div style={styles.infoBox}>
                 <div style={styles.infoTitle}>
-                  BNB Smart Chain Testnet
+                  Testnet Deployment
                 </div>
 
                 <p style={styles.infoText}>
-                  Connect the wallet that will deploy
-                  the JobEscrow contract.
+                  Connect the wallet that will
+                  deploy the contract.
+                </p>
+
+                <p style={styles.infoText}>
+                  The page will check your
+                  balance and calculate the
+                  deployment fee before asking
+                  you to sign.
                 </p>
 
                 <a
@@ -587,7 +692,7 @@ export default function DeployScreen() {
                   rel="noreferrer"
                   style={styles.link}
                 >
-                  Open BNB Testnet Faucet ↗
+                  Get BSC Testnet BNB ↗
                 </a>
               </div>
 
@@ -600,15 +705,21 @@ export default function DeployScreen() {
             </>
           )}
 
+          {/* ------------------------------------------ */}
           {/* CONNECTING */}
+          {/* ------------------------------------------ */}
+
           {state === "connecting" && (
             <div style={styles.status}>
               <span style={styles.spinner} />
-              Opening wallet connection…
+              Connecting wallet…
             </div>
           )}
 
-          {/* CONNECTED / CHECKING / DEPLOYING / CONFIRMING */}
+          {/* ------------------------------------------ */}
+          {/* CONNECTED / CHECKING / DEPLOYING */}
+          {/* ------------------------------------------ */}
+
           {(
             state === "connected" ||
             state === "checking" ||
@@ -632,18 +743,18 @@ export default function DeployScreen() {
 
                   <strong style={styles.infoValue}>
                     {diagnostics.rawChainId ??
-                      "97"}
+                      "—"}
                   </strong>
                 </div>
 
                 <div style={styles.infoRow}>
                   <span style={styles.infoKey}>
-                    Normalized chain ID
+                    Chain ID
                   </span>
 
                   <strong style={styles.infoValue}>
                     {diagnostics.chainId ??
-                      "97"}
+                      "—"}
                   </strong>
                 </div>
 
@@ -652,7 +763,7 @@ export default function DeployScreen() {
                     Network
                   </span>
 
-                  <strong style={styles.infoValue}>
+                  <strong style={styles.successValue}>
                     BNB Smart Chain Testnet
                   </strong>
                 </div>
@@ -680,9 +791,74 @@ export default function DeployScreen() {
                     </strong>
                   </div>
                 )}
+
+                {diagnostics.gasPrice && (
+                  <div style={styles.infoRow}>
+                    <span style={styles.infoKey}>
+                      Current gas price
+                    </span>
+
+                    <strong style={styles.infoValue}>
+                      {diagnostics.gasPrice}
+                    </strong>
+                  </div>
+                )}
+
+                {diagnostics.estimatedFee && (
+                  <div style={styles.feeRow}>
+                    <span style={styles.infoKey}>
+                      Estimated deployment fee
+                    </span>
+
+                    <strong style={styles.feeValue}>
+                      {diagnostics.estimatedFee}
+                    </strong>
+                  </div>
+                )}
+
+                {diagnostics.maxFeeWithBuffer && (
+                  <div style={styles.feeRow}>
+                    <span style={styles.infoKey}>
+                      Recommended minimum
+                    </span>
+
+                    <strong style={styles.feeValue}>
+                      {diagnostics.maxFeeWithBuffer}
+                    </strong>
+                  </div>
+                )}
+
+                {diagnostics.enoughBalance !==
+                  undefined && (
+                  <div
+                    style={
+                      diagnostics.enoughBalance
+                        ? styles.balanceGood
+                        : styles.balanceBad
+                    }
+                  >
+                    {diagnostics.enoughBalance
+                      ? "✓ Balance is sufficient for the estimated deployment."
+                      : "✕ Balance may be insufficient for the estimated deployment."}
+                  </div>
+                )}
+
+                {diagnostics.shortfall &&
+                  diagnostics.shortfall !==
+                    "0" && (
+                    <div style={styles.shortfall}>
+                      Shortfall:{" "}
+                      <strong>
+                        {diagnostics.shortfall}
+                      </strong>
+                    </div>
+                  )}
               </div>
 
-              {/* CHECK DEPLOYMENT */}
+              {/* -------------------------------------- */}
+              {/* CONNECTED */}
+              {/* -------------------------------------- */}
+
               {state === "connected" && (
                 <>
                   <button
@@ -690,14 +866,15 @@ export default function DeployScreen() {
                       styles.secondaryButton
                     }
                     onClick={
-                      checkDeployment
+                      analyzeDeployment
                     }
                   >
-                    Check Deployment
+                    Check Deployment Cost
                   </button>
 
-                  {diagnostics.balance &&
-                    diagnostics.gasEstimate && (
+                  {diagnostics.enoughBalance &&
+                    diagnostics.balance &&
+                    diagnostics.estimatedFee && (
                       <button
                         style={
                           styles.primaryButton
@@ -707,33 +884,56 @@ export default function DeployScreen() {
                         Deploy JobEscrow
                       </button>
                     )}
+
+                  {!diagnostics.enoughBalance &&
+                    diagnostics.balance && (
+                      <div
+                        style={
+                          styles.warningBox
+                        }
+                      >
+                        You need more testnet BNB
+                        before deployment can
+                        continue.
+                      </div>
+                    )}
                 </>
               )}
 
+              {/* -------------------------------------- */}
               {/* CHECKING */}
+              {/* -------------------------------------- */}
+
               {state === "checking" && (
                 <div style={styles.status}>
                   <span style={styles.spinner} />
-                  Checking network, balance,
-                  bytecode and gas…
+                  Calculating deployment gas and
+                  fee…
                 </div>
               )}
 
+              {/* -------------------------------------- */}
               {/* DEPLOYING */}
+              {/* -------------------------------------- */}
+
               {state === "deploying" && (
                 <div style={styles.status}>
                   <span style={styles.spinner} />
-                  Waiting for wallet signature…
+                  Confirm the deployment in your
+                  wallet…
                 </div>
               )}
 
+              {/* -------------------------------------- */}
               {/* CONFIRMING */}
+              {/* -------------------------------------- */}
+
               {state === "confirming" && (
-                <div>
+                <>
                   <div style={styles.status}>
                     <span style={styles.spinner} />
-                    Confirming deployment on
-                    BNB Smart Chain Testnet…
+                    Waiting for blockchain
+                    confirmation…
                   </div>
 
                   {txHash && (
@@ -741,27 +941,35 @@ export default function DeployScreen() {
                       href={`https://testnet.bscscan.com/tx/${txHash}`}
                       target="_blank"
                       rel="noreferrer"
-                      style={styles.linkBlock}
+                      style={
+                        styles.linkBlock
+                      }
                     >
-                      View deployment transaction ↗
+                      View transaction on
+                      BscScan ↗
                     </a>
                   )}
-                </div>
+                </>
               )}
             </>
           )}
 
+          {/* ------------------------------------------ */}
           {/* SUCCESS */}
+          {/* ------------------------------------------ */}
+
           {state === "done" &&
             contractAddress && (
               <div style={styles.doneBox}>
                 <div style={styles.doneTitle}>
-                  ✓ Contract deployed successfully
+                  ✓ JobEscrow deployed
+                  successfully
                 </div>
 
                 <p style={styles.doneText}>
-                  JobEscrow is now deployed on
-                  BNB Smart Chain Testnet.
+                  The smart contract has been
+                  successfully deployed to BNB
+                  Smart Chain Testnet.
                 </p>
 
                 <div style={styles.label}>
@@ -790,9 +998,12 @@ export default function DeployScreen() {
                     href={`https://testnet.bscscan.com/tx/${txHash}`}
                     target="_blank"
                     rel="noreferrer"
-                    style={styles.linkBlock}
+                    style={
+                      styles.linkBlock
+                    }
                   >
-                    View deployment transaction ↗
+                    View deployment transaction
+                    ↗
                   </a>
                 )}
 
@@ -800,14 +1011,19 @@ export default function DeployScreen() {
                   href={`https://testnet.bscscan.com/address/${contractAddress}`}
                   target="_blank"
                   rel="noreferrer"
-                  style={styles.linkBlock}
+                  style={
+                    styles.linkBlock
+                  }
                 >
-                  View contract on BscScan Testnet ↗
+                  View contract on BscScan ↗
                 </a>
               </div>
             )}
 
+          {/* ------------------------------------------ */}
           {/* ERROR */}
+          {/* ------------------------------------------ */}
+
           {state === "error" && (
             <div style={styles.errorBox}>
               <div style={styles.errorTitle}>
@@ -846,10 +1062,6 @@ export default function DeployScreen() {
   );
 }
 
-/**
- * Format unknown errors into useful
- * readable messages.
- */
 function formatError(
   error: unknown
 ): string {
@@ -887,7 +1099,7 @@ const styles: Record<
   },
 
   container: {
-    maxWidth: 520,
+    maxWidth: 560,
     margin: "0 auto",
   },
 
@@ -1019,6 +1231,18 @@ const styles: Record<
     padding: "7px 0",
   },
 
+  feeRow: {
+    display: "flex",
+    justifyContent:
+      "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+    padding: "9px 0",
+    marginTop: 4,
+    borderTop:
+      "1px solid #25282a",
+  },
+
   infoKey: {
     color: "#77746d",
     fontSize: 12,
@@ -1030,6 +1254,62 @@ const styles: Record<
     fontFamily: "monospace",
     textAlign: "right",
     wordBreak: "break-all",
+  },
+
+  successValue: {
+    color: "#7ee2a8",
+    fontSize: 12,
+    fontFamily: "monospace",
+    textAlign: "right",
+  },
+
+  feeValue: {
+    color: "#f0b90b",
+    fontSize: 12,
+    fontWeight: 800,
+    fontFamily: "monospace",
+    textAlign: "right",
+  },
+
+  balanceGood: {
+    marginTop: 12,
+    padding: 10,
+    borderRadius: 8,
+    background:
+      "rgba(126,226,168,0.08)",
+    color: "#7ee2a8",
+    fontSize: 12,
+    lineHeight: 1.5,
+  },
+
+  balanceBad: {
+    marginTop: 12,
+    padding: 10,
+    borderRadius: 8,
+    background:
+      "rgba(240,100,100,0.08)",
+    color: "#ff9c9c",
+    fontSize: 12,
+    lineHeight: 1.5,
+  },
+
+  shortfall: {
+    marginTop: 8,
+    color: "#ff9c9c",
+    fontSize: 12,
+  },
+
+  warningBox: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 10,
+    background:
+      "rgba(240,185,11,0.07)",
+    border:
+      "1px solid rgba(240,185,11,0.2)",
+    color: "#d8c78c",
+    fontSize: 12,
+    lineHeight: 1.5,
   },
 
   doneBox: {
