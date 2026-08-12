@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPublicClient, http, type Address } from "viem";
 import { bsc } from "viem/chains";
 
@@ -16,10 +16,6 @@ type Status = "connecting" | "loading" | "ready" | "error";
 
 const IDENTITY_REGISTRY_ADDRESS = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432";
 
-// Canonical ERC-8004 IdentityRegistry (erc-8004/erc-8004-contracts),
-// deployed at the same address across chains via deterministic deployment,
-// including BSC mainnet. ERC721URIStorage-based — no tokenByIndex, so we
-// probe agentIds directly via ownerOf() and treat a revert as "not minted".
 const IDENTITY_REGISTRY_ABI = [
   { inputs: [], name: "totalSupply", outputs: [{ internalType: "uint256", name: "", type: "uint256" }], stateMutability: "view", type: "function" },
   { inputs: [{ internalType: "uint256", name: "tokenId", type: "uint256" }], name: "tokenURI", outputs: [{ internalType: "string", name: "", type: "string" }], stateMutability: "view", type: "function" },
@@ -60,7 +56,6 @@ async function fetchAgentMetadata(uri: string): Promise<{ name?: string; descrip
     const parsed = JSON.parse(jsonText);
     return { name: parsed.name, description: parsed.description, image: parsed.image };
   }
-
   const resolved = resolveUri(uri);
   const res = await withTimeout(fetch(resolved), 6000, `fetch ${resolved}`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -72,11 +67,19 @@ async function fetchAgentMetadata(uri: string): Promise<{ name?: string; descrip
   };
 }
 
+const AVATAR_COLORS = ["#f0b90b", "#7ee2a8", "#8adede", "#e88a8a", "#c9a3f0", "#f0a3c9"];
+function avatarColor(id: string) {
+  const n = parseInt(id, 10) || 0;
+  return AVATAR_COLORS[n % AVATAR_COLORS.length];
+}
+
 export default function App() {
   const [status, setStatus] = useState<Status>("connecting");
   const [agents, setAgents] = useState<Agent[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
   const [debugLog, setDebugLog] = useState<string[]>([]);
+  const [showDebug, setShowDebug] = useState(false);
+  const [search, setSearch] = useState("");
 
   function log(msg: string) {
     console.log(msg);
@@ -106,9 +109,9 @@ export default function App() {
         setStatus("loading");
 
         const count = Number(total);
-        const probeSize = Math.min(Math.max(count, 30) + 10, 80);
-        const candidateIds = Array.from({ length: probeSize }, (_, i) => i + 1);
-        log(`Step 2: probing ${probeSize} candidate agent IDs for existence…`);
+        const probeSize = Math.min(count, 60);
+        const candidateIds = Array.from({ length: probeSize }, (_, i) => count - i).filter((id) => id > 0);
+        log(`Step 2: probing ${candidateIds.length} most recent agent IDs…`);
 
         const ownerResults = await Promise.all(
           candidateIds.map((id) =>
@@ -185,68 +188,110 @@ export default function App() {
     return () => { cancelled = true; };
   }, []);
 
+  const filteredAgents = useMemo(() => {
+    if (!search.trim()) return agents;
+    const q = search.toLowerCase();
+    return agents.filter(
+      (a) =>
+        a.agentId.includes(q) ||
+        a.name?.toLowerCase().includes(q) ||
+        a.description?.toLowerCase().includes(q) ||
+        a.owner.toLowerCase().includes(q)
+    );
+  }, [agents, search]);
+
   return (
     <div style={styles.page}>
-      <header style={styles.header}>
-        <div style={styles.eyebrow}>BNB Smart Chain · Live Onchain Data</div>
-        <h1 style={styles.title}>Agent Registry</h1>
-        <p style={styles.subtitle}>
-          Reading directly from the canonical ERC-8004 Identity Registry contract — the same address deployed across every EVM chain, including BNB Smart Chain mainnet. No mock data — every row below is a real registered agent.
-        </p>
-      </header>
+      <div style={styles.container}>
+        <header style={styles.header}>
+          <h1 style={styles.title}>Agent Registry</h1>
+          <p style={styles.subtitle}>Discover autonomous agents on the ERC-8004 registry — live from BNB Smart Chain</p>
+        </header>
 
-      <section style={styles.statsRow}>
-        <div style={styles.statCard}>
-          <div style={styles.statLabel}>Agents found</div>
-          <div style={styles.statValue}>{agents.length === 0 && status !== "ready" ? "—" : agents.length.toLocaleString()}</div>
+        <div style={styles.toolbar}>
+          <div style={styles.searchWrap}>
+            <span style={styles.searchIcon}>⌕</span>
+            <input
+              style={styles.searchInput}
+              placeholder="Search by agent name, description, ID, or address"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          <div style={styles.toolbarRight}>
+            <StatusPill status={status} />
+            <button style={styles.debugToggle} onClick={() => setShowDebug((s) => !s)}>
+              {showDebug ? "Hide log" : "Debug log"}
+            </button>
+          </div>
         </div>
-        <div style={styles.statCard}>
-          <div style={styles.statLabel}>Status</div>
-          <div style={styles.statValue}><StatusPill status={status} /></div>
-        </div>
-        <div style={styles.statCard}>
-          <div style={styles.statLabel}>Contract</div>
-          <a style={styles.contractLink} href={`https://bscscan.com/address/${IDENTITY_REGISTRY_ADDRESS}`} target="_blank" rel="noreferrer">{shortAddr(IDENTITY_REGISTRY_ADDRESS)} ↗</a>
-        </div>
-      </section>
 
-      {status === "error" && <div style={styles.errorBox}>Couldn't read from the chain: {errorMsg}</div>}
+        {status === "error" && <div style={styles.errorBox}>Couldn't read from the chain: {errorMsg}</div>}
 
-      {debugLog.length > 0 && (
-        <div style={styles.debugBox}>
-          <div style={styles.debugTitle}>Debug log</div>
-          {debugLog.map((line, i) => <div key={i} style={styles.debugLine}>{line}</div>)}
-        </div>
-      )}
+        {showDebug && debugLog.length > 0 && (
+          <div style={styles.debugBox}>
+            {debugLog.map((line, i) => <div key={i} style={styles.debugLine}>{line}</div>)}
+          </div>
+        )}
 
-      <section style={styles.list}>
-        {agents.length === 0 && status !== "error" && <div style={styles.loadingRow}>Fetching agents from BNB Chain…</div>}
-        {agents.map((agent) => (
-          <div key={agent.agentId} style={styles.card}>
-            <div style={styles.cardBody}>
-              {agent.image && (
-                <img
-                  src={agent.image}
-                  alt={agent.name || `Agent ${agent.agentId}`}
-                  style={styles.agentImage}
-                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-                />
-              )}
-              <div style={styles.cardText}>
-                <div style={styles.cardTop}>
-                  <span style={styles.agentId}>{agent.name || `Agent #${agent.agentId}`}</span>
-                  <a style={styles.ownerLink} href={`https://bscscan.com/address/${agent.owner}`} target="_blank" rel="noreferrer">Owner: {shortAddr(agent.owner)} ↗</a>
-                </div>
-                {agent.description && <div style={styles.agentDescription}>{agent.description}</div>}
-                <div style={styles.uriRow}>
-                  <span style={styles.uriLabel}>{agent.metadataError ? "Registration file (could not load preview):" : "Registration file:"}</span>
-                  <span style={styles.uriValue}>{agent.uri || "(empty)"}</span>
+        <div style={styles.tableWrap}>
+          <div style={styles.tableHeaderRow}>
+            <div style={{ ...styles.th, flex: "2 1 220px" }}>Name</div>
+            <div style={{ ...styles.th, flex: "1 1 120px" }}>Chain</div>
+            <div style={{ ...styles.th, flex: "1 1 100px" }}>Owner</div>
+            <div style={{ ...styles.th, flex: "0 0 90px" }}>ID</div>
+          </div>
+
+          {agents.length === 0 && status !== "error" && (
+            <div style={styles.loadingRow}>
+              <span style={styles.spinner} />
+              Fetching agents from BNB Chain…
+            </div>
+          )}
+
+          {filteredAgents.length === 0 && agents.length > 0 && (
+            <div style={styles.loadingRow}>No agents match "{search}"</div>
+          )}
+
+          {filteredAgents.map((agent) => (
+            <div key={agent.agentId} style={styles.row}>
+              <div style={{ ...styles.td, flex: "2 1 220px", display: "flex", alignItems: "center", gap: 12 }}>
+                {agent.image ? (
+                  <img
+                    src={agent.image}
+                    alt=""
+                    style={styles.avatar}
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                  />
+                ) : (
+                  <div style={{ ...styles.avatarFallback, background: avatarColor(agent.agentId) }}>
+                    {(agent.name || "A")[0].toUpperCase()}
+                  </div>
+                )}
+                <div style={{ minWidth: 0 }}>
+                  <div style={styles.agentName}>{agent.name || `Agent #${agent.agentId}`}</div>
+                  {agent.description && <div style={styles.agentDesc}>{agent.description}</div>}
                 </div>
               </div>
+              <div style={{ ...styles.td, flex: "1 1 120px" }}>
+                <span style={styles.chainBadge}>BNB Smart Chain</span>
+              </div>
+              <div style={{ ...styles.td, flex: "1 1 100px" }}>
+                <a style={styles.ownerLink} href={`https://bscscan.com/address/${agent.owner}`} target="_blank" rel="noreferrer">
+                  {shortAddr(agent.owner)}
+                </a>
+              </div>
+              <div style={{ ...styles.td, flex: "0 0 90px", color: "#7a776f" }}>#{agent.agentId}</div>
             </div>
+          ))}
+        </div>
+
+        {agents.length > 0 && (
+          <div style={styles.footer}>
+            Showing {filteredAgents.length} of {agents.length} agents loaded (probing most recent registrations)
           </div>
-        ))}
-      </section>
+        )}
+      </div>
     </div>
   );
 }
@@ -259,35 +304,41 @@ function StatusPill({ status }: { status: Status }) {
     error: { text: "Error", bg: "#3a1f1f", fg: "#e88a8a" },
   };
   const s = map[status] || map.connecting;
-  return <span style={{ display: "inline-block", padding: "4px 10px", borderRadius: 999, fontSize: 13, fontWeight: 600, background: s.bg, color: s.fg }}>{s.text}</span>;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 999, fontSize: 13, fontWeight: 600, background: s.bg, color: s.fg }}>
+      <span style={{ width: 6, height: 6, borderRadius: "50%", background: s.fg }} />
+      {s.text}
+    </span>
+  );
 }
 
 const styles = {
-  page: { minHeight: "100vh", background: "#0d0f10", color: "#e8e6e1", fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", padding: "48px 24px 80px" },
-  header: { maxWidth: 780, margin: "0 auto 40px" },
-  eyebrow: { fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase" as const, color: "#f0b90b", fontWeight: 700, marginBottom: 12 },
-  title: { fontSize: 40, fontWeight: 800, margin: "0 0 12px", letterSpacing: "-0.02em" },
-  subtitle: { fontSize: 16, lineHeight: 1.6, color: "#a3a09a", maxWidth: 560 },
-  statsRow: { maxWidth: 780, margin: "0 auto 32px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 },
-  statCard: { background: "#17191a", border: "1px solid #26282a", borderRadius: 12, padding: "16px 18px" },
-  statLabel: { fontSize: 12, color: "#7a776f", marginBottom: 6, textTransform: "uppercase" as const, letterSpacing: "0.04em" },
-  statValue: { fontSize: 22, fontWeight: 700 },
-  contractLink: { fontSize: 15, color: "#f0b90b", textDecoration: "none", fontWeight: 600 },
-  errorBox: { maxWidth: 780, margin: "0 auto 24px", background: "#2a1616", border: "1px solid #4a2323", color: "#f0a3a3", padding: "14px 18px", borderRadius: 10, fontSize: 14 },
-  debugBox: { maxWidth: 780, margin: "0 auto 24px", background: "#111314", border: "1px solid #26282a", borderRadius: 10, padding: "14px 18px", fontFamily: "monospace" },
-  debugTitle: { fontSize: 12, color: "#7a776f", marginBottom: 8, textTransform: "uppercase" as const, letterSpacing: "0.04em" },
+  page: { minHeight: "100vh", background: "#0b0d0e", color: "#e8e6e1", fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" },
+  container: { maxWidth: 960, margin: "0 auto", padding: "32px 20px 80px" },
+  header: { marginBottom: 24 },
+  title: { fontSize: 30, fontWeight: 800, margin: "0 0 6px", letterSpacing: "-0.02em", background: "linear-gradient(90deg, #ffffff, #f0b90b)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" },
+  subtitle: { fontSize: 14, color: "#8a8880", margin: 0 },
+  toolbar: { display: "flex", flexWrap: "wrap" as const, gap: 10, marginBottom: 16, justifyContent: "space-between", alignItems: "center" },
+  searchWrap: { position: "relative" as const, flex: "1 1 260px" },
+  searchIcon: { position: "absolute" as const, left: 14, top: "50%", transform: "translateY(-50%)", color: "#5f5d57", fontSize: 16 },
+  searchInput: { width: "100%", boxSizing: "border-box" as const, background: "#151718", border: "1px solid #26282a", borderRadius: 10, padding: "11px 14px 11px 38px", color: "#e8e6e1", fontSize: 14, outline: "none" },
+  toolbarRight: { display: "flex", alignItems: "center", gap: 8 },
+  debugToggle: { background: "transparent", border: "1px solid #26282a", borderRadius: 8, color: "#7a776f", fontSize: 12, padding: "6px 10px", cursor: "pointer" },
+  errorBox: { marginBottom: 16, background: "#2a1616", border: "1px solid #4a2323", color: "#f0a3a3", padding: "14px 18px", borderRadius: 10, fontSize: 14 },
+  debugBox: { marginBottom: 16, background: "#111314", border: "1px solid #26282a", borderRadius: 10, padding: "14px 18px", fontFamily: "monospace", maxHeight: 220, overflowY: "auto" as const },
   debugLine: { fontSize: 12, color: "#8adede", lineHeight: 1.6, wordBreak: "break-all" as const },
-  list: { maxWidth: 780, margin: "0 auto", display: "flex", flexDirection: "column" as const, gap: 10 },
-  loadingRow: { color: "#7a776f", fontSize: 14, padding: "20px 0" },
-  card: { background: "#17191a", border: "1px solid #26282a", borderRadius: 12, padding: "16px 18px" },
-  cardBody: { display: "flex", gap: 14, alignItems: "flex-start" as const },
-  agentImage: { width: 56, height: 56, borderRadius: 10, objectFit: "cover" as const, flexShrink: 0, background: "#0d0f10", border: "1px solid #26282a" },
-  cardText: { flex: 1, minWidth: 0 },
-  agentDescription: { fontSize: 13, color: "#a3a09a", lineHeight: 1.5, marginBottom: 8 },
-  cardTop: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap" as const, gap: 8 },
-  agentId: { fontWeight: 700, fontSize: 15 },
-  ownerLink: { fontSize: 13, color: "#8a8880", textDecoration: "none" },
-  uriRow: { display: "flex", gap: 8, fontSize: 13, color: "#a3a09a", wordBreak: "break-all" as const },
-  uriLabel: { color: "#5f5d57", flexShrink: 0 },
-  uriValue: { color: "#c9c6bf" },
+  tableWrap: { background: "#111314", border: "1px solid #26282a", borderRadius: 14, overflow: "hidden" },
+  tableHeaderRow: { display: "flex", padding: "12px 16px", borderBottom: "1px solid #26282a", background: "#151718" },
+  th: { fontSize: 11, fontWeight: 700, color: "#7a776f", textTransform: "uppercase" as const, letterSpacing: "0.04em" },
+  row: { display: "flex", alignItems: "center", padding: "14px 16px", borderBottom: "1px solid #1c1e1f" },
+  td: { fontSize: 14, color: "#e8e6e1", paddingRight: 12 },
+  avatar: { width: 36, height: 36, borderRadius: 9, objectFit: "cover" as const, flexShrink: 0, background: "#0b0d0e", border: "1px solid #26282a" },
+  avatarFallback: { width: 36, height: 36, borderRadius: 9, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 15, color: "#0b0d0e" },
+  agentName: { fontSize: 14, fontWeight: 600, color: "#f2f0eb", whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" },
+  agentDesc: { fontSize: 12, color: "#7a776f", whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis", maxWidth: 320 },
+  chainBadge: { display: "inline-block", fontSize: 12, color: "#f0b90b", background: "rgba(240,185,11,0.1)", border: "1px solid rgba(240,185,11,0.25)", borderRadius: 6, padding: "3px 8px" },
+  ownerLink: { fontSize: 13, color: "#8a8880", textDecoration: "none", fontFamily: "monospace" },
+  loadingRow: { display: "flex", alignItems: "center", gap: 10, color: "#7a776f", fontSize: 14, padding: "32px 16px", justifyContent: "center" },
+  spinner: { width: 14, height: 14, borderRadius: "50%", border: "2px solid #26282a", borderTopColor: "#f0b90b", display: "inline-block" },
+  footer: { marginTop: 14, fontSize: 12, color: "#5f5d57", textAlign: "center" as const },
 };
