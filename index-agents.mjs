@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { createPublicClient, http } from "viem";
 import { bsc } from "viem/chains";
+import zlib from "node:zlib";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
@@ -39,7 +40,7 @@ const CATEGORY_RULES = [
     keywords: [
       "health factor", "liquidation", "collateral ratio", "loan monitor",
       "borrow position", "safety ratio", "ltv", "loan-to-value", "margin call",
-      "lending risk", "position health",
+      "lending risk", "position health", "health_factor",
     ],
   },
   {
@@ -47,6 +48,7 @@ const CATEGORY_RULES = [
     keywords: [
       "grid trading", "grid bot", "range trading", "grid strategy",
       "price grid", "grid range", "trading grid", "market making",
+      "grid_trading", "algorithmic_trading",
     ],
   },
   {
@@ -54,7 +56,8 @@ const CATEGORY_RULES = [
     keywords: [
       "yield", "apy", "auto-compound", "autocompound", "vault rotation",
       "vault", "staking reward", "farming", "liquidity mining", "earn",
-      "moolah", "lending pool", "stablecoin vault",
+      "moolah", "lending pool", "stablecoin vault", "yield_optimization",
+      "defi/yield",
     ],
   },
   {
@@ -62,12 +65,13 @@ const CATEGORY_RULES = [
     keywords: [
       "rebalance", "rebalancing", "portfolio balance", "asset allocation",
       "auto-rotate", "auto rotate", "position rotation", "reallocation",
+      "portfolio_management", "portfolio_rebalancing",
     ],
   },
 ];
 
-function categorizeAgent(name, description) {
-  const text = `${name || ""} ${description || ""}`.toLowerCase();
+function categorizeAgent(name, description, skills, domains) {
+  const text = `${name || ""} ${description || ""} ${(skills || []).join(" ")} ${(domains || []).join(" ")}`.toLowerCase();
   for (const rule of CATEGORY_RULES) {
     if (rule.keywords.some((kw) => text.includes(kw))) {
       return rule.category;
@@ -79,11 +83,23 @@ function categorizeAgent(name, description) {
 async function fetchAgentMetadata(uri) {
   if (uri.startsWith("data:application/json")) {
     const commaIndex = uri.indexOf(",");
+    const header = uri.slice(0, commaIndex);
     const payload = uri.slice(commaIndex + 1);
-    const isBase64 = uri.slice(0, commaIndex).includes("base64");
-    const jsonText = isBase64 ? Buffer.from(payload, "base64").toString("utf-8") : decodeURIComponent(payload);
+    const isBase64 = header.includes("base64");
+    const isGzip = header.includes("gzip");
+
+    let jsonText;
+    if (isGzip) {
+      const compressed = Buffer.from(payload, "base64");
+      jsonText = zlib.gunzipSync(compressed).toString("utf-8");
+    } else if (isBase64) {
+      jsonText = Buffer.from(payload, "base64").toString("utf-8");
+    } else {
+      jsonText = decodeURIComponent(payload);
+    }
+
     const parsed = JSON.parse(jsonText);
-    return { name: parsed.name, description: parsed.description, image: parsed.image };
+    return extractFields(parsed);
   }
   const resolved = resolveUri(uri);
   const controller = new AbortController();
@@ -92,14 +108,28 @@ async function fetchAgentMetadata(uri) {
     const res = await fetch(resolved, { signal: controller.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const parsed = await res.json();
-    return {
-      name: parsed.name,
-      description: parsed.description,
-      image: parsed.image ? resolveUri(parsed.image) : undefined,
-    };
+    return extractFields(parsed);
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function extractFields(parsed) {
+  const skills = [];
+  const domains = [];
+  if (Array.isArray(parsed.services)) {
+    for (const svc of parsed.services) {
+      if (Array.isArray(svc.skills)) skills.push(...svc.skills);
+      if (Array.isArray(svc.domains)) domains.push(...svc.domains);
+    }
+  }
+  return {
+    name: parsed.name,
+    description: parsed.description,
+    image: parsed.image ? resolveUri(parsed.image) : undefined,
+    skills,
+    domains,
+  };
 }
 
 async function withRetry(fn, retries = 2) {
@@ -148,7 +178,7 @@ async function processAgent(id) {
       description: meta.description || null,
       image: meta.image || null,
       chain: "bsc",
-      category: categorizeAgent(meta.name, meta.description),
+      category: categorizeAgent(meta.name, meta.description, meta.skills, meta.domains),
     });
 
     if (error) {
@@ -156,7 +186,7 @@ async function processAgent(id) {
       return false;
     }
 
-    console.log(`  ✓ agent ${id} — ${meta.name || "(no name)"} [${categorizeAgent(meta.name, meta.description)}]`);
+    console.log(`  ✓ agent ${id} — ${meta.name || "(no name)"}`);
     return true;
   } catch (e) {
     return null;
