@@ -5,6 +5,7 @@ import zlib from "node:zlib";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   console.error("Missing SUPABASE_URL or SUPABASE_ANON_KEY environment variables.");
@@ -78,6 +79,59 @@ function categorizeAgent(name, description, skills, domains) {
     }
   }
   return "other";
+}
+
+const VALID_CATEGORIES = ["rebalancing", "grid_trading", "yield", "health_factor", "other"];
+
+async function classifyWithAI(name, description) {
+  if (!GROQ_API_KEY) return null;
+  const text = `${name || ""}. ${description || ""}`.trim();
+  if (!text || text.length < 3) return null;
+
+  const prompt = `Classify this AI agent into exactly one category based on its name and description.
+
+Categories:
+- rebalancing: portfolio rebalancing, asset allocation agents
+- grid_trading: grid trading bots, range-bound automated trading strategies
+- yield: yield farming, staking, auto-compounding, vault optimization agents
+- health_factor: loan health monitoring, liquidation prevention, collateral tracking agents
+- other: anything that doesn't clearly fit the above (general chat, unrelated tools, vague/generic agents, non-financial agents)
+
+Agent: "${text}"
+
+Reply with ONLY the category name, nothing else. If it's not clearly one of the first four, reply "other".`;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "llama-3.1-8b-instant",
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0,
+        max_tokens: 10,
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!res.ok) {
+      console.warn(`  Groq API error: HTTP ${res.status}`);
+      return null;
+    }
+
+    const data = await res.json();
+    const raw = data.choices?.[0]?.message?.content?.trim().toLowerCase().replace(/[^a-z_]/g, "");
+    return VALID_CATEGORIES.includes(raw) ? raw : null;
+  } catch (e) {
+    console.warn(`  Groq classification failed: ${e.message}`);
+    return null;
+  }
 }
 
 async function fetchAgentMetadata(uri) {
@@ -170,6 +224,12 @@ async function processAgent(id) {
       console.warn(`  metadata fetch failed for agent ${id}: ${e.message}`);
     }
 
+    let category = categorizeAgent(meta.name, meta.description, meta.skills, meta.domains);
+    if (category === "other" && GROQ_API_KEY) {
+      const aiCategory = await classifyWithAI(meta.name, meta.description);
+      if (aiCategory) category = aiCategory;
+    }
+
     const { error } = await supabase.from("agents").upsert({
       agent_id: id.toString(),
       owner,
@@ -178,7 +238,7 @@ async function processAgent(id) {
       description: meta.description || null,
       image: meta.image || null,
       chain: "bsc",
-      category: categorizeAgent(meta.name, meta.description, meta.skills, meta.domains),
+      category,
     });
 
     if (error) {
@@ -186,7 +246,7 @@ async function processAgent(id) {
       return false;
     }
 
-    console.log(`  ✓ agent ${id} — ${meta.name || "(no name)"}`);
+    console.log(`  ✓ agent ${id} — ${meta.name || "(no name)"} [${category}]`);
     return true;
   } catch (e) {
     return null;
