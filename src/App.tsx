@@ -4,7 +4,7 @@ import { createWalletClient, custom, parseEther, type Address, type EIP1193Provi
 import { bsc } from "viem/chains";
 import { EthereumProvider } from "@walletconnect/ethereum-provider";
 
-const WALLETCONNECT_PROJECT_ID = "fe5a4765a4933596d35dc60bd8d21cff";
+const WALLETCONNECT_PROJECT_ID = "1dbe8fd5e4974ae7c80d074c4082b5a0";
 
 type WalletState = {
   address: Address | null;
