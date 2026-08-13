@@ -3197,29 +3197,33 @@ const styles: Record<
   },
 
   select: {
-    display:
-      "block",
-    width:
-      "100%",
-    boxSizing:
-      "border-box",
-    marginTop:
-      "9px",
-    padding:
-      "12px",
-    border:
-      "1px solid #343a3f",
-    borderRadius:
-      "9px",
-    background:
-      "#0c1012",
-    color:
-      "#fff",
-    outline:
-      "none",
-    WebkitAppearance:
-      "auto",
-  },
+  width:
+    "100%",
+
+  boxSizing:
+    "border-box",
+
+  marginTop:
+    "9px",
+
+  padding:
+    "12px",
+
+  border:
+    "1px solid #343a3f",
+
+  borderRadius:
+    "9px",
+
+  background:
+    "#0c1012",
+
+  color:
+    "#fff",
+
+  outline:
+    "none",
+},
 
   emptyState: {
     display:
