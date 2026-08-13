@@ -110,6 +110,59 @@ export const COMMERCE_ABI = [
     outputs: [],
   },
 
+  /*
+   * Provider submission.
+   *
+   * submit(jobId, deliverableHash, optParams)
+   */
+  {
+    type: "function",
+    name: "submit",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "jobId",
+        type: "uint256",
+      },
+      {
+        name: "deliverable",
+        type: "bytes32",
+      },
+      {
+        name: "optParams",
+        type: "bytes",
+      },
+    ],
+    outputs: [],
+  },
+
+  /*
+   * Optional direct completion function.
+   *
+   * We will NOT use this yet.
+   * Settlement is handled through the Router/policy flow.
+   */
+  {
+    type: "function",
+    name: "complete",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "jobId",
+        type: "uint256",
+      },
+      {
+        name: "reason",
+        type: "bytes32",
+      },
+      {
+        name: "optParams",
+        type: "bytes",
+      },
+    ],
+    outputs: [],
+  },
+
   {
     type: "function",
     name: "paymentToken",
@@ -199,6 +252,24 @@ export const COMMERCE_ABI = [
       },
     ],
   },
+
+  {
+    type: "function",
+    name: "jobHasBudget",
+    stateMutability: "view",
+    inputs: [
+      {
+        name: "jobId",
+        type: "uint256",
+      },
+    ],
+    outputs: [
+      {
+        name: "hasBudget",
+        type: "bool",
+      },
+    ],
+  },
 ] as const;
 
 /*
@@ -273,11 +344,28 @@ export const ROUTER_ABI = [
       },
     ],
   },
+
+  {
+    type: "function",
+    name: "settle",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "jobId",
+        type: "uint256",
+      },
+      {
+        name: "optParams",
+        type: "bytes",
+      },
+    ],
+    outputs: [],
+  },
 ] as const;
 
 /*
  * ============================================================
- * PAYMENT TOKEN ABI
+ * ERC-20 PAYMENT TOKEN ABI
  * ============================================================
  */
 
@@ -373,7 +461,7 @@ export const ERC20_ABI = [
 
 /*
  * ============================================================
- * BSC TESTNET PUBLIC CLIENT
+ * PUBLIC BSC TESTNET CLIENT
  * ============================================================
  */
 
@@ -388,7 +476,7 @@ export const publicClient =
 
 /*
  * ============================================================
- * WALLET CLIENT
+ * WALLET CLIENT HELPER
  * ============================================================
  */
 
@@ -398,7 +486,10 @@ export function getWalletClient(
 ) {
   return createWalletClient({
     account,
+
     chain: bscTestnet,
-    transport: custom(provider),
+
+    transport:
+      custom(provider),
   });
-  }
+}
