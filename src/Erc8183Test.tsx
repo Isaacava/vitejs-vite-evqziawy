@@ -49,37 +49,32 @@ type LoadedJob = {
   deliverable: `0x${string}`;
 };
 
+type SimulationResult = {
+  ok: boolean;
+  message: string;
+};
+
 export default function Erc8183Test() {
   const [walletState, setWalletState] =
-    useState<WalletState>(
-      "disconnected"
-    );
+    useState<WalletState>("disconnected");
 
   const [provider, setProvider] =
-    useState<EIP1193Provider | null>(
-      null
-    );
+    useState<EIP1193Provider | null>(null);
 
   const [address, setAddress] =
-    useState<Address | null>(
-      null
-    );
+    useState<Address | null>(null);
 
   const [status, setStatus] =
     useState("Not connected");
 
   const [jobId, setJobId] =
-    useState<bigint | null>(
-      null
-    );
+    useState<bigint | null>(null);
 
   const [jobIdInput, setJobIdInput] =
     useState("");
 
   const [loadedJob, setLoadedJob] =
-    useState<LoadedJob | null>(
-      null
-    );
+    useState<LoadedJob | null>(null);
 
   const [description, setDescription] =
     useState(
@@ -87,62 +82,41 @@ export default function Erc8183Test() {
     );
 
   const [transactionHash, setTransactionHash] =
-    useState<`0x${string}` | null>(
-      null
-    );
+    useState<`0x${string}` | null>(null);
 
   const [
     registerTransactionHash,
     setRegisterTransactionHash,
-  ] =
-    useState<`0x${string}` | null>(
-      null
-    );
+  ] = useState<`0x${string}` | null>(null);
 
   const [
     budgetTransactionHash,
     setBudgetTransactionHash,
-  ] =
-    useState<`0x${string}` | null>(
-      null
-    );
+  ] = useState<`0x${string}` | null>(null);
 
   const [
     approvalTransactionHash,
     setApprovalTransactionHash,
-  ] =
-    useState<`0x${string}` | null>(
-      null
-    );
+  ] = useState<`0x${string}` | null>(null);
 
   const [
     fundTransactionHash,
     setFundTransactionHash,
-  ] =
-    useState<`0x${string}` | null>(
-      null
-    );
+  ] = useState<`0x${string}` | null>(null);
 
   const [
     registeredPolicy,
     setRegisteredPolicy,
-  ] =
-    useState<Address | null>(
-      null
-    );
+  ] = useState<Address | null>(null);
 
   const [paymentToken, setPaymentToken] =
-    useState<Address | null>(
-      null
-    );
+    useState<Address | null>(null);
 
   const [tokenSymbol, setTokenSymbol] =
     useState("—");
 
   const [tokenDecimals, setTokenDecimals] =
-    useState<number | null>(
-      null
-    );
+    useState<number | null>(null);
 
   const [tokenBalance, setTokenBalance] =
     useState("—");
@@ -151,79 +125,87 @@ export default function Erc8183Test() {
     useState("1");
 
   const [budgetRaw, setBudgetRaw] =
-    useState<bigint | null>(
-      null
-    );
+    useState<bigint | null>(null);
 
   const [allowanceRaw, setAllowanceRaw] =
-    useState<bigint | null>(
-      null
-    );
+    useState<bigint | null>(null);
 
   const [loading, setLoading] =
     useState(false);
 
   const [error, setError] =
-    useState<string | null>(
-      null
-    );
+    useState<string | null>(null);
+
+  const [
+    simulation,
+    setSimulation,
+  ] = useState<SimulationResult | null>(
+    null
+  );
+
+  const [isSimulating, setIsSimulating] =
+    useState(false);
 
   /*
-   * ========================================================
-   * RESTORE LAST JOB
-   * ========================================================
+   * =========================================================
+   * RESTORE SAVED JOB ID
+   * =========================================================
    */
 
   useEffect(() => {
-    const savedJobId =
-      window.localStorage.getItem(
-        SAVED_JOB_KEY
-      );
+    try {
+      const saved =
+        window.localStorage.getItem(
+          SAVED_JOB_KEY
+        );
 
-    if (
-      savedJobId &&
-      /^\d+$/.test(savedJobId)
-    ) {
-      setJobIdInput(
-        savedJobId
+      if (
+        saved &&
+        /^\d+$/.test(saved)
+      ) {
+        setJobIdInput(saved);
+      }
+    } catch (err) {
+      console.warn(
+        "Could not read saved job ID:",
+        err
       );
     }
   }, []);
 
   /*
-   * ========================================================
+   * =========================================================
    * SAVE JOB ID
-   * ========================================================
+   * =========================================================
    */
 
-  function saveJobId(
-    id: bigint
-  ) {
+  function saveJobId(id: bigint) {
     setJobId(id);
+    setJobIdInput(id.toString());
 
-    setJobIdInput(
-      id.toString()
-    );
-
-    window.localStorage.setItem(
-      SAVED_JOB_KEY,
-      id.toString()
-    );
+    try {
+      window.localStorage.setItem(
+        SAVED_JOB_KEY,
+        id.toString()
+      );
+    } catch (err) {
+      console.warn(
+        "Could not save job ID:",
+        err
+      );
+    }
   }
 
   /*
-   * ========================================================
+   * =========================================================
    * CONNECT WALLET
-   * ========================================================
+   * =========================================================
    */
 
   async function connect() {
     try {
       setError(null);
-
-      setStatus(
-        "Connecting..."
-      );
+      setStatus("Connecting...");
 
       const wc =
         await EthereumProvider.init({
@@ -274,8 +256,7 @@ export default function Erc8183Test() {
 
       const rawChainId =
         await walletProvider.request({
-          method:
-            "eth_chainId",
+          method: "eth_chainId",
         });
 
       const chainId =
@@ -288,7 +269,7 @@ export default function Erc8183Test() {
         BSC_TESTNET_CHAIN_ID
       ) {
         throw new Error(
-          `Wrong network: ${chainId}. BSC Testnet is 97.`
+          `Wrong network: ${chainId}. BSC Testnet requires chain ID 97.`
         );
       }
 
@@ -310,6 +291,21 @@ export default function Erc8183Test() {
       setStatus(
         "Connected to BSC Testnet"
       );
+
+      /*
+       * Automatically load the saved
+       * job if one exists.
+       */
+      if (
+        jobIdInput &&
+        /^\d+$/.test(jobIdInput)
+      ) {
+        window.setTimeout(() => {
+          void loadExistingJob(
+            jobIdInput
+          );
+        }, 0);
+      }
     } catch (err) {
       console.error(
         "Wallet connection error:",
@@ -331,9 +327,9 @@ export default function Erc8183Test() {
   }
 
   /*
-   * ========================================================
+   * =========================================================
    * LOAD EXISTING JOB
-   * ========================================================
+   * =========================================================
    */
 
   async function loadExistingJob(
@@ -364,7 +360,6 @@ export default function Erc8183Test() {
         BigInt(rawId);
 
       setLoading(true);
-
       setStatus(
         `Loading Job #${id.toString()} from BSC...`
       );
@@ -438,27 +433,23 @@ export default function Erc8183Test() {
 
       saveJobId(id);
 
-      setLoadedJob(
-        job
-      );
+      setLoadedJob(job);
 
       setDescription(
         job.description
       );
 
-      if (
-        job.budget >
-        0n
-      ) {
-        setBudgetRaw(
-          job.budget
-        );
-      } else {
-        setBudgetRaw(
-          null
-        );
-      }
+      setBudgetRaw(
+        job.budget > 0n
+          ? job.budget
+          : null
+      );
 
+      setSimulation(null);
+
+      /*
+       * Check policy registration.
+       */
       try {
         const policy =
           (await publicClient.readContract(
@@ -508,9 +499,7 @@ export default function Erc8183Test() {
         err
       );
 
-      setLoadedJob(
-        null
-      );
+      setLoadedJob(null);
 
       setStatus(
         "Could not load job"
@@ -525,33 +514,9 @@ export default function Erc8183Test() {
   }
 
   /*
-   * ========================================================
-   * AUTO LOAD SAVED JOB
-   * ========================================================
-   */
-
-  useEffect(() => {
-    if (
-      walletState !==
-        "connected" ||
-      !jobIdInput
-    ) {
-      return;
-    }
-
-    void loadExistingJob(
-      jobIdInput
-    );
-
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    walletState,
-  ]);
-
-  /*
-   * ========================================================
+   * =========================================================
    * LOAD PAYMENT TOKEN
-   * ========================================================
+   * =========================================================
    */
 
   async function loadPaymentToken() {
@@ -622,37 +587,33 @@ export default function Erc8183Test() {
       )) as bigint;
 
     const allowance =
-      (
-        jobId !== null &&
-        tokenAddress
-          ? await publicClient.readContract(
-              {
-                address:
-                  tokenAddress,
+      (await publicClient.readContract(
+        {
+          address:
+            tokenAddress,
 
-                abi:
-                  ERC20_ABI,
+          abi:
+            ERC20_ABI,
 
-                functionName:
-                  "allowance",
+          functionName:
+            "allowance",
 
-                args: [
-                  address,
-                  ERC8183_ADDRESSES.commerce,
-                ],
-              }
-            )
-          : 0n
-      ) as bigint;
+          args: [
+            address,
+            ERC8183_ADDRESSES.commerce,
+          ],
+        }
+      )) as bigint;
+
+    const decimalsNumber =
+      Number(decimals);
 
     setPaymentToken(
       tokenAddress
     );
 
     setTokenDecimals(
-      Number(
-        decimals
-      )
+      decimalsNumber
     );
 
     setTokenSymbol(
@@ -662,9 +623,7 @@ export default function Erc8183Test() {
     setTokenBalance(
       formatUnits(
         balance,
-        Number(
-          decimals
-        )
+        decimalsNumber
       )
     );
 
@@ -675,9 +634,7 @@ export default function Erc8183Test() {
     return {
       tokenAddress,
       decimals:
-        Number(
-          decimals
-        ),
+        decimalsNumber,
       symbol,
       balance,
       allowance,
@@ -685,9 +642,9 @@ export default function Erc8183Test() {
   }
 
   /*
-   * ========================================================
+   * =========================================================
    * CREATE JOB
-   * ========================================================
+   * =========================================================
    */
 
   async function createJob() {
@@ -706,41 +663,15 @@ export default function Erc8183Test() {
       setError(null);
       setLoading(true);
 
-      setLoadedJob(
-        null
-      );
-
-      setTransactionHash(
-        null
-      );
-
-      setRegisterTransactionHash(
-        null
-      );
-
-      setBudgetTransactionHash(
-        null
-      );
-
-      setApprovalTransactionHash(
-        null
-      );
-
-      setFundTransactionHash(
-        null
-      );
-
-      setRegisteredPolicy(
-        null
-      );
-
-      setBudgetRaw(
-        null
-      );
-
-      setAllowanceRaw(
-        null
-      );
+      setTransactionHash(null);
+      setRegisterTransactionHash(null);
+      setBudgetTransactionHash(null);
+      setApprovalTransactionHash(null);
+      setFundTransactionHash(null);
+      setRegisteredPolicy(null);
+      setBudgetRaw(null);
+      setAllowanceRaw(null);
+      setSimulation(null);
 
       setStatus(
         "Preparing job..."
@@ -861,9 +792,9 @@ export default function Erc8183Test() {
   }
 
   /*
-   * ========================================================
+   * =========================================================
    * REGISTER JOB
-   * ========================================================
+   * =========================================================
    */
 
   async function registerJob() {
@@ -882,6 +813,10 @@ export default function Erc8183Test() {
     try {
       setError(null);
       setLoading(true);
+
+      setRegisterTransactionHash(
+        null
+      );
 
       setStatus(
         `Checking Job #${jobId.toString()}...`
@@ -1025,9 +960,9 @@ export default function Erc8183Test() {
   }
 
   /*
-   * ========================================================
+   * =========================================================
    * SET BUDGET
-   * ========================================================
+   * =========================================================
    */
 
   async function setJobBudget() {
@@ -1044,8 +979,7 @@ export default function Erc8183Test() {
     }
 
     if (
-      registeredPolicy ===
-      null
+      !registeredPolicy
     ) {
       setError(
         "Register the job first."
@@ -1096,7 +1030,7 @@ export default function Erc8183Test() {
           [
             `Insufficient ${token.symbol}.`,
             "",
-            `Your balance: ${formatUnits(
+            `Wallet balance: ${formatUnits(
               token.balance,
               token.decimals
             )} ${token.symbol}`,
@@ -1191,19 +1125,262 @@ export default function Erc8183Test() {
   }
 
   /*
-   * ========================================================
+   * =========================================================
+   * SIMULATE FUND
+   * =========================================================
+   */
+
+  async function simulateFund(): Promise<SimulationResult> {
+    if (
+      !address ||
+      jobId === null
+    ) {
+      const result = {
+        ok: false,
+        message:
+          "Connect the wallet and load a job first.",
+      };
+
+      setSimulation(result);
+
+      return result;
+    }
+
+    if (
+      budgetRaw === null
+    ) {
+      const result = {
+        ok: false,
+        message:
+          "The job does not have a budget yet.",
+      };
+
+      setSimulation(result);
+
+      return result;
+    }
+
+    setIsSimulating(true);
+    setSimulation(null);
+    setError(null);
+
+    try {
+      setStatus(
+        "Running fund() simulation..."
+      );
+
+      /*
+       * Read the exact current job.
+       */
+      const job =
+        (await publicClient.readContract(
+          {
+            address:
+              ERC8183_ADDRESSES.commerce,
+
+            abi:
+              COMMERCE_ABI,
+
+            functionName:
+              "getJob",
+
+            args: [
+              jobId,
+            ],
+          }
+        )) as {
+          id: bigint;
+          client: Address;
+          provider: Address;
+          evaluator: Address;
+          description: string;
+          budget: bigint;
+          expiredAt: bigint;
+          status: number;
+          hook: Address;
+          submittedAt: bigint;
+          deliverable: `0x${string}`;
+        };
+
+      /*
+       * Read U token.
+       */
+      const token =
+        await loadPaymentToken();
+
+      /*
+       * Basic checks before simulation.
+       */
+      if (
+        job.status !== 0
+      ) {
+        throw new Error(
+          `Job #${jobId.toString()} is not Open. Current status: ${getStatusName(
+            job.status
+          )}.`
+        );
+      }
+
+      if (
+        job.budget !==
+        budgetRaw
+      ) {
+        throw new Error(
+          [
+            "Job budget changed since the page was loaded.",
+            "",
+            `On-chain budget: ${formatUnits(
+              job.budget,
+              token.decimals
+            )} ${token.symbol}`,
+            `UI budget: ${formatUnits(
+              budgetRaw,
+              token.decimals
+            )} ${token.symbol}`,
+          ].join("\n")
+        );
+      }
+
+      if (
+        token.balance <
+        budgetRaw
+      ) {
+        throw new Error(
+          [
+            `Insufficient ${token.symbol} balance.`,
+            "",
+            `Balance: ${formatUnits(
+              token.balance,
+              token.decimals
+            )} ${token.symbol}`,
+            `Required: ${formatUnits(
+              budgetRaw,
+              token.decimals
+            )} ${token.symbol}`,
+          ].join("\n")
+        );
+      }
+
+      if (
+        token.allowance <
+        budgetRaw
+      ) {
+        throw new Error(
+          [
+            `Insufficient ${token.symbol} allowance.`,
+            "",
+            `Allowance: ${formatUnits(
+              token.allowance,
+              token.decimals
+            )} ${token.symbol}`,
+            `Required: ${formatUnits(
+              budgetRaw,
+              token.decimals
+            )} ${token.symbol}`,
+            "",
+            "Approve the token first, then run the simulation again.",
+          ].join("\n")
+        );
+      }
+
+      /*
+       * This is the important part.
+       *
+       * simulateContract() executes the call
+       * against the current blockchain state
+       * without sending a transaction.
+       */
+      await publicClient.simulateContract(
+        {
+          address:
+            ERC8183_ADDRESSES.commerce,
+
+          abi:
+            COMMERCE_ABI,
+
+          functionName:
+            "fund",
+
+          args: [
+            jobId,
+            budgetRaw,
+            "0x",
+          ],
+
+          account:
+            address,
+        }
+      );
+
+      const result: SimulationResult =
+        {
+          ok: true,
+
+          message:
+            [
+              `✓ Job #${jobId.toString()} is Open`,
+              `✓ Budget: ${formatUnits(
+                budgetRaw,
+                token.decimals
+              )} ${token.symbol}`,
+              `✓ Balance: ${formatUnits(
+                token.balance,
+                token.decimals
+              )} ${token.symbol}`,
+              `✓ Allowance: ${formatUnits(
+                token.allowance,
+                token.decimals
+              )} ${token.symbol}`,
+              "✓ fund() simulation passed",
+              "",
+              "The blockchain currently accepts the fund call.",
+            ].join("\n"),
+        };
+
+      setSimulation(
+        result
+      );
+
+      setStatus(
+        "✅ fund() simulation passed"
+      );
+
+      return result;
+    } catch (err) {
+      const reason =
+        extractRevertReason(err);
+
+      const result: SimulationResult =
+        {
+          ok: false,
+
+          message:
+            [
+              "fund() simulation failed.",
+              "",
+              "Revert / error reason:",
+              reason,
+            ].join("\n"),
+        };
+
+      setSimulation(
+        result
+      );
+
+      setStatus(
+        "❌ fund() simulation failed"
+      );
+
+      return result;
+    } finally {
+      setIsSimulating(false);
+    }
+  }
+
+  /*
+   * =========================================================
    * FUND JOB
-   * ========================================================
-   *
-   * This performs:
-   *
-   * 1. Read U allowance
-   * 2. Approve U if necessary
-   * 3. Call Commerce.fund()
-   * 4. Verify the job becomes FUNDED
-   *
-   * This mirrors the official BNB Agent SDK's
-   * documented approve + fund flow.
+   * =========================================================
    */
 
   async function fundJob() {
@@ -1241,9 +1418,10 @@ export default function Erc8183Test() {
         null
       );
 
+      setSimulation(null);
+
       /*
-       * Read payment token and
-       * current allowance.
+       * Read current U information.
        */
       setStatus(
         "Checking U balance and allowance..."
@@ -1252,10 +1430,6 @@ export default function Erc8183Test() {
       const token =
         await loadPaymentToken();
 
-      /*
-       * Make absolutely sure the user's
-       * current balance covers the budget.
-       */
       if (
         token.balance <
         budgetRaw
@@ -1264,11 +1438,11 @@ export default function Erc8183Test() {
           [
             `Insufficient ${token.symbol}.`,
             "",
-            `Wallet balance: ${formatUnits(
+            `Balance: ${formatUnits(
               token.balance,
               token.decimals
             )} ${token.symbol}`,
-            `Job budget: ${formatUnits(
+            `Required: ${formatUnits(
               budgetRaw,
               token.decimals
             )} ${token.symbol}`,
@@ -1277,22 +1451,15 @@ export default function Erc8183Test() {
       }
 
       /*
-       * ----------------------------------------------------
-       * STEP 1: APPROVAL
-       * ----------------------------------------------------
+       * =====================================================
+       * APPROVAL
+       * =====================================================
        */
 
       if (
         token.allowance <
         budgetRaw
       ) {
-        setStatus(
-          `Waiting for wallet confirmation to approve ${formatUnits(
-            budgetRaw,
-            token.decimals
-          )} ${token.symbol}...`
-        );
-
         const walletClient =
           createWalletClient({
             account:
@@ -1305,13 +1472,13 @@ export default function Erc8183Test() {
               custom(provider),
           });
 
-        /*
-         * We approve exactly the amount needed
-         * for this test job.
-         *
-         * This keeps the test simple and
-         * conservative.
-         */
+        setStatus(
+          `Waiting for wallet confirmation to approve ${formatUnits(
+            budgetRaw,
+            token.decimals
+          )} ${token.symbol}...`
+        );
+
         const approvalHash =
           await walletClient.writeContract(
             {
@@ -1326,7 +1493,6 @@ export default function Erc8183Test() {
 
               args: [
                 ERC8183_ADDRESSES.commerce,
-
                 budgetRaw,
               ],
             }
@@ -1358,7 +1524,7 @@ export default function Erc8183Test() {
         }
 
         /*
-         * Verify allowance after approval.
+         * Verify the new allowance.
          */
         const newAllowance =
           (await publicClient.readContract(
@@ -1389,30 +1555,46 @@ export default function Erc8183Test() {
         ) {
           throw new Error(
             [
-              "Approval transaction succeeded, but the allowance is still too low.",
+              "Approval succeeded, but allowance is still insufficient.",
               "",
-              `Required: ${budgetRaw.toString()}`,
-              `Actual: ${newAllowance.toString()}`,
+              `Allowance: ${formatUnits(
+                newAllowance,
+                token.decimals
+              )} ${token.symbol}`,
+              `Required: ${formatUnits(
+                budgetRaw,
+                token.decimals
+              )} ${token.symbol}`,
             ].join("\n")
           );
         }
-      } else {
-        /*
-         * No approval needed.
-         */
-        setAllowanceRaw(
-          token.allowance
-        );
+      }
 
-        setStatus(
-          "Existing U allowance is sufficient."
+      /*
+       * =====================================================
+       * SIMULATE BEFORE WALLET TRANSACTION
+       * =====================================================
+       */
+
+      const simulationResult =
+        await simulateFund();
+
+      if (
+        !simulationResult.ok
+      ) {
+        /*
+         * Do NOT open the wallet if the
+         * blockchain says the call would fail.
+         */
+        throw new Error(
+          simulationResult.message
         );
       }
 
       /*
-       * ----------------------------------------------------
-       * STEP 2: FUND
-       * ----------------------------------------------------
+       * =====================================================
+       * ACTUAL FUND TRANSACTION
+       * =====================================================
        */
 
       const walletClient =
@@ -1428,17 +1610,9 @@ export default function Erc8183Test() {
         });
 
       setStatus(
-        `Waiting for wallet confirmation to fund Job #${jobId.toString()} with ${formatUnits(
-          budgetRaw,
-          token.decimals
-        )} ${token.symbol}...`
+        `Simulation passed. Waiting for wallet confirmation to fund Job #${jobId.toString()}...`
       );
 
-      /*
-       * Official Commerce ABI:
-       *
-       * fund(jobId, expectedBudget, optParams)
-       */
       const fundHash =
         await walletClient.writeContract(
           {
@@ -1453,9 +1627,7 @@ export default function Erc8183Test() {
 
             args: [
               jobId,
-
               budgetRaw,
-
               "0x",
             ],
           }
@@ -1482,36 +1654,20 @@ export default function Erc8183Test() {
         "success"
       ) {
         throw new Error(
-          "Fund transaction failed."
+          "Fund transaction was mined but failed."
         );
       }
 
       /*
-       * ----------------------------------------------------
-       * STEP 3: VERIFY ON-CHAIN
-       * ----------------------------------------------------
+       * =====================================================
+       * VERIFY FINAL STATE
+       * =====================================================
        */
 
       setStatus(
-        "Funding confirmed. Verifying job state..."
+        "Funding confirmed. Verifying Job state..."
       );
 
-      await loadExistingJob(
-        jobId.toString()
-      );
-
-      /*
-       * The official ERC-8183 lifecycle uses:
-       *
-       * OPEN
-       * FUNDED
-       * SUBMITTED
-       * COMPLETED
-       * REJECTED
-       * EXPIRED
-       *
-       * We expect FUNDED here.
-       */
       const finalJob =
         (await publicClient.readContract(
           {
@@ -1542,25 +1698,7 @@ export default function Erc8183Test() {
           deliverable: `0x${string}`;
         };
 
-      if (
-        Number(
-          finalJob.status
-        ) !== 1
-      ) {
-        throw new Error(
-          [
-            "Funding transaction succeeded, but the job is not in FUNDED state.",
-            "",
-            `Current status: ${getStatusName(
-              Number(
-                finalJob.status
-              )
-            )}`,
-          ].join("\n")
-        );
-      }
-
-      setLoadedJob(
+      const finalLoadedJob: LoadedJob =
         {
           id:
             finalJob.id,
@@ -1596,8 +1734,29 @@ export default function Erc8183Test() {
 
           deliverable:
             finalJob.deliverable,
-        }
+        };
+
+      setLoadedJob(
+        finalLoadedJob
       );
+
+      if (
+        Number(
+          finalJob.status
+        ) !== 1
+      ) {
+        throw new Error(
+          [
+            "The funding transaction succeeded, but the job did not enter FUNDED state.",
+            "",
+            `Current state: ${getStatusName(
+              Number(
+                finalJob.status
+              )
+            )}`,
+          ].join("\n")
+        );
+      }
 
       setStatus(
         `🎉 Job #${jobId.toString()} is FUNDED`
@@ -1620,6 +1779,12 @@ export default function Erc8183Test() {
     }
   }
 
+  /*
+   * =========================================================
+   * UI
+   * =========================================================
+   */
+
   return (
     <div
       style={
@@ -1640,14 +1805,11 @@ export default function Erc8183Test() {
             styles.subtitle
           }
         >
-          Testing the official BNB Agent
-          Commerce layer on BSC Testnet.
+          Testing the official BNB Agent Commerce
+          layer on BSC Testnet.
         </p>
 
-        {/* ================================================== */}
         {/* WALLET */}
-        {/* ================================================== */}
-
         <div
           style={
             styles.panel
@@ -1703,10 +1865,7 @@ export default function Erc8183Test() {
           )}
         </div>
 
-        {/* ================================================== */}
         {/* LOAD JOB */}
-        {/* ================================================== */}
-
         {address && (
           <div
             style={
@@ -1722,8 +1881,8 @@ export default function Erc8183Test() {
                 styles.subtitleSmall
               }
             >
-              Job IDs are stored on-chain, so you
-              can continue after a page reload.
+              Enter a job ID already stored on
+              BSC Testnet.
             </p>
 
             <input
@@ -1763,10 +1922,7 @@ export default function Erc8183Test() {
           </div>
         )}
 
-        {/* ================================================== */}
-        {/* LOADED JOB */}
-        {/* ================================================== */}
-
+        {/* JOB */}
         {loadedJob && (
           <div
             style={
@@ -1816,7 +1972,7 @@ export default function Erc8183Test() {
                 label="Budget"
                 value={
                   tokenDecimals !==
-                    null
+                  null
                     ? `${formatUnits(
                         loadedJob.budget,
                         tokenDecimals
@@ -1828,15 +1984,13 @@ export default function Erc8183Test() {
 
             <div
               style={
-                loadedJob.status ===
-                1
+                loadedJob.status === 1
                   ? styles.fundedBanner
                   : styles.statusBanner
               }
             >
-              {loadedJob.status ===
-              1
-                ? "🎉 FUNDED — the escrow now contains the job budget."
+              {loadedJob.status === 1
+                ? "🎉 FUNDED — escrow contains the job budget."
                 : `Current state: ${getStatusName(
                     loadedJob.status
                   )}`}
@@ -1868,10 +2022,7 @@ export default function Erc8183Test() {
           </div>
         )}
 
-        {/* ================================================== */}
         {/* CREATE JOB */}
-        {/* ================================================== */}
-
         {address && (
           <div
             style={
@@ -1929,11 +2080,11 @@ export default function Erc8183Test() {
             {transactionHash && (
               <div
                 style={
-                  styles.success
+                  styles.transactionBox
                 }
               >
                 <strong>
-                  ✓ createJob confirmed
+                  createJob transaction
                 </strong>
 
                 <code
@@ -1952,17 +2103,14 @@ export default function Erc8183Test() {
                     styles.link
                   }
                 >
-                  View createJob transaction ↗
+                  View on BscScan ↗
                 </a>
               </div>
             )}
           </div>
         )}
 
-        {/* ================================================== */}
         {/* REGISTER */}
-        {/* ================================================== */}
-
         {loadedJob &&
           address && (
             <div
@@ -2031,10 +2179,7 @@ export default function Erc8183Test() {
             </div>
           )}
 
-        {/* ================================================== */}
         {/* PAYMENT TOKEN */}
-        {/* ================================================== */}
-
         {loadedJob &&
           registeredPolicy &&
           address && (
@@ -2052,38 +2197,34 @@ export default function Erc8183Test() {
                   styles.subtitleSmall
                 }
               >
-                The official Commerce contract determines
-                which settlement token is used.
+                The Commerce contract determines
+                the settlement token.
               </p>
 
               <button
-                onClick={
-                  async () => {
-                    try {
-                      setError(
-                        null
-                      );
+                onClick={async () => {
+                  try {
+                    setError(null);
 
-                      setStatus(
-                        "Reading U token..."
-                      );
+                    setStatus(
+                      "Reading U token..."
+                    );
 
-                      await loadPaymentToken();
+                    await loadPaymentToken();
 
-                      setStatus(
-                        "✅ U token information loaded"
-                      );
-                    } catch (
-                      err
-                    ) {
-                      setError(
-                        formatError(
-                          err
-                        )
-                      );
-                    }
+                    setStatus(
+                      "✅ Payment token loaded"
+                    );
+                  } catch (
+                    err
+                  ) {
+                    setError(
+                      formatError(
+                        err
+                      )
+                    );
                   }
-                }
+                }}
                 disabled={
                   loading
                 }
@@ -2122,7 +2263,7 @@ export default function Erc8183Test() {
                   />
 
                   <Info
-                    label="Current allowance"
+                    label="Allowance"
                     value={
                       tokenDecimals !==
                         null &&
@@ -2154,7 +2295,9 @@ export default function Erc8183Test() {
                         styles.code
                       }
                     >
-                      {paymentToken}
+                      {
+                        paymentToken
+                      }
                     </code>
                   </div>
                 </div>
@@ -2162,10 +2305,7 @@ export default function Erc8183Test() {
             </div>
           )}
 
-        {/* ================================================== */}
-        {/* SET BUDGET */}
-        {/* ================================================== */}
-
+        {/* BUDGET */}
         {loadedJob &&
           registeredPolicy &&
           address && (
@@ -2178,8 +2318,7 @@ export default function Erc8183Test() {
                 Set Budget
               </h3>
 
-              {budgetRaw !==
-              null ? (
+              {budgetRaw !== null ? (
                 <div
                   style={
                     styles.verified
@@ -2280,10 +2419,7 @@ export default function Erc8183Test() {
             </div>
           )}
 
-        {/* ================================================== */}
-        {/* FUND JOB */}
-        {/* ================================================== */}
-
+        {/* FUND */}
         {loadedJob &&
           registeredPolicy &&
           budgetRaw !== null &&
@@ -2297,17 +2433,87 @@ export default function Erc8183Test() {
                 Fund Job
               </h3>
 
-              <p
+              <div
                 style={
-                  styles.subtitleSmall
+                  styles.stepBox
                 }
               >
-                This transfers the budget into the
-                ERC-8183 escrow.
-              </p>
+                <strong>
+                  Before funding
+                </strong>
 
-              {loadedJob.status ===
-              1 ? (
+                <p>
+                  The app will:
+                </p>
+
+                <p>
+                  1. Check your U balance
+                </p>
+
+                <p>
+                  2. Check U allowance
+                </p>
+
+                <p>
+                  3. Approve U if needed
+                </p>
+
+                <p>
+                  4. Simulate fund()
+                </p>
+
+                <p>
+                  5. Only send the transaction if
+                  simulation succeeds
+                </p>
+              </div>
+
+              <button
+                onClick={
+                  async () => {
+                    await simulateFund();
+                  }
+                }
+                disabled={
+                  loading ||
+                  isSimulating
+                }
+                style={
+                  styles.secondaryButton
+                }
+              >
+                {isSimulating
+                  ? "Simulating..."
+                  : "Simulate Fund Transaction"}
+              </button>
+
+              {simulation && (
+                <div
+                  style={
+                    simulation.ok
+                      ? styles.simulationGood
+                      : styles.simulationBad
+                  }
+                >
+                  <strong>
+                    {simulation.ok
+                      ? "✅ Simulation Passed"
+                      : "❌ Simulation Failed"}
+                  </strong>
+
+                  <pre
+                    style={
+                      styles.simulationText
+                    }
+                  >
+                    {
+                      simulation.message
+                    }
+                  </pre>
+                </div>
+              )}
+
+              {loadedJob.status === 1 ? (
                 <div
                   style={
                     styles.fundedBanner
@@ -2316,56 +2522,24 @@ export default function Erc8183Test() {
                   <strong>
                     ✓ Job is already FUNDED
                   </strong>
-
-                  <p>
-                    The escrow has accepted the
-                    job budget.
-                  </p>
                 </div>
               ) : (
-                <>
-                  <div
-                    style={
-                      styles.stepBox
-                    }
-                  >
-                    <strong>
-                      What will happen
-                    </strong>
-
-                    <p>
-                      1. Check U allowance
-                    </p>
-
-                    <p>
-                      2. Approve U if needed
-                    </p>
-
-                    <p>
-                      3. Fund Job #{loadedJob.id.toString()}
-                    </p>
-
-                    <p>
-                      4. Verify FUNDED on-chain
-                    </p>
-                  </div>
-
-                  <button
-                    onClick={
-                      fundJob
-                    }
-                    disabled={
-                      loading
-                    }
-                    style={
-                      styles.primaryButton
-                    }
-                  >
-                    {loading
-                      ? "Working..."
-                      : `Fund Job #${loadedJob.id.toString()} with ${tokenSymbol}`}
-                  </button>
-                </>
+                <button
+                  onClick={
+                    fundJob
+                  }
+                  disabled={
+                    loading ||
+                    isSimulating
+                  }
+                  style={
+                    styles.primaryButton
+                  }
+                >
+                  {loading
+                    ? "Working..."
+                    : `Approve + Fund Job #${loadedJob.id.toString()}`}
+                </button>
               )}
 
               {approvalTransactionHash && (
@@ -2436,10 +2610,7 @@ export default function Erc8183Test() {
             </div>
           )}
 
-        {/* ================================================== */}
         {/* ERROR */}
-        {/* ================================================== */}
-
         {error && (
           <div
             style={
@@ -2465,9 +2636,9 @@ export default function Erc8183Test() {
 }
 
 /*
- * ============================================================
+ * =========================================================
  * INFO COMPONENT
- * ============================================================
+ * =========================================================
  */
 
 function Info({
@@ -2503,9 +2674,9 @@ function Info({
 }
 
 /*
- * ============================================================
- * JOB STATUS
- * ============================================================
+ * =========================================================
+ * STATUS
+ * =========================================================
  */
 
 function getStatusName(
@@ -2530,50 +2701,116 @@ function getStatusName(
 }
 
 /*
- * ============================================================
- * BSC TESTNET
- * ============================================================
+ * =========================================================
+ * ERROR EXTRACTION
+ * =========================================================
+ *
+ * Viem errors can contain the useful revert
+ * message several levels deep.
  */
 
-function getBscTestnetChain() {
-  return {
-    id: 97,
+function extractRevertReason(
+  error: unknown
+): string {
+  if (
+    error instanceof Error
+  ) {
+    const anyError =
+      error as Error & {
+        shortMessage?: string;
+        details?: string;
+        cause?: unknown;
+      };
 
-    name:
-      "BNB Smart Chain Testnet",
+    if (
+      anyError.shortMessage
+    ) {
+      return anyError.shortMessage;
+    }
 
-    nativeCurrency: {
-      name: "tBNB",
-      symbol: "tBNB",
-      decimals: 18,
-    },
+    if (
+      anyError.details
+    ) {
+      return anyError.details;
+    }
 
-    rpcUrls: {
-      default: {
-        http: [
-          "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
-        ],
-      },
-    },
+    const causeReason =
+      extractRevertReason(
+        anyError.cause
+      );
 
-    blockExplorers: {
-      default: {
-        name:
-          "BscScan",
+    if (
+      causeReason !==
+      "No detailed revert reason was returned."
+    ) {
+      return causeReason;
+    }
 
-        url:
-          "https://testnet.bscscan.com",
-      },
-    },
+    return anyError.message;
+  }
 
-    testnet: true,
-  } as const;
+  if (
+    typeof error ===
+    "string"
+  ) {
+    return error;
+  }
+
+  if (
+    error &&
+    typeof error ===
+      "object"
+  ) {
+    const obj =
+      error as Record<
+        string,
+        unknown
+      >;
+
+    const candidates = [
+      obj.shortMessage,
+      obj.details,
+      obj.reason,
+      obj.message,
+    ];
+
+    for (
+      const candidate of candidates
+    ) {
+      if (
+        typeof candidate ===
+        "string"
+      ) {
+        return candidate;
+      }
+    }
+
+    if (obj.cause) {
+      return extractRevertReason(
+        obj.cause
+      );
+    }
+
+    try {
+      return JSON.stringify(
+        error,
+        null,
+        2
+      );
+    } catch {
+      return String(
+        error
+      );
+    }
+  }
+
+  return "No detailed revert reason was returned.";
 }
 
 /*
- * ============================================================
+ * =========================================================
  * CHAIN ID
- * ============================================================
+ * =========================================================
  */
 
 function normalizeChainId(
@@ -2626,44 +2863,64 @@ function normalizeChainId(
 }
 
 /*
- * ============================================================
- * ERROR FORMATTER
- * ============================================================
+ * =========================================================
+ * BSC TESTNET
+ * =========================================================
+ */
+
+function getBscTestnetChain() {
+  return {
+    id: 97,
+
+    name:
+      "BNB Smart Chain Testnet",
+
+    nativeCurrency: {
+      name: "tBNB",
+      symbol: "tBNB",
+      decimals: 18,
+    },
+
+    rpcUrls: {
+      default: {
+        http: [
+          "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+        ],
+      },
+    },
+
+    blockExplorers: {
+      default: {
+        name:
+          "BscScan",
+
+        url:
+          "https://testnet.bscscan.com",
+      },
+    },
+
+    testnet: true,
+  } as const;
+}
+
+/*
+ * =========================================================
+ * GENERIC ERROR FORMATTER
+ * =========================================================
  */
 
 function formatError(
   error: unknown
 ): string {
-  if (
-    error instanceof Error
-  ) {
-    return error.message;
-  }
-
-  if (
-    typeof error ===
-    "string"
-  ) {
-    return error;
-  }
-
-  try {
-    return JSON.stringify(
-      error,
-      null,
-      2
-    );
-  } catch {
-    return String(
-      error
-    );
-  }
+  return extractRevertReason(
+    error
+  );
 }
 
 /*
- * ============================================================
+ * =========================================================
  * STYLES
- * ============================================================
+ * =========================================================
  */
 
 const styles: Record<
@@ -2689,7 +2946,7 @@ const styles: Record<
 
   container: {
     maxWidth:
-      "650px",
+      "680px",
 
     margin:
       "0 auto",
@@ -2993,7 +3250,7 @@ const styles: Record<
       "13px",
 
     lineHeight:
-      "1.45",
+      "1.5",
   },
 
   statusBanner: {
@@ -3043,6 +3300,66 @@ const styles: Record<
 
     lineHeight:
       "1.5",
+  },
+
+  simulationGood: {
+    marginTop:
+      "14px",
+
+    padding:
+      "14px",
+
+    borderRadius:
+      "10px",
+
+    background:
+      "rgba(50,200,120,.08)",
+
+    border:
+      "1px solid rgba(50,200,120,.3)",
+
+    color:
+      "#7ee2a8",
+  },
+
+  simulationBad: {
+    marginTop:
+      "14px",
+
+    padding:
+      "14px",
+
+    borderRadius:
+      "10px",
+
+    background:
+      "rgba(255,90,90,.08)",
+
+    border:
+      "1px solid rgba(255,90,90,.3)",
+
+    color:
+      "#ffaaaa",
+  },
+
+  simulationText: {
+    whiteSpace:
+      "pre-wrap",
+
+    overflowWrap:
+      "anywhere",
+
+    fontFamily:
+      "monospace",
+
+    fontSize:
+      "12px",
+
+    lineHeight:
+      "1.6",
+
+    marginBottom:
+      "0",
   },
 
   transactionBox: {
