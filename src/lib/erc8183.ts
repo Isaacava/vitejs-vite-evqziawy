@@ -11,7 +11,7 @@ import { bscTestnet } from "viem/chains";
 
 /*
  * ============================================================
- * OFFICIAL BNB AGENTIC COMMERCE CONTRACTS
+ * BNB AGENTIC COMMERCE CONTRACTS
  * BSC TESTNET
  * ============================================================
  */
@@ -110,11 +110,6 @@ export const COMMERCE_ABI = [
     outputs: [],
   },
 
-  /*
-   * Provider submission.
-   *
-   * submit(jobId, deliverableHash, optParams)
-   */
   {
     type: "function",
     name: "submit",
@@ -126,33 +121,6 @@ export const COMMERCE_ABI = [
       },
       {
         name: "deliverable",
-        type: "bytes32",
-      },
-      {
-        name: "optParams",
-        type: "bytes",
-      },
-    ],
-    outputs: [],
-  },
-
-  /*
-   * Optional direct completion function.
-   *
-   * We will NOT use this yet.
-   * Settlement is handled through the Router/policy flow.
-   */
-  {
-    type: "function",
-    name: "complete",
-    stateMutability: "nonpayable",
-    inputs: [
-      {
-        name: "jobId",
-        type: "uint256",
-      },
-      {
-        name: "reason",
         type: "bytes32",
       },
       {
@@ -252,24 +220,6 @@ export const COMMERCE_ABI = [
       },
     ],
   },
-
-  {
-    type: "function",
-    name: "jobHasBudget",
-    stateMutability: "view",
-    inputs: [
-      {
-        name: "jobId",
-        type: "uint256",
-      },
-    ],
-    outputs: [
-      {
-        name: "hasBudget",
-        type: "bool",
-      },
-    ],
-  },
 ] as const;
 
 /*
@@ -345,6 +295,13 @@ export const ROUTER_ABI = [
     ],
   },
 
+  /*
+   * Settlement.
+   *
+   * Current BNB Agent SDK uses the permissionless
+   * Router settlement operation after the policy
+   * produces a verdict.
+   */
   {
     type: "function",
     name: "settle",
@@ -365,7 +322,7 @@ export const ROUTER_ABI = [
 
 /*
  * ============================================================
- * ERC-20 PAYMENT TOKEN ABI
+ * PAYMENT TOKEN ABI
  * ============================================================
  */
 
@@ -467,16 +424,18 @@ export const ERC20_ABI = [
 
 export const publicClient =
   createPublicClient({
-    chain: bscTestnet,
+    chain:
+      bscTestnet,
 
-    transport: http(
-      "https://data-seed-prebsc-1-s1.bnbchain.org:8545"
-    ),
+    transport:
+      http(
+        "https://data-seed-prebsc-1-s1.bnbchain.org:8545"
+      ),
   });
 
 /*
  * ============================================================
- * WALLET CLIENT HELPER
+ * WALLET CLIENT
  * ============================================================
  */
 
@@ -487,7 +446,8 @@ export function getWalletClient(
   return createWalletClient({
     account,
 
-    chain: bscTestnet,
+    chain:
+      bscTestnet,
 
     transport:
       custom(provider),
