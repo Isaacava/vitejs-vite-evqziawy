@@ -10,6 +10,7 @@ import {
   stringToBytes,
   type Address,
   type EIP1193Provider,
+  type Hex,
 } from "viem";
 
 import {
@@ -19,14 +20,14 @@ import {
 import {
   COMMERCE_ABI,
   ERC8183_ADDRESSES,
+  ROUTER_ABI,
   publicClient,
 } from "./lib/erc8183";
 
 const WALLETCONNECT_PROJECT_ID =
   "1dbe8fd5e4974ae7c80d074c4082b5a0";
 
-const BSC_TESTNET_CHAIN_ID =
-  97;
+const BSC_TESTNET_CHAIN_ID = 97;
 
 const SAVED_PROVIDER_JOB_KEY =
   "bnb_agent_marketplace_provider_test_job";
@@ -45,37 +46,47 @@ type Job = {
   deliverable: `0x${string}`;
 };
 
+type DiagnosticState = {
+  jobId: string;
+  status: string;
+  provider: string;
+  connectedWallet: string;
+  client: string;
+  evaluator: string;
+  hook: string;
+  policy: string;
+  expiry: string;
+  expired: boolean;
+  deliverable: string;
+  providerMatches: boolean;
+  statusIsFunded: boolean;
+  simulation: string;
+};
+
 export default function ProviderTest() {
   const [provider, setProvider] =
-    useState<EIP1193Provider | null>(
-      null
-    );
+    useState<EIP1193Provider | null>(null);
 
   const [address, setAddress] =
-    useState<Address | null>(
-      null
-    );
+    useState<Address | null>(null);
 
   const [jobIdInput, setJobIdInput] =
     useState("");
 
   const [job, setJob] =
-    useState<Job | null>(
-      null
-    );
+    useState<Job | null>(null);
+
+  const [registeredPolicy, setRegisteredPolicy] =
+    useState<Address | null>(null);
 
   const [deliverable, setDeliverable] =
     useState("");
 
   const [deliverableHash, setDeliverableHash] =
-    useState<`0x${string}` | null>(
-      null
-    );
+    useState<`0x${string}` | null>(null);
 
   const [transactionHash, setTransactionHash] =
-    useState<`0x${string}` | null>(
-      null
-    );
+    useState<`0x${string}` | null>(null);
 
   const [status, setStatus] =
     useState(
@@ -83,12 +94,15 @@ export default function ProviderTest() {
     );
 
   const [error, setError] =
-    useState<string | null>(
-      null
-    );
+    useState<string | null>(null);
 
   const [loading, setLoading] =
     useState(false);
+
+  const [diagnostic, setDiagnostic] =
+    useState<DiagnosticState | null>(
+      null
+    );
 
   /*
    * ========================================================
@@ -113,7 +127,7 @@ export default function ProviderTest() {
       }
     } catch (err) {
       console.warn(
-        "Could not restore provider job ID:",
+        "Could not restore provider job:",
         err
       );
     }
@@ -149,7 +163,7 @@ export default function ProviderTest() {
               "BNB Agent Marketplace Provider",
 
             description:
-              "ERC-8183 Provider Test",
+              "ERC-8183 Provider Diagnostic",
 
             url:
               window.location.origin,
@@ -346,6 +360,10 @@ export default function ProviderTest() {
           result.deliverable,
       };
 
+      setJob(
+        loadedJob
+      );
+
       try {
         window.localStorage.setItem(
           SAVED_PROVIDER_JOB_KEY,
@@ -353,7 +371,7 @@ export default function ProviderTest() {
         );
       } catch (err) {
         console.warn(
-          "Could not save provider job ID:",
+          "Could not save provider job:",
           err
         );
       }
@@ -362,9 +380,49 @@ export default function ProviderTest() {
         id.toString()
       );
 
-      setJob(
-        loadedJob
+      setRegisteredPolicy(
+        null
       );
+
+      /*
+       * Read the policy registered for this job.
+       */
+      try {
+        const policy =
+          (await publicClient.readContract(
+            {
+              address:
+                ERC8183_ADDRESSES.router,
+
+              abi:
+                ROUTER_ABI,
+
+              functionName:
+                "jobPolicy",
+
+              args: [
+                id,
+              ],
+            }
+          )) as Address;
+
+        const zeroAddress =
+          "0x0000000000000000000000000000000000000000";
+
+        if (
+          policy.toLowerCase() !==
+          zeroAddress
+        ) {
+          setRegisteredPolicy(
+            policy
+          );
+        }
+      } catch (policyError) {
+        console.warn(
+          "Could not read job policy:",
+          policyError
+        );
+      }
 
       setDeliverable(
         `Provider test result for Job #${id.toString()}:\n\nThe provider successfully received and processed this funded ERC-8183 job.\n\nTask:\n${loadedJob.description}`
@@ -378,6 +436,10 @@ export default function ProviderTest() {
         null
       );
 
+      setDiagnostic(
+        null
+      );
+
       setStatus(
         `✅ Job #${id.toString()} loaded`
       );
@@ -388,6 +450,10 @@ export default function ProviderTest() {
       );
 
       setJob(
+        null
+      );
+
+      setDiagnostic(
         null
       );
 
@@ -405,82 +471,367 @@ export default function ProviderTest() {
 
   /*
    * ========================================================
-   * VALIDATE CURRENT JOB
+   * RUN FULL DIAGNOSTIC
    * ========================================================
    */
 
-  function validateProviderJob(
-    currentJob: Job
-  ) {
-    if (!address) {
-      throw new Error(
-        "Connect the provider wallet first."
+  async function runDiagnostic() {
+    try {
+      setError(null);
+
+      if (!address) {
+        throw new Error(
+          "Connect the provider wallet first."
+        );
+      }
+
+      const currentJob =
+        job;
+
+      if (!currentJob) {
+        throw new Error(
+          "Load a job first."
+        );
+      }
+
+      setLoading(true);
+
+      setStatus(
+        `Running full diagnostic for Job #${currentJob.id.toString()}...`
       );
-    }
 
-    /*
-     * Provider must match the job's provider.
-     */
-    if (
-      currentJob.provider.toLowerCase() !==
-      address.toLowerCase()
-    ) {
-      throw new Error(
-        [
-          "Provider mismatch.",
+      /*
+       * Refresh the job directly from chain.
+       */
+      const chainJob =
+        (await publicClient.readContract(
+          {
+            address:
+              ERC8183_ADDRESSES.commerce,
 
-          "",
+            abi:
+              COMMERCE_ABI,
 
-          `Job provider: ${currentJob.provider}`,
+            functionName:
+              "getJob",
 
-          `Connected wallet: ${address}`,
+            args: [
+              currentJob.id,
+            ],
+          }
+        )) as {
+          id: bigint;
+          client: Address;
+          provider: Address;
+          evaluator: Address;
+          description: string;
+          budget: bigint;
+          expiredAt: bigint;
+          status: number;
+          hook: Address;
+          submittedAt: bigint;
+          deliverable: `0x${string}`;
+        };
 
-          "",
+      /*
+       * Refresh policy.
+       */
+      let policy =
+        registeredPolicy;
 
-          "This wallet is not the provider assigned to this job.",
-        ].join(
-          "\n"
-        )
+      try {
+        const policyResult =
+          (await publicClient.readContract(
+            {
+              address:
+                ERC8183_ADDRESSES.router,
+
+              abi:
+                ROUTER_ABI,
+
+              functionName:
+                "jobPolicy",
+
+              args: [
+                currentJob.id,
+              ],
+            }
+          )) as Address;
+
+        policy =
+          policyResult;
+      } catch {
+        policy =
+          null;
+      }
+
+      const currentTime =
+        BigInt(
+          Math.floor(
+            Date.now() /
+              1000
+          )
+        );
+
+      const expired =
+        chainJob.expiredAt <=
+        currentTime;
+
+      const providerMatches =
+        chainJob.provider.toLowerCase() ===
+        address.toLowerCase();
+
+      const statusIsFunded =
+        Number(
+          chainJob.status
+        ) === 1;
+
+      /*
+       * Prepare deliverable hash.
+       */
+      let hash =
+        deliverableHash;
+
+      if (
+        !hash &&
+        deliverable.trim()
+      ) {
+        hash =
+          keccak256(
+            stringToBytes(
+              deliverable
+            )
+          );
+
+        setDeliverableHash(
+          hash
+        );
+      }
+
+      /*
+       * Build diagnostic before simulation.
+       */
+      const preliminary: DiagnosticState =
+        {
+          jobId:
+            chainJob.id.toString(),
+
+          status:
+            getStatusName(
+              Number(
+                chainJob.status
+              )
+            ),
+
+          provider:
+            chainJob.provider,
+
+          connectedWallet:
+            address,
+
+          client:
+            chainJob.client,
+
+          evaluator:
+            chainJob.evaluator,
+
+          hook:
+            chainJob.hook,
+
+          policy:
+            policy ??
+            "Not available",
+
+          expiry:
+            formatTimestamp(
+              chainJob.expiredAt
+            ),
+
+          expired,
+
+          deliverable:
+            hash ??
+            chainJob.deliverable,
+
+          providerMatches,
+
+          statusIsFunded,
+
+          simulation:
+            "Not yet simulated",
+        };
+
+      setDiagnostic(
+        preliminary
       );
-    }
 
-    /*
-     * Job must be funded.
-     */
-    if (
-      currentJob.status !==
-      1
-    ) {
-      throw new Error(
-        [
-          `Job #${currentJob.id.toString()} is not FUNDED.`,
+      /*
+       * Stop before simulation if basic state
+       * is already invalid.
+       */
+      if (
+        !providerMatches
+      ) {
+        throw new Error(
+          [
+            "Provider wallet mismatch.",
 
-          "",
+            "",
 
-          `Current status: ${getStatusName(
-            currentJob.status
-          )}`,
-        ].join(
-          "\n"
-        )
+            `Job provider: ${chainJob.provider}`,
+
+            `Connected wallet: ${address}`,
+          ].join(
+            "\n"
+          )
+        );
+      }
+
+      if (
+        !statusIsFunded
+      ) {
+        throw new Error(
+          [
+            "Job is not FUNDED.",
+
+            "",
+
+            `Current state: ${getStatusName(
+              Number(
+                chainJob.status
+              )
+            )}`,
+          ].join(
+            "\n"
+          )
+        );
+      }
+
+      if (
+        expired
+      ) {
+        throw new Error(
+          [
+            "Job has expired.",
+
+            "",
+
+            `Expiry: ${formatTimestamp(
+              chainJob.expiredAt
+            )}`,
+          ].join(
+            "\n"
+          )
+        );
+      }
+
+      if (
+        !hash
+      ) {
+        throw new Error(
+          "No deliverable hash could be generated."
+        );
+      }
+
+      /*
+       * Simulate submit().
+       */
+      setStatus(
+        "Basic checks passed. Simulating submit()..."
       );
-    }
 
-    /*
-     * Job must not be expired.
-     */
-    if (
-      currentJob.expiredAt <=
-      BigInt(
-        Math.floor(
-          Date.now() /
-            1000
-        )
-      )
-    ) {
-      throw new Error(
-        "This job has expired."
+      try {
+        await publicClient.simulateContract(
+          {
+            address:
+              ERC8183_ADDRESSES.commerce,
+
+            abi:
+              COMMERCE_ABI,
+
+            functionName:
+              "submit",
+
+            args: [
+              chainJob.id,
+
+              hash,
+
+              "0x",
+            ],
+
+            account:
+              address,
+          }
+        );
+
+        const successDiagnostic: DiagnosticState =
+          {
+            ...preliminary,
+
+            deliverable:
+              hash,
+
+            simulation:
+              "✅ submit() simulation passed",
+          };
+
+        setDiagnostic(
+          successDiagnostic
+        );
+
+        setStatus(
+          "✅ Full diagnostic passed"
+        );
+      } catch (simulationError) {
+        const reason =
+          extractDetailedError(
+            simulationError
+          );
+
+        const failedDiagnostic: DiagnosticState =
+          {
+            ...preliminary,
+
+            deliverable:
+              hash,
+
+            simulation:
+              [
+                "❌ submit() simulation failed",
+
+                "",
+
+                "Error:",
+                reason,
+              ].join(
+                "\n"
+              ),
+          };
+
+        setDiagnostic(
+          failedDiagnostic
+        );
+
+        setStatus(
+          "❌ Full diagnostic completed — submit() still reverts"
+        );
+      }
+    } catch (err) {
+      console.error(
+        "Diagnostic failed:",
+        err
       );
+
+      setStatus(
+        "Diagnostic failed"
+      );
+
+      setError(
+        formatError(err)
+      );
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -525,105 +876,7 @@ export default function ProviderTest() {
 
   /*
    * ========================================================
-   * SIMULATE SUBMIT
-   * ========================================================
-   */
-
-  async function simulateSubmit() {
-    try {
-      setError(null);
-
-      if (
-        !address
-      ) {
-        throw new Error(
-          "Connect the provider wallet first."
-        );
-      }
-
-      const currentJob =
-        job;
-
-      if (!currentJob) {
-        throw new Error(
-          "Load a job first."
-        );
-      }
-
-      validateProviderJob(
-        currentJob
-      );
-
-      if (
-        !deliverable.trim()
-      ) {
-        throw new Error(
-          "Enter a deliverable first."
-        );
-      }
-
-      const hash =
-        deliverableHash ??
-        keccak256(
-          stringToBytes(
-            deliverable
-          )
-        );
-
-      setDeliverableHash(
-        hash
-      );
-
-      setStatus(
-        "Simulating submit()..."
-      );
-
-      await publicClient.simulateContract(
-        {
-          address:
-            ERC8183_ADDRESSES.commerce,
-
-          abi:
-            COMMERCE_ABI,
-
-          functionName:
-            "submit",
-
-          args: [
-            currentJob.id,
-
-            hash,
-
-            "0x",
-          ],
-
-          account:
-            address,
-        }
-      );
-
-      setStatus(
-        "✅ submit() simulation passed"
-      );
-    } catch (err) {
-      console.error(
-        "Submit simulation failed:",
-        err
-      );
-
-      setStatus(
-        "❌ submit() simulation failed"
-      );
-
-      setError(
-        formatError(err)
-      );
-    }
-  }
-
-  /*
-   * ========================================================
-   * SUBMIT DELIVERABLE
+   * SUBMIT
    * ========================================================
    */
 
@@ -649,10 +902,6 @@ export default function ProviderTest() {
         );
       }
 
-      validateProviderJob(
-        currentJob
-      );
-
       if (
         !deliverable.trim()
       ) {
@@ -661,11 +910,10 @@ export default function ProviderTest() {
         );
       }
 
-      setLoading(true);
+      setLoading(
+        true
+      );
 
-      /*
-       * Generate deliverable hash.
-       */
       const hash =
         deliverableHash ??
         keccak256(
@@ -679,39 +927,45 @@ export default function ProviderTest() {
       );
 
       /*
-       * Simulate first.
+       * Always refresh diagnostic state
+       * immediately before sending.
        */
-      setStatus(
-        "Checking submit() before sending..."
-      );
-
-      await publicClient.simulateContract(
-        {
-          address:
-            ERC8183_ADDRESSES.commerce,
-
-          abi:
-            COMMERCE_ABI,
-
-          functionName:
-            "submit",
-
-          args: [
-            currentJob.id,
-
-            hash,
-
-            "0x",
-          ],
-
-          account:
-            address,
-        }
-      );
+      await runDiagnostic();
 
       /*
-       * Create wallet client.
+       * We intentionally require the user
+       * to run the diagnostic first and only
+       * allow a transaction when it passes.
        */
+      const freshDiagnostic =
+        diagnostic;
+
+      if (
+        !freshDiagnostic
+      ) {
+        throw new Error(
+          "Run the full provider diagnostic first."
+        );
+      }
+
+      if (
+        !freshDiagnostic.simulation.includes(
+          "passed"
+        )
+      ) {
+        throw new Error(
+          [
+            "submit() simulation did not pass.",
+
+            "",
+
+            freshDiagnostic.simulation,
+          ].join(
+            "\n"
+          )
+        );
+      }
+
       const walletClient =
         createWalletClient({
           account:
@@ -725,7 +979,7 @@ export default function ProviderTest() {
         });
 
       setStatus(
-        "Simulation passed. Waiting for provider wallet confirmation..."
+        "Simulation passed. Waiting for wallet confirmation..."
       );
 
       const txHash =
@@ -775,9 +1029,6 @@ export default function ProviderTest() {
         );
       }
 
-      /*
-       * Reload from chain.
-       */
       await loadJob(
         currentJob.id.toString()
       );
@@ -799,15 +1050,11 @@ export default function ProviderTest() {
         formatError(err)
       );
     } finally {
-      setLoading(false);
+      setLoading(
+        false
+      );
     }
   }
-
-  /*
-   * ========================================================
-   * RENDER
-   * ========================================================
-   */
 
   return (
     <div
@@ -829,14 +1076,11 @@ export default function ProviderTest() {
             styles.subtitle
           }
         >
-          Test the provider side of ERC-8183:
-          receive a FUNDED job and submit a
-          deliverable.
+          Diagnose and test the provider side of
+          ERC-8183.
         </p>
 
-        {/* ============================================ */}
-        {/* PROVIDER WALLET */}
-        {/* ============================================ */}
+        {/* WALLET */}
 
         <div
           style={
@@ -889,9 +1133,7 @@ export default function ProviderTest() {
           )}
         </div>
 
-        {/* ============================================ */}
         {/* LOAD JOB */}
-        {/* ============================================ */}
 
         {address && (
           <div
@@ -911,8 +1153,7 @@ export default function ProviderTest() {
                 event
               ) =>
                 setJobIdInput(
-                  event.target
-                    .value
+                  event.target.value
                 )
               }
               placeholder="Example: 502"
@@ -934,16 +1175,16 @@ export default function ProviderTest() {
                 styles.secondaryButton
               }
             >
-              {loading
-                ? "Loading..."
-                : "Load Job"}
+              {
+                loading
+                  ? "Loading..."
+                  : "Load Job"
+              }
             </button>
           </div>
         )}
 
-        {/* ============================================ */}
         {/* JOB DETAILS */}
-        {/* ============================================ */}
 
         {job && (
           <div
@@ -979,6 +1220,20 @@ export default function ProviderTest() {
             />
 
             <Info
+              label="Evaluator"
+              value={
+                job.evaluator
+              }
+            />
+
+            <Info
+              label="Hook"
+              value={
+                job.hook
+              }
+            />
+
+            <Info
               label="Budget"
               value={
                 job.budget.toString()
@@ -998,30 +1253,22 @@ export default function ProviderTest() {
               style={
                 job.status ===
                   1 &&
-                job.expiredAt >
-                  BigInt(
-                    Math.floor(
-                      Date.now() /
-                        1000
-                    )
-                  )
+                !isExpired(
+                  job.expiredAt
+                )
                   ? styles.good
                   : styles.warning
               }
             >
               {job.status ===
                 1 &&
-              job.expiredAt >
-                BigInt(
-                  Math.floor(
-                    Date.now() /
-                      1000
-                  )
-                )
-                ? "✓ This job is FUNDED and can be processed by the provider."
-                : `This job is ${getStatusName(
+              !isExpired(
+                job.expiredAt
+              )
+                ? "✓ Job is FUNDED and not expired."
+                : `Current state: ${getStatusName(
                     job.status
-                  )} or expired.`}
+                  )}`}
             </div>
 
             <div
@@ -1044,9 +1291,171 @@ export default function ProviderTest() {
           </div>
         )}
 
-        {/* ============================================ */}
+        {/* DIAGNOSTIC */}
+
+        {job &&
+          address && (
+            <div
+              style={
+                styles.panel
+              }
+            >
+              <h3>
+                Provider Diagnostic
+              </h3>
+
+              <p
+                style={
+                  styles.subtitleSmall
+                }
+              >
+                This checks the complete on-chain state
+                before we send a submit transaction.
+              </p>
+
+              <button
+                onClick={() =>
+                  void runDiagnostic()
+                }
+                disabled={
+                  loading
+                }
+                style={
+                  styles.primaryButton
+                }
+              >
+                {loading
+                  ? "Running..."
+                  : "Run Full Diagnostic"}
+              </button>
+
+              {diagnostic && (
+                <div
+                  style={
+                    styles.diagnosticBox
+                  }
+                >
+                  <Info
+                    label="Job"
+                    value={
+                      diagnostic.jobId
+                    }
+                  />
+
+                  <Info
+                    label="Status"
+                    value={
+                      diagnostic.status
+                    }
+                  />
+
+                  <Info
+                    label="Job provider"
+                    value={
+                      diagnostic.provider
+                    }
+                  />
+
+                  <Info
+                    label="Connected wallet"
+                    value={
+                      diagnostic.connectedWallet
+                    }
+                  />
+
+                  <Info
+                    label="Provider match"
+                    value={
+                      diagnostic.providerMatches
+                        ? "YES"
+                        : "NO"
+                    }
+                  />
+
+                  <Info
+                    label="Client"
+                    value={
+                      diagnostic.client
+                    }
+                  />
+
+                  <Info
+                    label="Evaluator"
+                    value={
+                      diagnostic.evaluator
+                    }
+                  />
+
+                  <Info
+                    label="Hook"
+                    value={
+                      diagnostic.hook
+                    }
+                  />
+
+                  <Info
+                    label="Registered policy"
+                    value={
+                      diagnostic.policy
+                    }
+                  />
+
+                  <Info
+                    label="Expiry"
+                    value={
+                      diagnostic.expiry
+                    }
+                  />
+
+                  <Info
+                    label="Expired"
+                    value={
+                      diagnostic.expired
+                        ? "YES"
+                        : "NO"
+                    }
+                  />
+
+                  <Info
+                    label="Deliverable"
+                    value={
+                      diagnostic.deliverable
+                    }
+                  />
+
+                  <div
+                    style={
+                      diagnostic.simulation.includes(
+                        "passed"
+                      )
+                        ? styles.good
+                        : styles.warning
+                    }
+                  >
+                    <div
+                      style={
+                        styles.label
+                      }
+                    >
+                      submit() result
+                    </div>
+
+                    <pre
+                      style={
+                        styles.pre
+                      }
+                    >
+                      {
+                        diagnostic.simulation
+                      }
+                    </pre>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
         {/* DELIVERABLE */}
-        {/* ============================================ */}
 
         {job &&
           address && (
@@ -1058,16 +1467,6 @@ export default function ProviderTest() {
               <h3>
                 Deliverable
               </h3>
-
-              <p
-                style={
-                  styles.subtitleSmall
-                }
-              >
-                For this first test, we're submitting
-                a simple text result. Later this will
-                come from the real AI agent.
-              </p>
 
               <textarea
                 value={
@@ -1081,6 +1480,10 @@ export default function ProviderTest() {
                   );
 
                   setDeliverableHash(
+                    null
+                  );
+
+                  setDiagnostic(
                     null
                   );
                 }}
@@ -1131,7 +1534,7 @@ export default function ProviderTest() {
 
               <button
                 onClick={
-                  simulateSubmit
+                  runDiagnostic
                 }
                 disabled={
                   loading ||
@@ -1141,7 +1544,7 @@ export default function ProviderTest() {
                   styles.secondaryButton
                 }
               >
-                Simulate submit()
+                Run Diagnostic + Simulate submit()
               </button>
 
               <button
@@ -1156,16 +1559,16 @@ export default function ProviderTest() {
                   styles.primaryButton
                 }
               >
-                {loading
-                  ? "Working..."
-                  : `Submit Job #${job.id.toString()}`}
+                {
+                  loading
+                    ? "Working..."
+                    : `Submit Job #${job.id.toString()}`
+                }
               </button>
             </div>
           )}
 
-        {/* ============================================ */}
         {/* TRANSACTION */}
-        {/* ============================================ */}
 
         {transactionHash && (
           <div
@@ -1182,7 +1585,7 @@ export default function ProviderTest() {
                 styles.good
               }
             >
-              ✓ Submit transaction confirmed
+              ✓ Submission transaction confirmed
             </div>
 
             <code
@@ -1208,9 +1611,7 @@ export default function ProviderTest() {
           </div>
         )}
 
-        {/* ============================================ */}
         {/* ERROR */}
-        {/* ============================================ */}
 
         {error && (
           <div
@@ -1240,7 +1641,7 @@ export default function ProviderTest() {
 
 /*
  * ============================================================
- * INFO COMPONENT
+ * INFO
  * ============================================================
  */
 
@@ -1305,9 +1706,23 @@ function getStatusName(
 
 /*
  * ============================================================
- * FORMAT TIMESTAMP
+ * EXPIRY
  * ============================================================
  */
+
+function isExpired(
+  timestamp: bigint
+): boolean {
+  return (
+    timestamp <=
+    BigInt(
+      Math.floor(
+        Date.now() /
+          1000
+      )
+    )
+  );
+}
 
 function formatTimestamp(
   timestamp: bigint
@@ -1331,7 +1746,159 @@ function formatTimestamp(
 
 /*
  * ============================================================
- * NORMALIZE CHAIN
+ * ERROR DECODER
+ * ============================================================
+ */
+
+function extractDetailedError(
+  error: unknown
+): string {
+  const pieces: string[] = [];
+
+  function collect(
+    value: unknown,
+    depth = 0
+  ) {
+    if (
+      depth > 6 ||
+      value === null ||
+      value === undefined
+    ) {
+      return;
+    }
+
+    if (
+      typeof value ===
+      "string"
+    ) {
+      if (
+        value.trim()
+      ) {
+        pieces.push(
+          value.trim()
+        );
+      }
+
+      return;
+    }
+
+    if (
+      typeof value ===
+      "object"
+    ) {
+      const obj =
+        value as Record<
+          string,
+          unknown
+        >;
+
+      const preferredKeys = [
+        "shortMessage",
+        "details",
+        "reason",
+        "message",
+        "data",
+      ];
+
+      for (
+        const key of preferredKeys
+      ) {
+        if (
+          obj[key] !==
+          undefined
+        ) {
+          if (
+            typeof obj[key] ===
+            "string"
+          ) {
+            pieces.push(
+              `${key}: ${obj[key]}`
+            );
+          } else {
+            collect(
+              obj[key],
+              depth + 1
+            );
+          }
+        }
+      }
+
+      if (
+        obj.cause
+      ) {
+        collect(
+          obj.cause,
+          depth + 1
+        );
+      }
+
+      if (
+        obj.metaMessages
+      ) {
+        collect(
+          obj.metaMessages,
+          depth + 1
+        );
+      }
+
+      if (
+        obj.contracts
+      ) {
+        collect(
+          obj.contracts,
+          depth + 1
+        );
+      }
+    }
+  }
+
+  collect(
+    error
+  );
+
+  const unique =
+    Array.from(
+      new Set(
+        pieces
+      )
+    );
+
+  if (
+    unique.length >
+    0
+  ) {
+    return unique.join(
+      "\n"
+    );
+  }
+
+  /*
+   * Last-resort JSON representation.
+   */
+  try {
+    return JSON.stringify(
+      error,
+      null,
+      2
+    );
+  } catch {
+    return String(
+      error
+    );
+  }
+}
+
+function formatError(
+  error: unknown
+): string {
+  return extractDetailedError(
+    error
+  );
+}
+
+/*
+ * ============================================================
+ * CHAIN
  * ============================================================
  */
 
@@ -1358,16 +1925,23 @@ function normalizeChainId(
     typeof value ===
     "string"
   ) {
-    return value
-      .toLowerCase()
-      .startsWith("0x")
-      ? parseInt(
-          value,
-          16
-        )
-      : Number(
-          value
-        );
+    const trimmed =
+      value.trim();
+
+    if (
+      trimmed
+        .toLowerCase()
+        .startsWith("0x")
+    ) {
+      return parseInt(
+        trimmed,
+        16
+      );
+    }
+
+    return Number(
+      trimmed
+    );
   }
 
   throw new Error(
@@ -1376,74 +1950,6 @@ function normalizeChainId(
     )}`
   );
 }
-
-/*
- * ============================================================
- * ERROR FORMATTER
- * ============================================================
- */
-
-function formatError(
-  error: unknown
-): string {
-  if (
-    error instanceof Error
-  ) {
-    const extended =
-      error as Error & {
-        shortMessage?: string;
-        details?: string;
-        cause?: unknown;
-      };
-
-    if (
-      extended.shortMessage
-    ) {
-      return extended.shortMessage;
-    }
-
-    if (
-      extended.details
-    ) {
-      return extended.details;
-    }
-
-    if (
-      extended.cause
-    ) {
-      return formatError(
-        extended.cause
-      );
-    }
-
-    return extended.message;
-  }
-
-  if (
-    typeof error ===
-    "string"
-  ) {
-    return error;
-  }
-
-  try {
-    return JSON.stringify(
-      error,
-      null,
-      2
-    );
-  } catch {
-    return String(
-      error
-    );
-  }
-}
-
-/*
- * ============================================================
- * BSC TESTNET
- * ============================================================
- */
 
 function getBscTestnetChain() {
   return {
@@ -1516,7 +2022,7 @@ const styles: Record<
 
   container: {
     maxWidth:
-      "680px",
+      "700px",
 
     margin:
       "0 auto",
@@ -1637,9 +2143,6 @@ const styles: Record<
     boxSizing:
       "border-box",
 
-    marginBottom:
-      "16px",
-
     padding:
       "11px",
 
@@ -1663,6 +2166,9 @@ const styles: Record<
 
     lineHeight:
       "1.5",
+
+    marginBottom:
+      "12px",
   },
 
   primaryButton: {
@@ -1743,6 +2249,9 @@ const styles: Record<
 
     wordBreak:
       "break-all",
+
+    whiteSpace:
+      "pre-wrap",
   },
 
   task: {
@@ -1760,6 +2269,46 @@ const styles: Record<
 
     lineHeight:
       "1.6",
+  },
+
+  diagnosticBox: {
+    marginTop:
+      "14px",
+
+    padding:
+      "12px",
+
+    borderRadius:
+      "10px",
+
+    background:
+      "#0d1011",
+
+    border:
+      "1px solid #282c2e",
+  },
+
+  pre: {
+    whiteSpace:
+      "pre-wrap",
+
+    overflowWrap:
+      "anywhere",
+
+    fontFamily:
+      "monospace",
+
+    fontSize:
+      "12px",
+
+    lineHeight:
+      "1.6",
+
+    margin:
+      "0",
+
+    color:
+      "#ddd",
   },
 
   good: {
@@ -1803,6 +2352,9 @@ const styles: Record<
 
     color:
       "#e5cf79",
+
+    lineHeight:
+      "1.5",
   },
 
   error: {
