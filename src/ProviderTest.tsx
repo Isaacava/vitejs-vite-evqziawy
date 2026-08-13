@@ -65,9 +65,7 @@ export default function ProviderTest() {
     );
 
   const [deliverable, setDeliverable] =
-    useState(
-      ""
-    );
+    useState("");
 
   const [deliverableHash, setDeliverableHash] =
     useState<`0x${string}` | null>(
@@ -94,22 +92,29 @@ export default function ProviderTest() {
 
   /*
    * ========================================================
-   * RESTORE SAVED JOB ID
+   * RESTORE SAVED JOB
    * ========================================================
    */
 
   useEffect(() => {
-    const saved =
-      window.localStorage.getItem(
-        SAVED_PROVIDER_JOB_KEY
-      );
+    try {
+      const saved =
+        window.localStorage.getItem(
+          SAVED_PROVIDER_JOB_KEY
+        );
 
-    if (
-      saved &&
-      /^\d+$/.test(saved)
-    ) {
-      setJobIdInput(
-        saved
+      if (
+        saved &&
+        /^\d+$/.test(saved)
+      ) {
+        setJobIdInput(
+          saved
+        );
+      }
+    } catch (err) {
+      console.warn(
+        "Could not restore provider job ID:",
+        err
       );
     }
   }, []);
@@ -213,9 +218,11 @@ export default function ProviderTest() {
       if (
         jobIdInput
       ) {
-        void loadJob(
-          jobIdInput
-        );
+        window.setTimeout(() => {
+          void loadJob(
+            jobIdInput
+          );
+        }, 0);
       }
     } catch (err) {
       console.error(
@@ -235,7 +242,7 @@ export default function ProviderTest() {
 
   /*
    * ========================================================
-   * LOAD FUNDED JOB
+   * LOAD JOB
    * ========================================================
    */
 
@@ -302,7 +309,7 @@ export default function ProviderTest() {
           deliverable: `0x${string}`;
         };
 
-      const loaded: Job = {
+      const loadedJob: Job = {
         id:
           result.id,
 
@@ -339,25 +346,36 @@ export default function ProviderTest() {
           result.deliverable,
       };
 
-      window.localStorage.setItem(
-        SAVED_PROVIDER_JOB_KEY,
-        id.toString()
-      );
+      try {
+        window.localStorage.setItem(
+          SAVED_PROVIDER_JOB_KEY,
+          id.toString()
+        );
+      } catch (err) {
+        console.warn(
+          "Could not save provider job ID:",
+          err
+        );
+      }
 
       setJobIdInput(
         id.toString()
       );
 
       setJob(
-        loaded
+        loadedJob
       );
 
-      /*
-       * Give ourselves a sensible
-       * fake deliverable.
-       */
       setDeliverable(
-        `Provider test result for Job #${id.toString()}:\n\nThe provider successfully received and processed this funded ERC-8183 job.\n\nTask:\n${loaded.description}`
+        `Provider test result for Job #${id.toString()}:\n\nThe provider successfully received and processed this funded ERC-8183 job.\n\nTask:\n${loadedJob.description}`
+      );
+
+      setDeliverableHash(
+        null
+      );
+
+      setTransactionHash(
+        null
       );
 
       setStatus(
@@ -369,7 +387,9 @@ export default function ProviderTest() {
         err
       );
 
-      setJob(null);
+      setJob(
+        null
+      );
 
       setStatus(
         "Could not load job"
@@ -385,29 +405,24 @@ export default function ProviderTest() {
 
   /*
    * ========================================================
-   * VALIDATE PROVIDER
+   * VALIDATE CURRENT JOB
    * ========================================================
    */
 
-  function validateProviderJob() {
+  function validateProviderJob(
+    currentJob: Job
+  ) {
     if (!address) {
       throw new Error(
         "Connect the provider wallet first."
       );
     }
 
-    if (!job) {
-      throw new Error(
-        "Load a job first."
-      );
-    }
-
     /*
-     * The provider must be the wallet
-     * connected to this page.
+     * Provider must match the job's provider.
      */
     if (
-      job.provider.toLowerCase() !==
+      currentJob.provider.toLowerCase() !==
       address.toLowerCase()
     ) {
       throw new Error(
@@ -416,7 +431,7 @@ export default function ProviderTest() {
 
           "",
 
-          `Job provider: ${job.provider}`,
+          `Job provider: ${currentJob.provider}`,
 
           `Connected wallet: ${address}`,
 
@@ -430,21 +445,20 @@ export default function ProviderTest() {
     }
 
     /*
-     * The provider should only process
-     * a funded job.
+     * Job must be funded.
      */
     if (
-      job.status !==
+      currentJob.status !==
       1
     ) {
       throw new Error(
         [
-          `Job #${job.id.toString()} is not FUNDED.`,
+          `Job #${currentJob.id.toString()} is not FUNDED.`,
 
           "",
 
           `Current status: ${getStatusName(
-            job.status
+            currentJob.status
           )}`,
         ].join(
           "\n"
@@ -453,10 +467,10 @@ export default function ProviderTest() {
     }
 
     /*
-     * Check expiry.
+     * Job must not be expired.
      */
     if (
-      job.expiredAt <=
+      currentJob.expiredAt <=
       BigInt(
         Math.floor(
           Date.now() /
@@ -468,13 +482,11 @@ export default function ProviderTest() {
         "This job has expired."
       );
     }
-
-    return true;
   }
 
   /*
    * ========================================================
-   * GENERATE DELIVERABLE HASH
+   * PREPARE DELIVERABLE
    * ========================================================
    */
 
@@ -490,14 +502,6 @@ export default function ProviderTest() {
         );
       }
 
-      /*
-       * For this first test we use the
-       * keccak256 hash of the deliverable.
-       *
-       * The official SDK normally stores
-       * the actual deliverable off-chain and
-       * places its content hash on-chain.
-       */
       const hash =
         keccak256(
           stringToBytes(
@@ -530,15 +534,25 @@ export default function ProviderTest() {
       setError(null);
 
       if (
-        !address ||
-        !job
+        !address
       ) {
         throw new Error(
-          "Connect the provider wallet and load a job."
+          "Connect the provider wallet first."
         );
       }
 
-      validateProviderJob();
+      const currentJob =
+        job;
+
+      if (!currentJob) {
+        throw new Error(
+          "Load a job first."
+        );
+      }
+
+      validateProviderJob(
+        currentJob
+      );
 
       if (
         !deliverable.trim()
@@ -576,7 +590,7 @@ export default function ProviderTest() {
             "submit",
 
           args: [
-            job.id,
+            currentJob.id,
 
             hash,
 
@@ -626,7 +640,18 @@ export default function ProviderTest() {
         );
       }
 
-      validateProviderJob();
+      const currentJob =
+        job;
+
+      if (!currentJob) {
+        throw new Error(
+          "Load a job first."
+        );
+      }
+
+      validateProviderJob(
+        currentJob
+      );
 
       if (
         !deliverable.trim()
@@ -639,7 +664,7 @@ export default function ProviderTest() {
       setLoading(true);
 
       /*
-       * Generate hash.
+       * Generate deliverable hash.
        */
       const hash =
         deliverableHash ??
@@ -654,7 +679,7 @@ export default function ProviderTest() {
       );
 
       /*
-       * Simulate before wallet confirmation.
+       * Simulate first.
        */
       setStatus(
         "Checking submit() before sending..."
@@ -672,7 +697,7 @@ export default function ProviderTest() {
             "submit",
 
           args: [
-            job.id,
+            currentJob.id,
 
             hash,
 
@@ -685,7 +710,7 @@ export default function ProviderTest() {
       );
 
       /*
-       * Send actual transaction.
+       * Create wallet client.
        */
       const walletClient =
         createWalletClient({
@@ -716,7 +741,7 @@ export default function ProviderTest() {
               "submit",
 
             args: [
-              job.id,
+              currentJob.id,
 
               hash,
 
@@ -751,14 +776,14 @@ export default function ProviderTest() {
       }
 
       /*
-       * Reload job from chain.
+       * Reload from chain.
        */
       await loadJob(
-        job.id.toString()
+        currentJob.id.toString()
       );
 
       setStatus(
-        `✅ Job #${job.id.toString()} submitted successfully`
+        `✅ Job #${currentJob.id.toString()} submitted successfully`
       );
     } catch (err) {
       console.error(
@@ -777,6 +802,12 @@ export default function ProviderTest() {
       setLoading(false);
     }
   }
+
+  /*
+   * ========================================================
+   * RENDER
+   * ========================================================
+   */
 
   return (
     <div
@@ -804,7 +835,7 @@ export default function ProviderTest() {
         </p>
 
         {/* ============================================ */}
-        {/* WALLET */}
+        {/* PROVIDER WALLET */}
         {/* ============================================ */}
 
         <div
@@ -859,7 +890,7 @@ export default function ProviderTest() {
         </div>
 
         {/* ============================================ */}
-        {/* JOB */}
+        {/* LOAD JOB */}
         {/* ============================================ */}
 
         {address && (
@@ -880,7 +911,8 @@ export default function ProviderTest() {
                 event
               ) =>
                 setJobIdInput(
-                  event.target.value
+                  event.target
+                    .value
                 )
               }
               placeholder="Example: 502"
@@ -940,9 +972,16 @@ export default function ProviderTest() {
             />
 
             <Info
+              label="Client"
+              value={
+                job.client
+              }
+            />
+
+            <Info
               label="Budget"
               value={
-                `${job.budget.toString()} raw units`
+                job.budget.toString()
               }
             />
 
@@ -958,17 +997,31 @@ export default function ProviderTest() {
             <div
               style={
                 job.status ===
-                1
+                  1 &&
+                job.expiredAt >
+                  BigInt(
+                    Math.floor(
+                      Date.now() /
+                        1000
+                    )
+                  )
                   ? styles.good
                   : styles.warning
               }
             >
               {job.status ===
-              1
+                1 &&
+              job.expiredAt >
+                BigInt(
+                  Math.floor(
+                    Date.now() /
+                      1000
+                  )
+                )
                 ? "✓ This job is FUNDED and can be processed by the provider."
                 : `This job is ${getStatusName(
                     job.status
-                  )}; provider submission is not available.`}
+                  )} or expired.`}
             </div>
 
             <div
@@ -1013,8 +1066,7 @@ export default function ProviderTest() {
               >
                 For this first test, we're submitting
                 a simple text result. Later this will
-                come from the actual AI agent and
-                storage layer.
+                come from the real AI agent.
               </p>
 
               <textarea
@@ -1025,8 +1077,7 @@ export default function ProviderTest() {
                   event
                 ) => {
                   setDeliverable(
-                    event.target
-                      .value
+                    event.target.value
                   );
 
                   setDeliverableHash(
@@ -1034,6 +1085,9 @@ export default function ProviderTest() {
                   );
                 }}
                 rows={9}
+                disabled={
+                  loading
+                }
                 style={
                   styles.textarea
                 }
@@ -1136,7 +1190,9 @@ export default function ProviderTest() {
                 styles.code
               }
             >
-              {transactionHash}
+              {
+                transactionHash
+              }
             </code>
 
             <a
@@ -1183,9 +1239,9 @@ export default function ProviderTest() {
 }
 
 /*
- * ========================================================
+ * ============================================================
  * INFO COMPONENT
- * ========================================================
+ * ============================================================
  */
 
 function Info({
@@ -1221,9 +1277,9 @@ function Info({
 }
 
 /*
- * ========================================================
+ * ============================================================
  * STATUS
- * ========================================================
+ * ============================================================
  */
 
 function getStatusName(
@@ -1248,9 +1304,9 @@ function getStatusName(
 }
 
 /*
- * ========================================================
- * HELPERS
- * ========================================================
+ * ============================================================
+ * FORMAT TIMESTAMP
+ * ============================================================
  */
 
 function formatTimestamp(
@@ -1260,10 +1316,24 @@ function formatTimestamp(
     Number(timestamp) *
     1000;
 
+  if (
+    !Number.isFinite(
+      milliseconds
+    )
+  ) {
+    return timestamp.toString();
+  }
+
   return new Date(
     milliseconds
   ).toLocaleString();
 }
+
+/*
+ * ============================================================
+ * NORMALIZE CHAIN
+ * ============================================================
+ */
 
 function normalizeChainId(
   value: unknown
@@ -1306,6 +1376,12 @@ function normalizeChainId(
     )}`
   );
 }
+
+/*
+ * ============================================================
+ * ERROR FORMATTER
+ * ============================================================
+ */
 
 function formatError(
   error: unknown
@@ -1363,6 +1439,12 @@ function formatError(
   }
 }
 
+/*
+ * ============================================================
+ * BSC TESTNET
+ * ============================================================
+ */
+
 function getBscTestnetChain() {
   return {
     id:
@@ -1406,9 +1488,9 @@ function getBscTestnetChain() {
 }
 
 /*
- * ========================================================
+ * ============================================================
  * STYLES
- * ========================================================
+ * ============================================================
  */
 
 const styles: Record<
