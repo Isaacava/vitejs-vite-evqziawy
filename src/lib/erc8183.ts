@@ -6,15 +6,16 @@ import {
   type Address,
   type EIP1193Provider,
 } from "viem";
+
 import { bscTestnet } from "viem/chains";
 
 /*
- * Official BNB Agentic Commerce / ERC-8183
- * BSC Testnet deployment addresses.
- *
- * Source of truth:
- * bnb-chain/apex-contracts/scripts/addresses.ts
+ * ============================================================
+ * OFFICIAL BNB ERC-8183 / APEX CONTRACTS
+ * BSC TESTNET
+ * ============================================================
  */
+
 export const ERC8183_ADDRESSES = {
   commerce:
     "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address,
@@ -24,14 +25,16 @@ export const ERC8183_ADDRESSES = {
 
   policy:
     "0xd6a4217588f6b1f5657a92a3e94e6422ad771cea" as Address,
-
-  paymentToken:
-    "0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565" as Address,
 } as const;
 
 /*
- * AgenticCommerce ABI
+ * ============================================================
+ * AGENTIC COMMERCE ABI
+ *
+ * These signatures match the current official ABI.
+ * ============================================================
  */
+
 export const COMMERCE_ABI = [
   {
     type: "function",
@@ -69,6 +72,29 @@ export const COMMERCE_ABI = [
 
   {
     type: "function",
+    name: "registerJob",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "jobId",
+        type: "uint256",
+      },
+      {
+        name: "policy",
+        type: "address",
+      },
+    ],
+    outputs: [],
+  },
+
+  /*
+   * IMPORTANT:
+   *
+   * Current official ABI:
+   * setBudget(jobId, amount, optParams)
+   */
+  {
+    type: "function",
     name: "setBudget",
     stateMutability: "nonpayable",
     inputs: [
@@ -80,10 +106,20 @@ export const COMMERCE_ABI = [
         name: "amount",
         type: "uint256",
       },
+      {
+        name: "optParams",
+        type: "bytes",
+      },
     ],
     outputs: [],
   },
 
+  /*
+   * IMPORTANT:
+   *
+   * Current official ABI:
+   * fund(jobId, expectedBudget, optParams)
+   */
   {
     type: "function",
     name: "fund",
@@ -92,7 +128,15 @@ export const COMMERCE_ABI = [
       {
         name: "jobId",
         type: "uint256",
-        },
+      },
+      {
+        name: "expectedBudget",
+        type: "uint256",
+      },
+      {
+        name: "optParams",
+        type: "bytes",
+      },
     ],
     outputs: [],
   },
@@ -119,6 +163,24 @@ export const COMMERCE_ABI = [
       {
         name: "",
         type: "uint256",
+      },
+    ],
+  },
+
+  {
+    type: "function",
+    name: "jobHasBudget",
+    stateMutability: "view",
+    inputs: [
+      {
+        name: "jobId",
+        type: "uint256",
+      },
+    ],
+    outputs: [
+      {
+        name: "hasBudget",
+        type: "bool",
       },
     ],
   },
@@ -189,14 +251,11 @@ export const COMMERCE_ABI = [
 ] as const;
 
 /*
- * EvaluatorRouter ABI
- *
- * registerJob(jobId, policy) is called on
- * the Router, not AgenticCommerce.
- *
- * The official Router also exposes jobPolicy()
- * which we'll use to verify registration.
+ * ============================================================
+ * EVALUATOR ROUTER ABI
+ * ============================================================
  */
+
 export const ROUTER_ABI = [
   {
     type: "function",
@@ -266,8 +325,11 @@ export const ROUTER_ABI = [
 ] as const;
 
 /*
- * ERC-20 ABI
+ * ============================================================
+ * ERC-20 PAYMENT TOKEN ABI
+ * ============================================================
  */
+
 export const ERC20_ABI = [
   {
     type: "function",
@@ -359,26 +421,36 @@ export const ERC20_ABI = [
 ] as const;
 
 /*
- * Public BSC Testnet client.
+ * ============================================================
+ * BSC TESTNET PUBLIC CLIENT
+ * ============================================================
  */
+
 export const publicClient =
   createPublicClient({
     chain: bscTestnet,
+
     transport: http(
       "https://data-seed-prebsc-1-s1.bnbchain.org:8545"
     ),
   });
 
 /*
- * Wallet client helper.
+ * ============================================================
+ * WALLET CLIENT
+ * ============================================================
  */
+
 export function getWalletClient(
   provider: EIP1193Provider,
   account: Address
 ) {
   return createWalletClient({
     account,
+
     chain: bscTestnet,
-    transport: custom(provider),
+
+    transport:
+      custom(provider),
   });
 }
