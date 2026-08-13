@@ -1,6 +1,7 @@
 import {
   useMemo,
   useState,
+  type CSSProperties,
 } from "react";
 
 type Agent = {
@@ -16,7 +17,10 @@ type Agent = {
   startingPrice: number;
   maxPrice: number;
   verified: boolean;
-  status: "Available" | "Busy" | "Offline";
+  status:
+    | "Available"
+    | "Busy"
+    | "Offline";
   wallet: string;
 };
 
@@ -52,6 +56,9 @@ type Mission = {
 const MISSION_STORAGE_KEY =
   "bnb_agent_marketplace_missions";
 
+const MISSIONS_UPDATED_EVENT =
+  "bnb-missions-updated";
+
 const AGENTS: Agent[] = [
   {
     id: "taskpilot",
@@ -76,92 +83,88 @@ const AGENTS: Agent[] = [
     wallet:
       "0x1111111111111111111111111111111111111111",
   },
-
   {
     id: "pixelcraft",
     name: "PixelCraft",
     role: "UI/UX Designer",
     description:
-      "Creates responsive interfaces, design systems, page layouts, and user experiences.",
+      "Designs responsive interfaces, user flows, landing pages, and polished product experiences.",
     capabilities: [
       "UI design",
-      "UX design",
+      "UX research",
       "Responsive design",
       "Design systems",
     ],
-    trustScore: 96,
-    jobsCompleted: 128,
-    successRate: 94,
-    averageDelivery: "24 min",
+    trustScore: 98,
+    jobsCompleted: 389,
+    successRate: 97,
+    averageDelivery: "25 min",
     startingPrice: 3,
-    maxPrice: 7,
+    maxPrice: 8,
     verified: true,
     status: "Available",
     wallet:
       "0x2222222222222222222222222222222222222222",
   },
-
   {
     id: "codeforge",
     name: "CodeForge",
     role: "Developer",
     description:
-      "Builds production-ready websites and applications and integrates specialist work into the final codebase.",
+      "Builds production-ready websites and applications, integrates APIs, and fixes technical issues.",
     capabilities: [
-      "React",
-      "TypeScript",
-      "Node.js",
+      "Frontend development",
+      "Backend development",
       "API integration",
-      "Deployment",
+      "Bug fixing",
+      "Web applications",
     ],
-    trustScore: 98,
-    jobsCompleted: 417,
-    successRate: 97,
-    averageDelivery: "42 min",
-    startingPrice: 5,
+    trustScore: 99,
+    jobsCompleted: 312,
+    successRate: 98,
+    averageDelivery: "35 min",
+    startingPrice: 4,
     maxPrice: 12,
     verified: true,
     status: "Available",
     wallet:
       "0x3333333333333333333333333333333333333333",
   },
-
   {
     id: "rankpilot",
     name: "RankPilot",
     role: "SEO Specialist",
     description:
-      "Optimizes websites for discoverability, indexing, structured data, technical SEO, and search-friendly content.",
+      "Optimizes websites for search engines, technical SEO, metadata, structure, and discoverability.",
     capabilities: [
       "Technical SEO",
       "On-page SEO",
-      "Structured data",
-      "Sitemaps",
-      "Schema markup",
+      "Keyword research",
+      "Schema",
+      "Site audits",
     ],
-    trustScore: 95,
-    jobsCompleted: 183,
-    successRate: 93,
-    averageDelivery: "21 min",
-    startingPrice: 2,
-    maxPrice: 6,
+    trustScore: 96,
+    jobsCompleted: 204,
+    successRate: 95,
+    averageDelivery: "22 min",
+    startingPrice: 3,
+    maxPrice: 9,
     verified: true,
     status: "Available",
     wallet:
       "0x4444444444444444444444444444444444444444",
   },
-
   {
     id: "verifyai",
     name: "VerifyAI",
     role: "QA Agent",
     description:
-      "Tests functionality, responsiveness, accessibility basics, links, and project acceptance criteria.",
+      "Tests functionality, responsiveness, accessibility basics, links, forms, and project acceptance criteria.",
     capabilities: [
       "QA testing",
       "Bug detection",
-      "Accessibility checks",
-      "Regression testing",
+      "Accessibility",
+      "Responsive testing",
       "Acceptance testing",
     ],
     trustScore: 99,
@@ -169,7 +172,7 @@ const AGENTS: Agent[] = [
     successRate: 98,
     averageDelivery: "15 min",
     startingPrice: 1,
-    maxPrice: 4,
+    maxPrice: 6,
     verified: true,
     status: "Available",
     wallet:
@@ -179,12 +182,6 @@ const AGENTS: Agent[] = [
 
 export default function AgentRegistry() {
   const [
-    agents,
-  ] = useState<Agent[]>(
-    AGENTS
-  );
-
-  const [
     missions,
     setMissions,
   ] = useState<Mission[]>(
@@ -192,11 +189,21 @@ export default function AgentRegistry() {
   );
 
   const [
-    selectedAgent,
-    setSelectedAgent,
-  ] = useState<Agent | null>(
+    selectedAgentId,
+    setSelectedAgentId,
+  ] = useState<string | null>(
     null
   );
+
+  const [
+    missionId,
+    setMissionId,
+  ] = useState("");
+
+  const [
+    selectedTaskId,
+    setSelectedTaskId,
+  ] = useState("");
 
   const [
     search,
@@ -209,56 +216,47 @@ export default function AgentRegistry() {
   ] = useState("All");
 
   const [
-    missionId,
-    setMissionId,
-  ] = useState(
-    missions[0]?.id ??
-      ""
-  );
-
-  const [
-    selectedTaskId,
-    setSelectedTaskId,
-  ] = useState("");
-
-  const [
     notice,
     setNotice,
   ] = useState("");
 
+  const selectedAgent =
+    AGENTS.find(
+      (agent) =>
+        agent.id ===
+        selectedAgentId
+    ) ?? null;
+
+  const selectedMission =
+    missions.find(
+      (mission) =>
+        mission.id ===
+        missionId
+    ) ?? null;
+
   const filteredAgents =
     useMemo(() => {
-      const value =
+      const normalized =
         search
           .trim()
           .toLowerCase();
 
-      return agents.filter(
-        (
-          agent
-        ) => {
+      return AGENTS.filter(
+        (agent) => {
           const matchesSearch =
-            !value ||
-            agent.name
+            normalized.length ===
+              0 ||
+            [
+              agent.name,
+              agent.role,
+              agent.description,
+              ...agent.capabilities,
+            ]
+              .join(" ")
               .toLowerCase()
               .includes(
-                value
-              ) ||
-            agent.role
-              .toLowerCase()
-              .includes(
-                value
-              ) ||
-            agent.capabilities.some(
-              (
-                capability
-              ) =>
-                capability
-                  .toLowerCase()
-                  .includes(
-                    value
-                  )
-            );
+                normalized
+              );
 
           const matchesRole =
             roleFilter ===
@@ -273,33 +271,84 @@ export default function AgentRegistry() {
         }
       );
     }, [
-      agents,
       search,
       roleFilter,
     ]);
 
-  const selectedMission =
-    missions.find(
-      (
-        mission
-      ) =>
-        mission.id ===
-        missionId
-    ) ?? null;
+  function selectAgent(
+    agentId: string
+  ) {
+    setSelectedAgentId(
+      agentId
+    );
 
-  /*
-   * ========================================================
-   * ASSIGN AGENT
-   * ========================================================
-   */
+    setNotice("");
+  }
+
+  function clearSelection() {
+    setSelectedAgentId(
+      null
+    );
+
+    setNotice("");
+  }
+
+  function refreshMissions() {
+    const latest =
+      loadMissions();
+
+    setMissions(
+      latest
+    );
+
+    if (
+      missionId &&
+      !latest.some(
+        (mission) =>
+          mission.id ===
+          missionId
+      )
+    ) {
+      setMissionId(
+        ""
+      );
+
+      setSelectedTaskId(
+        ""
+      );
+    }
+  }
+
+  function handleMissionChange(
+    value: string
+  ) {
+    setMissionId(
+      value
+    );
+
+    const mission =
+      missions.find(
+        (item) =>
+          item.id ===
+          value
+      );
+
+    setSelectedTaskId(
+      mission?.tasks[0]?.id ??
+        ""
+    );
+
+    setNotice("");
+  }
 
   function assignAgent() {
     if (
       !selectedAgent
     ) {
       setNotice(
-        "Choose an agent first."
+        "Select an agent first."
       );
+
       return;
     }
 
@@ -307,8 +356,9 @@ export default function AgentRegistry() {
       !selectedMission
     ) {
       setNotice(
-        "Choose a mission first."
+        "Select a mission first."
       );
+
       return;
     }
 
@@ -316,39 +366,24 @@ export default function AgentRegistry() {
       !selectedTaskId
     ) {
       setNotice(
-        "Choose a mission task."
+        "Select a task first."
       );
+
       return;
     }
 
     const task =
       selectedMission.tasks.find(
-        (
-          item
-        ) =>
+        (item) =>
           item.id ===
           selectedTaskId
       );
 
     if (!task) {
       setNotice(
-        "Task could not be found."
-      );
-      return;
-    }
-
-    const roleMatches =
-      agentMatchesTask(
-        selectedAgent,
-        task
+        "The selected task could not be found."
       );
 
-    if (
-      !roleMatches
-    ) {
-      setNotice(
-        `${selectedAgent.name} is not a good role match for "${task.title}".`
-      );
       return;
     }
 
@@ -357,12 +392,13 @@ export default function AgentRegistry() {
       selectedAgent.startingPrice
     ) {
       setNotice(
-        `${selectedAgent.name}'s starting price is ${selectedAgent.startingPrice} U, but this task only has ${task.budget} U.`
+        `${selectedAgent.name} starts from ${selectedAgent.startingPrice} U, while this task has a ${task.budget} U budget.`
       );
+
       return;
     }
 
-    const updatedMissions =
+    const updated =
       missions.map(
         (
           mission
@@ -386,10 +422,15 @@ export default function AgentRegistry() {
                   selectedTaskId
                     ? {
                         ...item,
+
                         assignedAgentId:
                           selectedAgent.id,
+
                         status:
-                          "Ready",
+                          item.status ===
+                          "Planned"
+                            ? "Ready"
+                            : item.status,
                       }
                     : item
               ),
@@ -398,66 +439,16 @@ export default function AgentRegistry() {
       );
 
     setMissions(
-      updatedMissions
+      updated
     );
 
     saveMissions(
-      updatedMissions
+      updated
     );
 
     setNotice(
-      `✅ ${selectedAgent.name} assigned to "${task.title}".`
+      `✅ ${selectedAgent.name} assigned to ${task.title}.`
     );
-  }
-
-  /*
-   * ========================================================
-   * SELECT AGENT
-   * ========================================================
-   */
-
-  function openAgent(
-    agent: Agent
-  ) {
-    setSelectedAgent(
-      agent
-    );
-
-    setNotice("");
-
-    const firstMatchingTask =
-      selectedMission?.tasks.find(
-        (
-          task
-        ) =>
-          agentMatchesTask(
-            agent,
-            task
-          ) &&
-          !task.assignedAgentId
-      );
-
-    if (
-      firstMatchingTask
-    ) {
-      setSelectedTaskId(
-        firstMatchingTask.id
-      );
-    } else {
-      setSelectedTaskId(
-        selectedMission
-          ?.tasks[0]?.id ??
-          ""
-      );
-    }
-  }
-
-  function clearSelection() {
-    setSelectedAgent(
-      null
-    );
-
-    setNotice("");
   }
 
   return (
@@ -471,11 +462,7 @@ export default function AgentRegistry() {
           styles.container
         }
       >
-        {/* ================================================= */}
-        {/* HEADER */}
-        {/* ================================================= */}
-
-        <div
+        <section
           style={
             styles.hero
           }
@@ -486,7 +473,7 @@ export default function AgentRegistry() {
                 styles.eyebrow
               }
             >
-              AGENT NETWORK
+              AGENT MARKETPLACE
             </div>
 
             <h1
@@ -494,7 +481,7 @@ export default function AgentRegistry() {
                 styles.title
               }
             >
-              Agent Registry
+              Find the right agent
             </h1>
 
             <p
@@ -502,36 +489,28 @@ export default function AgentRegistry() {
                 styles.subtitle
               }
             >
-              Find specialist agents, review their
-              performance, and assign them to mission
-              tasks.
+              Browse specialists, inspect reputation,
+              then assign the right provider to each
+              mission task.
             </p>
           </div>
 
-          <div
+          <button
+            type="button"
+            onClick={
+              refreshMissions
+            }
             style={
-              styles.agentCount
+              styles.smallButton
             }
           >
-            <strong>
-              {
-                agents.length
-              }
-            </strong>
+            ↻ Refresh
+          </button>
+        </section>
 
-            <span>
-              agents
-            </span>
-          </div>
-        </div>
-
-        {/* ================================================= */}
-        {/* SEARCH */}
-        {/* ================================================= */}
-
-        <div
+        <section
           style={
-            styles.searchPanel
+            styles.filterPanel
           }
         >
           <input
@@ -545,7 +524,7 @@ export default function AgentRegistry() {
                 event.target.value
               )
             }
-            placeholder="Search agents, capabilities, or roles..."
+            placeholder="Search agents or capabilities..."
             style={
               styles.searchInput
             }
@@ -566,37 +545,38 @@ export default function AgentRegistry() {
               styles.roleSelect
             }
           >
-            <option>
-              All
+            <option value="All">
+              All roles
             </option>
 
-            <option>
-              Project Manager
-            </option>
-
-            <option>
-              UI/UX Designer
-            </option>
-
-            <option>
-              Developer
-            </option>
-
-            <option>
-              SEO Specialist
-            </option>
-
-            <option>
-              QA Agent
-            </option>
+            {[
+              "Project Manager",
+              "UI/UX Designer",
+              "Developer",
+              "SEO Specialist",
+              "QA Agent",
+            ].map(
+              (
+                role
+              ) => (
+                <option
+                  key={
+                    role
+                  }
+                  value={
+                    role
+                  }
+                >
+                  {
+                    role
+                  }
+                </option>
+              )
+            )}
           </select>
-        </div>
+        </section>
 
-        {/* ================================================= */}
-        {/* AGENT GRID */}
-        {/* ================================================= */}
-
-        <div
+        <section
           style={
             styles.agentGrid
           }
@@ -613,36 +593,21 @@ export default function AgentRegistry() {
                   agent
                 }
                 selected={
-                  selectedAgent?.id ===
+                  selectedAgentId ===
                   agent.id
                 }
-                onSelect={() =>
-                  openAgent(
-                    agent
+                onClick={() =>
+                  selectAgent(
+                    agent.id
                   )
                 }
               />
             )
           )}
-        </div>
-
-        {filteredAgents.length ===
-          0 && (
-          <div
-            style={
-              styles.empty
-            }
-          >
-            No agents match your search.
-          </div>
-        )}
-
-        {/* ================================================= */}
-        {/* AGENT DETAIL */}
-        {/* ================================================= */}
+        </section>
 
         {selectedAgent && (
-          <div
+          <section
             style={
               styles.detailPanel
             }
@@ -652,63 +617,38 @@ export default function AgentRegistry() {
                 styles.detailHeader
               }
             >
-              <div
-                style={
-                  styles.detailIdentity
-                }
-              >
+              <div>
                 <div
                   style={
-                    styles.largeAvatar
+                    styles.eyebrow
+                  }
+                >
+                  AGENT PROFILE
+                </div>
+
+                <h2
+                  style={
+                    styles.detailName
                   }
                 >
                   {
-                    getRoleIcon(
-                      selectedAgent.role
-                    )
+                    selectedAgent.name
                   }
-                </div>
+                </h2>
 
-                <div>
-                  <div
-                    style={
-                      styles.detailNameRow
-                    }
-                  >
-                    <h2
-                      style={
-                        styles.detailName
-                      }
-                    >
-                      {
-                        selectedAgent.name
-                      }
-                    </h2>
-
-                    {selectedAgent.verified && (
-                      <span
-                        style={
-                          styles.verified
-                        }
-                      >
-                        ✓ Verified
-                      </span>
-                    )}
-                  </div>
-
-                  <span
-                    style={
-                      styles.detailRole
-                    }
-                  >
-                    {
-                      selectedAgent.role
-                    }
-                  </span>
-                </div>
+                <span
+                  style={
+                    styles.detailRole
+                  }
+                >
+                  {
+                    selectedAgent.role
+                  }
+                </span>
               </div>
 
               <button
+                type="button"
                 onClick={
                   clearSelection
                 }
@@ -811,174 +751,142 @@ export default function AgentRegistry() {
               </div>
             </div>
 
-            {/* ============================================= */}
-            {/* ASSIGN */}
-            {/* ============================================= */}
-
             <div
               style={
                 styles.assignPanel
               }
             >
-              <div>
-                <div
-                  style={
-                    styles.eyebrow
-                  }
-                >
-                  ASSIGN TO MISSION
-                </div>
-
-                <h3
-                  style={
-                    styles.assignTitle
-                  }
-                >
-                  Put this agent to work
-                </h3>
-
-                <p
-                  style={
-                    styles.assignSubtitle
-                  }
-                >
-                  Select a mission and the task this agent
-                  should handle.
-                </p>
+              <div
+                style={
+                  styles.eyebrow
+                }
+              >
+                ASSIGN TO MISSION
               </div>
+
+              <h3
+                style={
+                  styles.assignTitle
+                }
+              >
+                Put this agent to work
+              </h3>
+
+              <p
+                style={
+                  styles.assignSubtitle
+                }
+              >
+                Select the mission and the exact task this
+                agent should handle.
+              </p>
 
               <div
                 style={
                   styles.assignGrid
                 }
               >
-                <div>
-                  <label
-                    style={
-                      styles.label
-                    }
-                  >
-                    Mission
-                  </label>
+                <select
+                  value={
+                    missionId
+                  }
+                  onChange={(
+                    event
+                  ) =>
+                    handleMissionChange(
+                      event.target.value
+                    )
+                  }
+                  style={
+                    styles.select
+                  }
+                >
+                  <option value="">
+                    Select mission
+                  </option>
 
-                  <select
-                    value={
-                      missionId
-                    }
-                    onChange={(
-                      event
-                    ) => {
-                      setMissionId(
-                        event.target
-                          .value
-                      );
+                  {missions.map(
+                    (
+                      mission
+                    ) => (
+                      <option
+                        key={
+                          mission.id
+                        }
+                        value={
+                          mission.id
+                        }
+                      >
+                        {
+                          mission.title
+                        }
+                      </option>
+                    )
+                  )}
+                </select>
 
-                      setSelectedTaskId(
-                        ""
-                      );
-                    }}
-                    style={
-                      styles.select
-                    }
-                  >
-                    <option value="">
-                      Select mission
-                    </option>
+                <select
+                  value={
+                    selectedTaskId
+                  }
+                  onChange={(
+                    event
+                  ) =>
+                    setSelectedTaskId(
+                      event.target.value
+                    )
+                  }
+                  disabled={
+                    !selectedMission
+                  }
+                  style={
+                    styles.select
+                  }
+                >
+                  <option value="">
+                    Select task
+                  </option>
 
-                    {missions.map(
-                      (
-                        mission
-                      ) => (
-                        <option
-                          key={
-                            mission.id
-                          }
-                          value={
-                            mission.id
-                          }
-                        >
-                          {
-                            mission.title
-                          }
-                        </option>
-                      )
-                    )}
-                  </select>
-                </div>
-
-                <div>
-                  <label
-                    style={
-                      styles.label
-                    }
-                  >
-                    Task
-                  </label>
-
-                  <select
-                    value={
-                      selectedTaskId
-                    }
-                    onChange={(
-                      event
-                    ) =>
-                      setSelectedTaskId(
-                        event.target
-                          .value
-                      )
-                    }
-                    disabled={
-                      !selectedMission
-                    }
-                    style={
-                      styles.select
-                    }
-                  >
-                    <option value="">
-                      Select task
-                    </option>
-
-                    {selectedMission?.tasks.map(
-                      (
-                        task
-                      ) => (
-                        <option
-                          key={
-                            task.id
-                          }
-                          value={
-                            task.id
-                          }
-                        >
-                          {
-                            task.title
-                          }{" "}
-                          —{" "}
-                          {
-                            task.budget
-                          }{" "}
-                          U
-                        </option>
-                      )
-                    )}
-                  </select>
-                </div>
+                  {selectedMission?.tasks.map(
+                    (
+                      task
+                    ) => (
+                      <option
+                        key={
+                          task.id
+                        }
+                        value={
+                          task.id
+                        }
+                      >
+                        {
+                          task.title
+                        }{" "}
+                        —{" "}
+                        {
+                          task.budget
+                        }{" "}
+                        U
+                      </option>
+                    )
+                  )}
+                </select>
               </div>
 
               {selectedMission &&
                 selectedTaskId && (
-                  <AssignmentPreview
-                    agent={
-                      selectedAgent
-                    }
-                    mission={
-                      selectedMission
-                    }
-                    taskId={
-                      selectedTaskId
-                    }
-                  />
-                )}
+                <AssignmentPreview
+                  agent={
+                    selectedAgent
+                  }
+                  mission={
+                    selectedMission
+                  }
+                  taskId={
+                    selectedTaskId
+                  }
+                />
+              )}
 
               {notice && (
                 <div
@@ -997,28 +905,21 @@ export default function AgentRegistry() {
               )}
 
               <button
+                type="button"
                 onClick={
                   assignAgent
                 }
                 style={
                   styles.primaryButton
                 }
-                disabled={
-                  !selectedMission ||
-                  !selectedTaskId
-                }
               >
                 Assign Agent →
               </button>
             </div>
-          </div>
+          </section>
         )}
 
-        {/* ================================================= */}
-        {/* HOW IT WORKS */}
-        {/* ================================================= */}
-
-        <div
+        <section
           style={
             styles.explainer
           }
@@ -1036,8 +937,7 @@ export default function AgentRegistry() {
               styles.explainerTitle
             }
           >
-            Agent selection happens before the
-            blockchain job
+            Agent selection happens before the blockchain job
           </h2>
 
           <div
@@ -1045,72 +945,90 @@ export default function AgentRegistry() {
               styles.flow
             }
           >
-            <FlowStep
-              number="01"
-              text="User creates a mission"
-            />
+            {[
+              [
+                "01",
+                "User creates a mission",
+              ],
+              [
+                "02",
+                "Marketplace finds an agent",
+              ],
+              [
+                "03",
+                "Agent is assigned to task",
+              ],
+              [
+                "04",
+                "ERC-8183 sub-job is created",
+              ],
+              [
+                "05",
+                "Agent works and gets paid",
+              ],
+            ].map(
+              (
+                [
+                  number,
+                  text,
+                ]
+              ) => (
+                <div
+                  key={
+                    number
+                  }
+                  style={
+                    styles.flowStep
+                  }
+                >
+                  <span
+                    style={
+                      styles.flowNumber
+                    }
+                  >
+                    {
+                      number
+                    }
+                  </span>
 
-            <FlowArrow />
-
-            <FlowStep
-              number="02"
-              text="Marketplace finds an agent"
-            />
-
-            <FlowArrow />
-
-            <FlowStep
-              number="03"
-              text="Agent is assigned to task"
-            />
-
-            <FlowArrow />
-
-            <FlowStep
-              number="04"
-              text="ERC-8183 sub-job is created"
-            />
-
-            <FlowArrow />
-
-            <FlowStep
-              number="05"
-              text="Agent works and gets paid"
-            />
+                  <span>
+                    {
+                      text
+                    }
+                  </span>
+                </div>
+              )
+            )}
           </div>
-        </div>
+        </section>
       </div>
     </div>
   );
 }
 
-/*
- * ============================================================
- * AGENT CARD
- * ============================================================
- */
-
 function AgentCard({
   agent,
   selected,
-  onSelect,
+  onClick,
 }: {
   agent: Agent;
   selected: boolean;
-  onSelect: () => void;
+  onClick: () => void;
 }) {
   return (
     <button
+      type="button"
       onClick={
-        onSelect
+        onClick
       }
-      style={{
-        ...styles.agentCard,
-
-        ...(selected
-          ? styles.agentCardSelected
-          : {}),
-      }}
+      style={
+        selected
+          ? {
+              ...styles.agentCard,
+              ...styles.agentCardSelected,
+            }
+          : styles.agentCard
+      }
     >
       <div
         style={
@@ -1129,18 +1047,15 @@ function AgentCard({
           }
         </div>
 
-        <span
-          style={
-            agent.status ===
-            "Available"
-              ? styles.available
-              : styles.busy
-          }
-        >
-          {
-            agent.status
-          }
-        </span>
+        {agent.verified && (
+          <span
+            style={
+              styles.verified
+            }
+          >
+            ✓ Verified
+          </span>
+        )}
       </div>
 
       <div
@@ -1151,16 +1066,6 @@ function AgentCard({
         {
           agent.name
         }
-
-        {agent.verified && (
-          <span
-            style={
-              styles.verifiedMini
-            }
-          >
-            ✓
-          </span>
-        )}
       </div>
 
       <div
@@ -1237,12 +1142,6 @@ function AgentCard({
   );
 }
 
-/*
- * ============================================================
- * STAT
- * ============================================================
- */
-
 function Stat({
   label,
   value,
@@ -1278,12 +1177,6 @@ function Stat({
     </div>
   );
 }
-
-/*
- * ============================================================
- * ASSIGNMENT PREVIEW
- * ============================================================
- */
 
 function AssignmentPreview({
   agent,
@@ -1372,7 +1265,7 @@ function AssignmentPreview({
         }
       >
         <span>
-          Task budget
+          Budget
         </span>
 
         <strong>
@@ -1385,168 +1278,71 @@ function AssignmentPreview({
 
       <div
         style={
-          styles.previewRow
-        }
-      >
-        <span>
-          Starting price
-        </span>
-
-        <strong>
-          {
-            agent.startingPrice
-          }{" "}
-          U
-        </strong>
-      </div>
-
-      <div
-        style={
           styles.matchLine
         }
       >
         {matches
-          ? "✓ Capability match"
-          : "⚠ Capability mismatch"}
-      </div>
+          ? "✓ Role/capability match"
+          : "⚠ Review agent capabilities"}
 
-      <div
-        style={
-          styles.matchLine
-        }
-      >
+        {" · "}
+
         {priceFits
-          ? "✓ Budget fits agent starting price"
-          : "⚠ Task budget is below agent starting price"}
+          ? "✓ Budget fits"
+          : "⚠ Agent price starts above task budget"}
       </div>
     </div>
   );
 }
-
-/*
- * ============================================================
- * FLOW
- * ============================================================
- */
-
-function FlowStep({
-  number,
-  text,
-}: {
-  number: string;
-  text: string;
-}) {
-  return (
-    <div
-      style={
-        styles.flowStep
-      }
-    >
-      <div
-        style={
-          styles.flowNumber
-        }
-      >
-        {
-          number
-        }
-      </div>
-
-      <span>
-        {
-          text
-        }
-      </span>
-    </div>
-  );
-}
-
-function FlowArrow() {
-  return (
-    <span
-      style={
-        styles.flowArrow
-      }
-    >
-      →
-    </span>
-  );
-}
-
-/*
- * ============================================================
- * HELPERS
- * ============================================================
- */
 
 function agentMatchesTask(
   agent: Agent,
   task: MissionTask
 ): boolean {
   const role =
-    agent.role.toLowerCase();
-
-  const taskRole =
     task.role.toLowerCase();
 
   if (
-    role ===
-    taskRole
+    agent.role
+      .toLowerCase()
+      .includes(
+        role
+      ) ||
+    role.includes(
+      agent.role
+        .toLowerCase()
+    )
   ) {
     return true;
   }
 
-  if (
-    taskRole.includes(
-      "manager"
-    )
-  ) {
-    return role.includes(
-      "manager"
-    );
-  }
+  const haystack =
+    [
+      agent.role,
+      agent.description,
+      ...agent.capabilities,
+    ]
+      .join(" ")
+      .toLowerCase();
 
-  if (
-    taskRole.includes(
-      "designer"
+  return (
+    haystack.includes(
+      role
+    ) ||
+    agent.capabilities.some(
+      (
+        capability
+      ) =>
+        role.includes(
+          capability.toLowerCase()
+        ) ||
+        capability
+          .toLowerCase()
+          .includes(
+            role
+          )
     )
-  ) {
-    return role.includes(
-      "designer"
-    );
-  }
-
-  if (
-    taskRole.includes(
-      "developer"
-    )
-  ) {
-    return role.includes(
-      "developer"
-    );
-  }
-
-  if (
-    taskRole.includes(
-      "seo"
-    )
-  ) {
-    return role.includes(
-      "seo"
-    );
-  }
-
-  if (
-    taskRole.includes(
-      "qa"
-    )
-  ) {
-    return role.includes(
-      "qa"
-    );
-  }
-
-  return false;
+  );
 }
 
 function getRoleIcon(
@@ -1566,9 +1362,6 @@ function getRoleIcon(
   if (
     value.includes(
       "developer"
-    ) ||
-    value.includes(
-      "engineer"
     )
   ) {
     return "💻";
@@ -1585,9 +1378,6 @@ function getRoleIcon(
   if (
     value.includes(
       "qa"
-    ) ||
-    value.includes(
-      "quality"
     )
   ) {
     return "🧪";
@@ -1611,9 +1401,7 @@ function loadMissions(): Mission[] {
         MISSION_STORAGE_KEY
       );
 
-    if (
-      !raw
-    ) {
+    if (!raw) {
       return [];
     }
 
@@ -1642,7 +1430,15 @@ function saveMissions(
         missions
       )
     );
-  } catch (error) {
+
+    window.dispatchEvent(
+      new CustomEvent(
+        MISSIONS_UPDATED_EVENT
+      )
+    );
+  } catch (
+    error
+  ) {
     console.warn(
       "Could not save missions:",
       error
@@ -1650,37 +1446,26 @@ function saveMissions(
   }
 }
 
-/*
- * ============================================================
- * STYLES
- * ============================================================
- */
-
 const styles: Record<
   string,
-  React.CSSProperties
+  CSSProperties
 > = {
   page: {
     minHeight:
       "100vh",
-
     padding:
-      "26px 16px 60px",
-
+      "24px 16px 60px",
     background:
       "#090b0d",
-
     color:
-      "#f2f2ef",
-
+      "#f1f2ef",
     fontFamily:
-      "Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+      "Inter, system-ui, sans-serif",
   },
 
   container: {
     maxWidth:
       "1080px",
-
     margin:
       "0 auto",
   },
@@ -1688,30 +1473,23 @@ const styles: Record<
   hero: {
     display:
       "flex",
-
     justifyContent:
       "space-between",
-
     alignItems:
       "flex-start",
-
     gap:
-      "20px",
-
+      "16px",
     marginBottom:
-      "20px",
+      "16px",
   },
 
   eyebrow: {
     fontSize:
       "10px",
-
     fontWeight:
       900,
-
     letterSpacing:
       "0.14em",
-
     color:
       "#7f878e",
   },
@@ -1719,10 +1497,8 @@ const styles: Record<
   title: {
     margin:
       "7px 0",
-
     fontSize:
-      "31px",
-
+      "29px",
     letterSpacing:
       "-0.03em",
   },
@@ -1730,99 +1506,63 @@ const styles: Record<
   subtitle: {
     margin:
       0,
-
     maxWidth:
       "720px",
-
     color:
-      "#90989f",
-
+      "#929aa1",
     lineHeight:
       1.6,
-  },
-
-  agentCount: {
-    minWidth:
-      "72px",
-
-    padding:
-      "12px",
-
-    borderRadius:
-      "12px",
-
-    background:
-      "#121619",
-
-    border:
-      "1px solid #292f34",
-
-    display:
-      "grid",
-
-    justifyItems:
-      "center",
-
-    gap:
-      "2px",
-  },
-
-  agentCountStrong: {
     fontSize:
-      "20px",
+      "14px",
   },
 
-  searchPanel: {
+  smallButton: {
+    flexShrink:
+      0,
+    padding:
+      "9px 12px",
+    borderRadius:
+      "9px",
+    border:
+      "1px solid #343a3f",
+    background:
+      "#171b1e",
+    color:
+      "#dce0e3",
+    fontWeight:
+      700,
+    cursor:
+      "pointer",
+  },
+
+  filterPanel: {
     display:
       "grid",
-
     gridTemplateColumns:
-      "1fr 220px",
-
+      "2fr 1fr",
     gap:
       "10px",
-
-    padding:
-      "14px",
-
     marginBottom:
-      "14px",
-
-    border:
-      "1px solid #252b30",
-
-    borderRadius:
-      "14px",
-
-    background:
-      "#111518",
+      "12px",
   },
 
   searchInput: {
     width:
       "100%",
-
     boxSizing:
       "border-box",
-
     padding:
       "13px",
-
     borderRadius:
       "10px",
-
     border:
       "1px solid #343a3f",
-
     background:
       "#0c1012",
-
     color:
       "#fff",
-
     outline:
       "none",
-
     fontSize:
       "14px",
   },
@@ -1830,25 +1570,18 @@ const styles: Record<
   roleSelect: {
     width:
       "100%",
-
     boxSizing:
       "border-box",
-
     padding:
       "13px",
-
     borderRadius:
       "10px",
-
     border:
       "1px solid #343a3f",
-
     background:
       "#0c1012",
-
     color:
       "#fff",
-
     outline:
       "none",
   },
@@ -1856,10 +1589,8 @@ const styles: Record<
   agentGrid: {
     display:
       "grid",
-
     gridTemplateColumns:
       "repeat(auto-fit, minmax(250px, 1fr))",
-
     gap:
       "11px",
   },
@@ -1867,28 +1598,20 @@ const styles: Record<
   agentCard: {
     width:
       "100%",
-
     padding:
       "16px",
-
     textAlign:
       "left",
-
     border:
       "1px solid #272d32",
-
     borderRadius:
       "14px",
-
     background:
       "#111518",
-
     color:
       "#fff",
-
     cursor:
       "pointer",
-
     transition:
       "transform .15s ease, border-color .15s ease",
   },
@@ -1901,10 +1624,8 @@ const styles: Record<
   agentCardTop: {
     display:
       "flex",
-
     justifyContent:
       "space-between",
-
     alignItems:
       "center",
   },
@@ -1912,33 +1633,40 @@ const styles: Record<
   agentAvatar: {
     width:
       "46px",
-
     height:
       "46px",
-
     display:
       "grid",
-
     placeItems:
       "center",
-
     borderRadius:
       "11px",
-
     background:
       "#181d20",
-
     fontSize:
       "22px",
+  },
+
+  verified: {
+    padding:
+      "5px 7px",
+    borderRadius:
+      "999px",
+    background:
+      "#101916",
+    color:
+      "#7fd3a5",
+    fontSize:
+      "9px",
+    fontWeight:
+      900,
   },
 
   agentCardName: {
     marginTop:
       "14px",
-
     fontSize:
       "17px",
-
     fontWeight:
       900,
   },
@@ -1946,10 +1674,8 @@ const styles: Record<
   agentCardRole: {
     marginTop:
       "3px",
-
     color:
       "#8b949b",
-
     fontSize:
       "12px",
   },
@@ -1957,16 +1683,12 @@ const styles: Record<
   agentCardDescription: {
     minHeight:
       "58px",
-
     margin:
       "11px 0",
-
     color:
       "#929aa1",
-
     fontSize:
       "12px",
-
     lineHeight:
       1.55,
   },
@@ -1974,16 +1696,12 @@ const styles: Record<
   agentMiniStats: {
     display:
       "flex",
-
     flexWrap:
       "wrap",
-
     gap:
       "10px",
-
     color:
       "#a7afb5",
-
     fontSize:
       "11px",
   },
@@ -1991,25 +1709,18 @@ const styles: Record<
   priceRow: {
     display:
       "flex",
-
     justifyContent:
       "space-between",
-
     alignItems:
       "center",
-
     marginTop:
       "14px",
-
     paddingTop:
       "12px",
-
     borderTop:
       "1px solid #242a2e",
-
     color:
       "#707980",
-
     fontSize:
       "11px",
   },
@@ -2017,206 +1728,41 @@ const styles: Record<
   viewText: {
     marginTop:
       "10px",
-
     color:
       "#f0b90b",
-
     fontSize:
-      "11px",
-
+      "12px",
     fontWeight:
       800,
-  },
-
-  available: {
-    padding:
-      "5px 8px",
-
-    borderRadius:
-      "999px",
-
-    background:
-      "#101b15",
-
-    color:
-      "#7bc897",
-
-    fontSize:
-      "10px",
-
-    fontWeight:
-      800,
-  },
-
-  busy: {
-    padding:
-      "5px 8px",
-
-    borderRadius:
-      "999px",
-
-    background:
-      "#1d1a13",
-
-    color:
-      "#d2bb6b",
-
-    fontSize:
-      "10px",
-
-    fontWeight:
-      800,
-  },
-
-  verified: {
-    display:
-      "inline-flex",
-
-    alignItems:
-      "center",
-
-    padding:
-      "5px 8px",
-
-    borderRadius:
-      "999px",
-
-    background:
-      "#101a16",
-
-    color:
-      "#7ed3a5",
-
-    fontSize:
-      "10px",
-
-    fontWeight:
-      800,
-  },
-
-  verifiedMini: {
-    display:
-      "inline-grid",
-
-    placeItems:
-      "center",
-
-    width:
-      "17px",
-
-    height:
-      "17px",
-
-    marginLeft:
-      "5px",
-
-    borderRadius:
-      "50%",
-
-    background:
-      "#163126",
-
-    color:
-      "#7fd4a6",
-
-    fontSize:
-      "10px",
-  },
-
-  empty: {
-    padding:
-      "40px",
-
-    textAlign:
-      "center",
-
-    color:
-      "#737b82",
   },
 
   detailPanel: {
     marginTop:
       "14px",
-
     padding:
-      "20px",
-
+      "18px",
     border:
-      "1px solid #3b3420",
-
+      "1px solid #2b3237",
     borderRadius:
-      "15px",
-
+      "14px",
     background:
-      "#131412",
+      "#111518",
   },
 
   detailHeader: {
     display:
       "flex",
-
     justifyContent:
       "space-between",
-
     alignItems:
       "flex-start",
-
     gap:
-      "16px",
-  },
-
-  detailIdentity: {
-    display:
-      "flex",
-
-    alignItems:
-      "center",
-
-    gap:
-      "13px",
-  },
-
-  largeAvatar: {
-    width:
-      "58px",
-
-    height:
-      "58px",
-
-    display:
-      "grid",
-
-    placeItems:
-      "center",
-
-    borderRadius:
-      "14px",
-
-    background:
-      "#1a1d1e",
-
-    fontSize:
-      "27px",
-  },
-
-  detailNameRow: {
-    display:
-      "flex",
-
-    alignItems:
-      "center",
-
-    flexWrap:
-      "wrap",
-
-    gap:
-      "8px",
+      "10px",
   },
 
   detailName: {
     margin:
-      0,
-
+      "6px 0 0",
     fontSize:
       "22px",
   },
@@ -2224,13 +1770,10 @@ const styles: Record<
   detailRole: {
     display:
       "block",
-
     marginTop:
       "3px",
-
     color:
       "#858d94",
-
     fontSize:
       "12px",
   },
@@ -2238,10 +1781,8 @@ const styles: Record<
   detailDescription: {
     margin:
       "18px 0",
-
     color:
       "#adb4b9",
-
     lineHeight:
       1.6,
   },
@@ -2249,10 +1790,8 @@ const styles: Record<
   statGrid: {
     display:
       "grid",
-
     gridTemplateColumns:
       "repeat(auto-fit, minmax(140px, 1fr))",
-
     gap:
       "8px",
   },
@@ -2260,13 +1799,10 @@ const styles: Record<
   stat: {
     padding:
       "12px",
-
     borderRadius:
       "10px",
-
     background:
       "#0d1012",
-
     border:
       "1px solid #272d31",
   },
@@ -2274,16 +1810,12 @@ const styles: Record<
   statLabel: {
     display:
       "block",
-
     fontSize:
       "10px",
-
     color:
       "#737b82",
-
     textTransform:
       "uppercase",
-
     letterSpacing:
       "0.06em",
   },
@@ -2291,10 +1823,8 @@ const styles: Record<
   statValue: {
     display:
       "block",
-
     marginTop:
       "5px",
-
     fontSize:
       "14px",
   },
@@ -2307,19 +1837,14 @@ const styles: Record<
   label: {
     marginBottom:
       "7px",
-
     color:
       "#7e878d",
-
     fontSize:
       "10px",
-
     fontWeight:
       900,
-
     textTransform:
       "uppercase",
-
     letterSpacing:
       "0.08em",
   },
@@ -2327,10 +1852,8 @@ const styles: Record<
   chips: {
     display:
       "flex",
-
     flexWrap:
       "wrap",
-
     gap:
       "7px",
   },
@@ -2338,19 +1861,14 @@ const styles: Record<
   chip: {
     padding:
       "7px 9px",
-
     borderRadius:
       "8px",
-
     background:
       "#191d20",
-
     border:
       "1px solid #2d3337",
-
     color:
       "#c3c9cd",
-
     fontSize:
       "11px",
   },
@@ -2358,16 +1876,12 @@ const styles: Record<
   assignPanel: {
     marginTop:
       "20px",
-
     padding:
       "16px",
-
     borderRadius:
       "12px",
-
     background:
       "#0d1012",
-
     border:
       "1px solid #2b3237",
   },
@@ -2375,7 +1889,6 @@ const styles: Record<
   assignTitle: {
     margin:
       "5px 0 0",
-
     fontSize:
       "17px",
   },
@@ -2383,10 +1896,8 @@ const styles: Record<
   assignSubtitle: {
     margin:
       "4px 0 0",
-
     color:
       "#7c858b",
-
     fontSize:
       "12px",
   },
@@ -2394,13 +1905,10 @@ const styles: Record<
   assignGrid: {
     display:
       "grid",
-
     gridTemplateColumns:
       "repeat(auto-fit, minmax(210px, 1fr))",
-
     gap:
       "10px",
-
     marginTop:
       "15px",
   },
@@ -2408,25 +1916,18 @@ const styles: Record<
   select: {
     width:
       "100%",
-
     boxSizing:
       "border-box",
-
     padding:
       "11px",
-
     borderRadius:
       "9px",
-
     border:
       "1px solid #343a3f",
-
     background:
       "#0b0f11",
-
     color:
       "#fff",
-
     outline:
       "none",
   },
@@ -2434,73 +1935,53 @@ const styles: Record<
   previewGood: {
     marginTop:
       "14px",
-
     padding:
       "13px",
-
     borderRadius:
       "10px",
-
     background:
       "#101916",
-
     border:
       "1px solid #284737",
+    color:
+      "#a8d8b9",
   },
 
   previewWarning: {
     marginTop:
       "14px",
-
     padding:
       "13px",
-
     borderRadius:
       "10px",
-
     background:
-      "#191612",
-
+      "#191714",
     border:
-      "1px solid #49391f",
+      "1px solid #453820",
+    color:
+      "#d0bb70",
   },
 
   previewTitle: {
     marginBottom:
       "8px",
-
-    color:
-      "#cbd2d7",
-
-    fontSize:
-      "11px",
-
     fontWeight:
       900,
-
-    textTransform:
-      "uppercase",
-
-    letterSpacing:
-      "0.08em",
+    fontSize:
+      "12px",
   },
 
   previewRow: {
     display:
       "flex",
-
     justifyContent:
       "space-between",
-
     gap:
       "10px",
-
     padding:
       "5px 0",
-
     color:
       "#818a91",
-
     fontSize:
       "11px",
   },
@@ -2508,33 +1989,46 @@ const styles: Record<
   matchLine: {
     marginTop:
       "7px",
-
     color:
       "#9da5aa",
-
     fontSize:
       "11px",
+  },
+
+  primaryButton: {
+    width:
+      "100%",
+    marginTop:
+      "12px",
+    padding:
+      "13px",
+    border:
+      "none",
+    borderRadius:
+      "10px",
+    background:
+      "#f0b90b",
+    color:
+      "#111",
+    fontWeight:
+      900,
+    cursor:
+      "pointer",
   },
 
   success: {
     marginTop:
       "12px",
-
     padding:
       "11px",
-
     borderRadius:
       "9px",
-
     background:
       "#101916",
-
     border:
       "1px solid #284737",
-
     color:
       "#7fd3a4",
-
     fontSize:
       "12px",
   },
@@ -2542,62 +2036,29 @@ const styles: Record<
   notice: {
     marginTop:
       "12px",
-
     padding:
       "11px",
-
     borderRadius:
       "9px",
-
     background:
       "#191714",
-
     border:
       "1px solid #453820",
-
     color:
       "#d0bb70",
-
     fontSize:
       "12px",
-  },
-
-  smallButton: {
-    padding:
-      "9px 12px",
-
-    borderRadius:
-      "9px",
-
-    border:
-      "1px solid #343a3f",
-
-    background:
-      "#171b1e",
-
-    color:
-      "#dce0e3",
-
-    fontWeight:
-      700,
-
-    cursor:
-      "pointer",
   },
 
   explainer: {
     marginTop:
       "18px",
-
     padding:
       "18px",
-
     border:
       "1px solid #252b30",
-
     borderRadius:
       "15px",
-
     background:
       "#111518",
   },
@@ -2605,7 +2066,6 @@ const styles: Record<
   explainerTitle: {
     margin:
       "7px 0 18px",
-
     fontSize:
       "19px",
   },
@@ -2613,13 +2073,10 @@ const styles: Record<
   flow: {
     display:
       "flex",
-
     alignItems:
       "center",
-
     gap:
       "8px",
-
     flexWrap:
       "wrap",
   },
@@ -2627,28 +2084,20 @@ const styles: Record<
   flowStep: {
     display:
       "flex",
-
     alignItems:
       "center",
-
     gap:
       "8px",
-
     padding:
       "9px",
-
     borderRadius:
       "9px",
-
     background:
       "#0d1012",
-
     border:
       "1px solid #272d32",
-
     color:
       "#adb4b8",
-
     fontSize:
       "11px",
   },
@@ -2656,36 +2105,20 @@ const styles: Record<
   flowNumber: {
     width:
       "22px",
-
     height:
       "22px",
-
     display:
       "grid",
-
     placeItems:
       "center",
-
     borderRadius:
       "50%",
-
     background:
       "#f0b90b",
-
     color:
       "#111",
-
     fontSize:
       "9px",
-
-    fontWeight:
-      900,
-  },
-
-  flowArrow: {
-    color:
-      "#5e676e",
-
     fontWeight:
       900,
   },
