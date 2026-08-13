@@ -7,6 +7,7 @@ import ReactDOM from "react-dom/client";
 import Erc8183Test from "./Erc8183Test";
 import MissionPlanner from "./MissionPlanner";
 import MissionWorkspace from "./MissionWorkspace";
+import AgentWorkspace from "./AgentWorkspace";
 import AgentRegistry from "./AgentRegistry";
 import MissionSubJob from "./MissionSubJob";
 import ProviderTest from "./ProviderTest";
@@ -167,7 +168,7 @@ function App() {
         <MissionPlanner />
       ) : mode ===
         "workspace" ? (
-        <MissionWorkspace />
+        <AgentWorkspace />
       ) : mode ===
         "agents" ? (
         <AgentRegistry />
@@ -198,6 +199,7 @@ function NavButton({
 }) {
   return (
     <button
+      type="button"
       onClick={
         onClick
       }
