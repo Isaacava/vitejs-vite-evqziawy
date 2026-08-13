@@ -1,111 +1,188 @@
-import {
-  StrictMode,
+import React, {
   useState,
 } from "react";
 
-import {
-  createRoot,
-} from "react-dom/client";
-
-import "./index.css";
+import ReactDOM from "react-dom/client";
 
 import Erc8183Test from "./Erc8183Test";
 import ProviderTest from "./ProviderTest";
+import SettlementTest from "./SettlementTest";
+
+import "./index.css";
+
+type AppMode =
+  | "client"
+  | "provider"
+  | "settlement";
 
 function App() {
   const [
     mode,
     setMode,
-  ] = useState<
-    "client" | "provider"
-  >("client");
+  ] = useState<AppMode>(
+    "client"
+  );
 
   return (
     <div>
       <div
         style={{
-          display: "flex",
-          gap: 8,
-          padding: 12,
-          background: "#0b0d0e",
+          display:
+            "flex",
+
+          gap:
+            8,
+
+          padding:
+            12,
+
+          background:
+            "#0b0d0e",
+
           borderBottom:
             "1px solid #2c3032",
-          position: "sticky",
-          top: 0,
-          zIndex: 100,
+
+          position:
+            "sticky",
+
+          top:
+            0,
+
+          zIndex:
+            100,
         }}
       >
         <button
           onClick={() =>
-            setMode("client")
+            setMode(
+              "client"
+            )
           }
           style={{
             flex: 1,
+
             padding:
-              "10px 14px",
-            borderRadius: 8,
+              "10px 8px",
+
+            borderRadius:
+              8,
+
             border:
               "1px solid #34383a",
+
             background:
               mode ===
               "client"
                 ? "#f0b90b"
                 : "#1b1e20",
+
             color:
               mode ===
               "client"
                 ? "#111"
                 : "#fff",
-            fontWeight: 800,
+
+            fontWeight:
+              800,
           }}
         >
-          Client / Marketplace
+          Client
         </button>
 
         <button
           onClick={() =>
-            setMode("provider")
+            setMode(
+              "provider"
+            )
           }
           style={{
             flex: 1,
+
             padding:
-              "10px 14px",
-            borderRadius: 8,
+              "10px 8px",
+
+            borderRadius:
+              8,
+
             border:
               "1px solid #34383a",
+
             background:
               mode ===
               "provider"
                 ? "#f0b90b"
                 : "#1b1e20",
+
             color:
               mode ===
               "provider"
                 ? "#111"
                 : "#fff",
-            fontWeight: 800,
+
+            fontWeight:
+              800,
           }}
         >
-          Provider / Agent
+          Provider
+        </button>
+
+        <button
+          onClick={() =>
+            setMode(
+              "settlement"
+            )
+          }
+          style={{
+            flex: 1,
+
+            padding:
+              "10px 8px",
+
+            borderRadius:
+              8,
+
+            border:
+              "1px solid #34383a",
+
+            background:
+              mode ===
+              "settlement"
+                ? "#f0b90b"
+                : "#1b1e20",
+
+            color:
+              mode ===
+              "settlement"
+                ? "#111"
+                : "#fff",
+
+            fontWeight:
+              800,
+          }}
+        >
+          Settlement
         </button>
       </div>
 
       {mode ===
       "client" ? (
         <Erc8183Test />
-      ) : (
+      ) : mode ===
+        "provider" ? (
         <ProviderTest />
+      ) : (
+        <SettlementTest />
       )}
     </div>
   );
 }
 
-createRoot(
+ReactDOM.createRoot(
   document.getElementById(
     "root"
   )!
 ).render(
-  <StrictMode>
+  <React.StrictMode>
     <App />
-  </StrictMode>
+  </React.StrictMode>
 );
