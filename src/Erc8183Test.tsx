@@ -30,6 +30,16 @@ const BSC_TESTNET_CHAIN_ID = 97;
 const SAVED_JOB_KEY =
   "bnb_agent_marketplace_test_job_id";
 
+/*
+ * BNB Agent SDK happy-path examples use
+ * an expiry around 65 minutes.
+ *
+ * We use the same value for our fresh
+ * test jobs instead of the old 1-hour value.
+ */
+const TEST_JOB_EXPIRY_SECONDS =
+  65 * 60;
+
 type WalletState =
   | "disconnected"
   | "connecting"
@@ -133,6 +143,9 @@ export default function Erc8183Test() {
   const [loading, setLoading] =
     useState(false);
 
+  const [isSimulating, setIsSimulating] =
+    useState(false);
+
   const [error, setError] =
     useState<string | null>(null);
 
@@ -143,31 +156,30 @@ export default function Erc8183Test() {
     null
   );
 
-  const [isSimulating, setIsSimulating] =
-    useState(false);
-
   /*
    * =========================================================
-   * RESTORE SAVED JOB ID
+   * RESTORE LAST JOB ID
    * =========================================================
    */
 
   useEffect(() => {
     try {
-      const saved =
+      const savedJobId =
         window.localStorage.getItem(
           SAVED_JOB_KEY
         );
 
       if (
-        saved &&
-        /^\d+$/.test(saved)
+        savedJobId &&
+        /^\d+$/.test(savedJobId)
       ) {
-        setJobIdInput(saved);
+        setJobIdInput(
+          savedJobId
+        );
       }
     } catch (err) {
       console.warn(
-        "Could not read saved job ID:",
+        "Could not restore saved job ID:",
         err
       );
     }
@@ -179,9 +191,14 @@ export default function Erc8183Test() {
    * =========================================================
    */
 
-  function saveJobId(id: bigint) {
+  function saveJobId(
+    id: bigint
+  ) {
     setJobId(id);
-    setJobIdInput(id.toString());
+
+    setJobIdInput(
+      id.toString()
+    );
 
     try {
       window.localStorage.setItem(
@@ -205,7 +222,10 @@ export default function Erc8183Test() {
   async function connect() {
     try {
       setError(null);
-      setStatus("Connecting...");
+
+      setStatus(
+        "Connecting..."
+      );
 
       const wc =
         await EthereumProvider.init({
@@ -256,7 +276,8 @@ export default function Erc8183Test() {
 
       const rawChainId =
         await walletProvider.request({
-          method: "eth_chainId",
+          method:
+            "eth_chainId",
         });
 
       const chainId =
@@ -291,21 +312,6 @@ export default function Erc8183Test() {
       setStatus(
         "Connected to BSC Testnet"
       );
-
-      /*
-       * Automatically load the saved
-       * job if one exists.
-       */
-      if (
-        jobIdInput &&
-        /^\d+$/.test(jobIdInput)
-      ) {
-        window.setTimeout(() => {
-          void loadExistingJob(
-            jobIdInput
-          );
-        }, 0);
-      }
     } catch (err) {
       console.error(
         "Wallet connection error:",
@@ -360,6 +366,7 @@ export default function Erc8183Test() {
         BigInt(rawId);
 
       setLoading(true);
+
       setStatus(
         `Loading Job #${id.toString()} from BSC...`
       );
@@ -433,7 +440,9 @@ export default function Erc8183Test() {
 
       saveJobId(id);
 
-      setLoadedJob(job);
+      setLoadedJob(
+        job
+      );
 
       setDescription(
         job.description
@@ -448,7 +457,7 @@ export default function Erc8183Test() {
       setSimulation(null);
 
       /*
-       * Check policy registration.
+       * Read registered policy.
        */
       try {
         const policy =
@@ -499,7 +508,9 @@ export default function Erc8183Test() {
         err
       );
 
-      setLoadedJob(null);
+      setLoadedJob(
+        null
+      );
 
       setStatus(
         "Could not load job"
@@ -512,6 +523,30 @@ export default function Erc8183Test() {
       setLoading(false);
     }
   }
+
+  /*
+   * =========================================================
+   * AUTO LOAD SAVED JOB
+   * =========================================================
+   */
+
+  useEffect(() => {
+    if (
+      walletState !==
+        "connected" ||
+      !jobIdInput
+    ) {
+      return;
+    }
+
+    void loadExistingJob(
+      jobIdInput
+    );
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    walletState,
+  ]);
 
   /*
    * =========================================================
@@ -606,7 +641,9 @@ export default function Erc8183Test() {
       )) as bigint;
 
     const decimalsNumber =
-      Number(decimals);
+      Number(
+        decimals
+      );
 
     setPaymentToken(
       tokenAddress
@@ -661,20 +698,51 @@ export default function Erc8183Test() {
 
     try {
       setError(null);
+
       setLoading(true);
 
-      setTransactionHash(null);
-      setRegisterTransactionHash(null);
-      setBudgetTransactionHash(null);
-      setApprovalTransactionHash(null);
-      setFundTransactionHash(null);
-      setRegisteredPolicy(null);
-      setBudgetRaw(null);
-      setAllowanceRaw(null);
-      setSimulation(null);
+      setLoadedJob(
+        null
+      );
+
+      setTransactionHash(
+        null
+      );
+
+      setRegisterTransactionHash(
+        null
+      );
+
+      setBudgetTransactionHash(
+        null
+      );
+
+      setApprovalTransactionHash(
+        null
+      );
+
+      setFundTransactionHash(
+        null
+      );
+
+      setRegisteredPolicy(
+        null
+      );
+
+      setBudgetRaw(
+        null
+      );
+
+      setAllowanceRaw(
+        null
+      );
+
+      setSimulation(
+        null
+      );
 
       setStatus(
-        "Preparing job..."
+        "Preparing new test job..."
       );
 
       const walletClient =
@@ -689,13 +757,16 @@ export default function Erc8183Test() {
             custom(provider),
         });
 
+      /*
+       * 65-minute expiry.
+       */
       const expiry =
         BigInt(
           Math.floor(
             Date.now() /
               1000
           ) +
-            60 * 60
+            TEST_JOB_EXPIRY_SECONDS
         );
 
       setStatus(
@@ -716,9 +787,13 @@ export default function Erc8183Test() {
 
             args: [
               address,
+
               ERC8183_ADDRESSES.router,
+
               expiry,
+
               description,
+
               ERC8183_ADDRESSES.router,
             ],
           }
@@ -771,7 +846,7 @@ export default function Erc8183Test() {
       );
 
       setStatus(
-        `✅ Job #${latestJobId.toString()} created`
+        `✅ Job #${latestJobId.toString()} created with a 65-minute expiry`
       );
     } catch (err) {
       console.error(
@@ -810,8 +885,22 @@ export default function Erc8183Test() {
       return;
     }
 
+    if (
+      loadedJob &&
+      isJobExpired(
+        loadedJob.expiredAt
+      )
+    ) {
+      setError(
+        "This job has expired. Create a new test job."
+      );
+
+      return;
+    }
+
     try {
       setError(null);
+
       setLoading(true);
 
       setRegisterTransactionHash(
@@ -844,7 +933,7 @@ export default function Erc8183Test() {
         !policyWhitelisted
       ) {
         throw new Error(
-          "OptimisticPolicy is not whitelisted."
+          "OptimisticPolicy is not whitelisted by the EvaluatorRouter."
         );
       }
 
@@ -878,6 +967,7 @@ export default function Erc8183Test() {
 
             args: [
               jobId,
+
               ERC8183_ADDRESSES.policy,
             ],
           }
@@ -930,7 +1020,14 @@ export default function Erc8183Test() {
         ERC8183_ADDRESSES.policy.toLowerCase()
       ) {
         throw new Error(
-          "Policy verification failed."
+          [
+            "Policy verification failed.",
+            "",
+            `Expected: ${ERC8183_ADDRESSES.policy}`,
+            `Returned: ${policy}`,
+          ].join(
+            "\n"
+          )
         );
       }
 
@@ -988,8 +1085,22 @@ export default function Erc8183Test() {
       return;
     }
 
+    if (
+      loadedJob &&
+      isJobExpired(
+        loadedJob.expiredAt
+      )
+    ) {
+      setError(
+        "This job has expired. Create a new test job."
+      );
+
+      return;
+    }
+
     try {
       setError(null);
+
       setLoading(true);
 
       setBudgetTransactionHash(
@@ -1035,7 +1146,9 @@ export default function Erc8183Test() {
               token.decimals
             )} ${token.symbol}`,
             `Required: ${trimmed} ${token.symbol}`,
-          ].join("\n")
+          ].join(
+            "\n"
+          )
         );
       }
 
@@ -1069,7 +1182,9 @@ export default function Erc8183Test() {
 
             args: [
               jobId,
+
               amount,
+
               "0x",
             ],
           }
@@ -1137,11 +1252,14 @@ export default function Erc8183Test() {
     ) {
       const result = {
         ok: false,
+
         message:
-          "Connect the wallet and load a job first.",
+          "Connect your wallet and load a job first.",
       };
 
-      setSimulation(result);
+      setSimulation(
+        result
+      );
 
       return result;
     }
@@ -1151,27 +1269,35 @@ export default function Erc8183Test() {
     ) {
       const result = {
         ok: false,
+
         message:
           "The job does not have a budget yet.",
       };
 
-      setSimulation(result);
+      setSimulation(
+        result
+      );
 
       return result;
     }
 
-    setIsSimulating(true);
-    setSimulation(null);
-    setError(null);
+    setIsSimulating(
+      true
+    );
+
+    setSimulation(
+      null
+    );
+
+    setError(
+      null
+    );
 
     try {
       setStatus(
-        "Running fund() simulation..."
+        "Checking job state before simulation..."
       );
 
-      /*
-       * Read the exact current job.
-       */
       const job =
         (await publicClient.readContract(
           {
@@ -1202,22 +1328,57 @@ export default function Erc8183Test() {
           deliverable: `0x${string}`;
         };
 
-      /*
-       * Read U token.
-       */
       const token =
         await loadPaymentToken();
 
-      /*
-       * Basic checks before simulation.
-       */
+      const expired =
+        isJobExpired(
+          job.expiredAt
+        );
+
       if (
-        job.status !== 0
+        expired
       ) {
         throw new Error(
-          `Job #${jobId.toString()} is not Open. Current status: ${getStatusName(
-            job.status
-          )}.`
+          [
+            `Job #${jobId.toString()} has expired.`,
+
+            "",
+
+            `Expiry: ${formatTimestamp(
+              job.expiredAt
+            )}`,
+
+            `Current time: ${new Date().toLocaleString()}`,
+
+            "",
+
+            "Create a new test job instead of trying to fund this one.",
+          ].join(
+            "\n"
+          )
+        );
+      }
+
+      if (
+        Number(
+          job.status
+        ) !== 0
+      ) {
+        throw new Error(
+          [
+            `Job #${jobId.toString()} is not Open.`,
+
+            "",
+
+            `Current status: ${getStatusName(
+              Number(
+                job.status
+              )
+            )}`,
+          ].join(
+            "\n"
+          )
         );
       }
 
@@ -1227,17 +1388,22 @@ export default function Erc8183Test() {
       ) {
         throw new Error(
           [
-            "Job budget changed since the page was loaded.",
+            "The on-chain budget does not match the UI.",
+
             "",
-            `On-chain budget: ${formatUnits(
+
+            `On-chain: ${formatUnits(
               job.budget,
               token.decimals
             )} ${token.symbol}`,
-            `UI budget: ${formatUnits(
+
+            `UI: ${formatUnits(
               budgetRaw,
               token.decimals
             )} ${token.symbol}`,
-          ].join("\n")
+          ].join(
+            "\n"
+          )
         );
       }
 
@@ -1248,16 +1414,21 @@ export default function Erc8183Test() {
         throw new Error(
           [
             `Insufficient ${token.symbol} balance.`,
+
             "",
+
             `Balance: ${formatUnits(
               token.balance,
               token.decimals
             )} ${token.symbol}`,
+
             `Required: ${formatUnits(
               budgetRaw,
               token.decimals
             )} ${token.symbol}`,
-          ].join("\n")
+          ].join(
+            "\n"
+          )
         );
       }
 
@@ -1268,28 +1439,32 @@ export default function Erc8183Test() {
         throw new Error(
           [
             `Insufficient ${token.symbol} allowance.`,
+
             "",
+
             `Allowance: ${formatUnits(
               token.allowance,
               token.decimals
             )} ${token.symbol}`,
+
             `Required: ${formatUnits(
               budgetRaw,
               token.decimals
             )} ${token.symbol}`,
+
             "",
-            "Approve the token first, then run the simulation again.",
-          ].join("\n")
+
+            "Run the approval/funding flow after loading the current job.",
+          ].join(
+            "\n"
+          )
         );
       }
 
-      /*
-       * This is the important part.
-       *
-       * simulateContract() executes the call
-       * against the current blockchain state
-       * without sending a transaction.
-       */
+      setStatus(
+        "Simulating fund() against current BSC state..."
+      );
+
       await publicClient.simulateContract(
         {
           address:
@@ -1303,7 +1478,9 @@ export default function Erc8183Test() {
 
           args: [
             jobId,
+
             budgetRaw,
+
             "0x",
           ],
 
@@ -1319,22 +1496,36 @@ export default function Erc8183Test() {
           message:
             [
               `✓ Job #${jobId.toString()} is Open`,
+
+              `✓ Expiry: ${formatTimestamp(
+                job.expiredAt
+              )}`,
+
+              "✓ Job is not expired",
+
               `✓ Budget: ${formatUnits(
                 budgetRaw,
                 token.decimals
               )} ${token.symbol}`,
+
               `✓ Balance: ${formatUnits(
                 token.balance,
                 token.decimals
               )} ${token.symbol}`,
+
               `✓ Allowance: ${formatUnits(
                 token.allowance,
                 token.decimals
               )} ${token.symbol}`,
+
               "✓ fund() simulation passed",
+
               "",
+
               "The blockchain currently accepts the fund call.",
-            ].join("\n"),
+            ].join(
+              "\n"
+            ),
         };
 
       setSimulation(
@@ -1348,7 +1539,9 @@ export default function Erc8183Test() {
       return result;
     } catch (err) {
       const reason =
-        extractRevertReason(err);
+        extractRevertReason(
+          err
+        );
 
       const result: SimulationResult =
         {
@@ -1357,10 +1550,15 @@ export default function Erc8183Test() {
           message:
             [
               "fund() simulation failed.",
+
               "",
+
               "Revert / error reason:",
+
               reason,
-            ].join("\n"),
+            ].join(
+              "\n"
+            ),
         };
 
       setSimulation(
@@ -1373,7 +1571,9 @@ export default function Erc8183Test() {
 
       return result;
     } finally {
-      setIsSimulating(false);
+      setIsSimulating(
+        false
+      );
     }
   }
 
@@ -1406,8 +1606,22 @@ export default function Erc8183Test() {
       return;
     }
 
+    if (
+      loadedJob &&
+      isJobExpired(
+        loadedJob.expiredAt
+      )
+    ) {
+      setError(
+        "This job is expired. Create a fresh test job."
+      );
+
+      return;
+    }
+
     try {
       setError(null);
+
       setLoading(true);
 
       setApprovalTransactionHash(
@@ -1418,11 +1632,10 @@ export default function Erc8183Test() {
         null
       );
 
-      setSimulation(null);
+      setSimulation(
+        null
+      );
 
-      /*
-       * Read current U information.
-       */
       setStatus(
         "Checking U balance and allowance..."
       );
@@ -1437,25 +1650,27 @@ export default function Erc8183Test() {
         throw new Error(
           [
             `Insufficient ${token.symbol}.`,
+
             "",
+
             `Balance: ${formatUnits(
               token.balance,
               token.decimals
             )} ${token.symbol}`,
+
             `Required: ${formatUnits(
               budgetRaw,
               token.decimals
             )} ${token.symbol}`,
-          ].join("\n")
+          ].join(
+            "\n"
+          )
         );
       }
 
       /*
-       * =====================================================
        * APPROVAL
-       * =====================================================
        */
-
       if (
         token.allowance <
         budgetRaw
@@ -1493,6 +1708,7 @@ export default function Erc8183Test() {
 
               args: [
                 ERC8183_ADDRESSES.commerce,
+
                 budgetRaw,
               ],
             }
@@ -1523,9 +1739,6 @@ export default function Erc8183Test() {
           );
         }
 
-        /*
-         * Verify the new allowance.
-         */
         const newAllowance =
           (await publicClient.readContract(
             {
@@ -1556,47 +1769,42 @@ export default function Erc8183Test() {
           throw new Error(
             [
               "Approval succeeded, but allowance is still insufficient.",
+
               "",
+
               `Allowance: ${formatUnits(
                 newAllowance,
                 token.decimals
               )} ${token.symbol}`,
+
               `Required: ${formatUnits(
                 budgetRaw,
                 token.decimals
               )} ${token.symbol}`,
-            ].join("\n")
+            ].join(
+              "\n"
+            )
           );
         }
       }
 
       /*
-       * =====================================================
-       * SIMULATE BEFORE WALLET TRANSACTION
-       * =====================================================
+       * SIMULATE
        */
-
       const simulationResult =
         await simulateFund();
 
       if (
         !simulationResult.ok
       ) {
-        /*
-         * Do NOT open the wallet if the
-         * blockchain says the call would fail.
-         */
         throw new Error(
           simulationResult.message
         );
       }
 
       /*
-       * =====================================================
-       * ACTUAL FUND TRANSACTION
-       * =====================================================
+       * ACTUAL FUND
        */
-
       const walletClient =
         createWalletClient({
           account:
@@ -1627,7 +1835,9 @@ export default function Erc8183Test() {
 
             args: [
               jobId,
+
               budgetRaw,
+
               "0x",
             ],
           }
@@ -1657,12 +1867,6 @@ export default function Erc8183Test() {
           "Fund transaction was mined but failed."
         );
       }
-
-      /*
-       * =====================================================
-       * VERIFY FINAL STATE
-       * =====================================================
-       */
 
       setStatus(
         "Funding confirmed. Verifying Job state..."
@@ -1747,14 +1951,18 @@ export default function Erc8183Test() {
       ) {
         throw new Error(
           [
-            "The funding transaction succeeded, but the job did not enter FUNDED state.",
+            "Funding succeeded, but the job did not enter FUNDED state.",
+
             "",
+
             `Current state: ${getStatusName(
               Number(
                 finalJob.status
               )
             )}`,
-          ].join("\n")
+          ].join(
+            "\n"
+          )
         );
       }
 
@@ -1865,7 +2073,7 @@ export default function Erc8183Test() {
           )}
         </div>
 
-        {/* LOAD JOB */}
+        {/* LOAD EXISTING JOB */}
         {address && (
           <div
             style={
@@ -1881,8 +2089,8 @@ export default function Erc8183Test() {
                 styles.subtitleSmall
               }
             >
-              Enter a job ID already stored on
-              BSC Testnet.
+              You can continue an existing job such
+              as #500 without creating another one.
             </p>
 
             <input
@@ -1922,7 +2130,7 @@ export default function Erc8183Test() {
           </div>
         )}
 
-        {/* JOB */}
+        {/* LOADED JOB */}
         {loadedJob && (
           <div
             style={
@@ -1980,16 +2188,44 @@ export default function Erc8183Test() {
                     : loadedJob.budget.toString()
                 }
               />
+
+              <Info
+                label="Expiry"
+                value={
+                  formatTimestamp(
+                    loadedJob.expiredAt
+                  )
+                }
+              />
+
+              <Info
+                label="Expiry state"
+                value={
+                  isJobExpired(
+                    loadedJob.expiredAt
+                  )
+                    ? "EXPIRED"
+                    : "NOT EXPIRED"
+                }
+              />
             </div>
 
             <div
               style={
-                loadedJob.status === 1
+                isJobExpired(
+                  loadedJob.expiredAt
+                )
+                  ? styles.expiredBanner
+                  : loadedJob.status === 1
                   ? styles.fundedBanner
                   : styles.statusBanner
               }
             >
-              {loadedJob.status === 1
+              {isJobExpired(
+                loadedJob.expiredAt
+              )
+                ? "⏰ This job has expired."
+                : loadedJob.status === 1
                 ? "🎉 FUNDED — escrow contains the job budget."
                 : `Current state: ${getStatusName(
                     loadedJob.status
@@ -2022,7 +2258,7 @@ export default function Erc8183Test() {
           </div>
         )}
 
-        {/* CREATE JOB */}
+        {/* CREATE NEW JOB */}
         {address && (
           <div
             style={
@@ -2032,6 +2268,14 @@ export default function Erc8183Test() {
             <h3>
               Create New Test Job
             </h3>
+
+            <p
+              style={
+                styles.subtitleSmall
+              }
+            >
+              New test jobs use a 65-minute expiry.
+            </p>
 
             <label
               style={
@@ -2074,7 +2318,7 @@ export default function Erc8183Test() {
             >
               {loading
                 ? "Working..."
-                : "Create ERC-8183 Job"}
+                : "Create New ERC-8183 Job"}
             </button>
 
             {transactionHash && (
@@ -2122,7 +2366,18 @@ export default function Erc8183Test() {
                 Register Job
               </h3>
 
-              {registeredPolicy ? (
+              {isJobExpired(
+                loadedJob.expiredAt
+              ) ? (
+                <div
+                  style={
+                    styles.expiredBanner
+                  }
+                >
+                  This job is expired. Create a
+                  fresh test job.
+                </div>
+              ) : registeredPolicy ? (
                 <div
                   style={
                     styles.verified
@@ -2192,19 +2447,12 @@ export default function Erc8183Test() {
                 Payment Token
               </h3>
 
-              <p
-                style={
-                  styles.subtitleSmall
-                }
-              >
-                The Commerce contract determines
-                the settlement token.
-              </p>
-
               <button
                 onClick={async () => {
                   try {
-                    setError(null);
+                    setError(
+                      null
+                    );
 
                     setStatus(
                       "Reading U token..."
@@ -2318,7 +2566,19 @@ export default function Erc8183Test() {
                 Set Budget
               </h3>
 
-              {budgetRaw !== null ? (
+              {isJobExpired(
+                loadedJob.expiredAt
+              ) ? (
+                <div
+                  style={
+                    styles.expiredBanner
+                  }
+                >
+                  This job has expired, so its budget
+                  cannot be used for the funding test.
+                </div>
+              ) : budgetRaw !==
+                null ? (
                 <div
                   style={
                     styles.verified
@@ -2372,17 +2632,6 @@ export default function Erc8183Test() {
                     }
                   />
 
-                  <p
-                    style={
-                      styles.tokenHint
-                    }
-                  >
-                    Token:{" "}
-                    <strong>
-                      {tokenSymbol}
-                    </strong>
-                  </p>
-
                   <button
                     onClick={
                       setJobBudget
@@ -2422,7 +2671,8 @@ export default function Erc8183Test() {
         {/* FUND */}
         {loadedJob &&
           registeredPolicy &&
-          budgetRaw !== null &&
+          budgetRaw !==
+            null &&
           address && (
             <div
               style={
@@ -2433,87 +2683,19 @@ export default function Erc8183Test() {
                 Fund Job
               </h3>
 
-              <div
-                style={
-                  styles.stepBox
-                }
-              >
-                <strong>
-                  Before funding
-                </strong>
-
-                <p>
-                  The app will:
-                </p>
-
-                <p>
-                  1. Check your U balance
-                </p>
-
-                <p>
-                  2. Check U allowance
-                </p>
-
-                <p>
-                  3. Approve U if needed
-                </p>
-
-                <p>
-                  4. Simulate fund()
-                </p>
-
-                <p>
-                  5. Only send the transaction if
-                  simulation succeeds
-                </p>
-              </div>
-
-              <button
-                onClick={
-                  async () => {
-                    await simulateFund();
-                  }
-                }
-                disabled={
-                  loading ||
-                  isSimulating
-                }
-                style={
-                  styles.secondaryButton
-                }
-              >
-                {isSimulating
-                  ? "Simulating..."
-                  : "Simulate Fund Transaction"}
-              </button>
-
-              {simulation && (
+              {isJobExpired(
+                loadedJob.expiredAt
+              ) ? (
                 <div
                   style={
-                    simulation.ok
-                      ? styles.simulationGood
-                      : styles.simulationBad
+                    styles.expiredBanner
                   }
                 >
-                  <strong>
-                    {simulation.ok
-                      ? "✅ Simulation Passed"
-                      : "❌ Simulation Failed"}
-                  </strong>
-
-                  <pre
-                    style={
-                      styles.simulationText
-                    }
-                  >
-                    {
-                      simulation.message
-                    }
-                  </pre>
+                  This job has expired. Create a fresh
+                  test job before funding.
                 </div>
-              )}
-
-              {loadedJob.status === 1 ? (
+              ) : loadedJob.status ===
+                1 ? (
                 <div
                   style={
                     styles.fundedBanner
@@ -2524,22 +2706,98 @@ export default function Erc8183Test() {
                   </strong>
                 </div>
               ) : (
-                <button
-                  onClick={
-                    fundJob
-                  }
-                  disabled={
-                    loading ||
-                    isSimulating
-                  }
-                  style={
-                    styles.primaryButton
-                  }
-                >
-                  {loading
-                    ? "Working..."
-                    : `Approve + Fund Job #${loadedJob.id.toString()}`}
-                </button>
+                <>
+                  <div
+                    style={
+                      styles.stepBox
+                    }
+                  >
+                    <strong>
+                      Funding test
+                    </strong>
+
+                    <p>
+                      1. Check U balance
+                    </p>
+
+                    <p>
+                      2. Check U allowance
+                    </p>
+
+                    <p>
+                      3. Approve U if needed
+                    </p>
+
+                    <p>
+                      4. Simulate fund()
+                    </p>
+
+                    <p>
+                      5. Send the transaction only
+                      if simulation passes
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={() =>
+                      void simulateFund()
+                    }
+                    disabled={
+                      loading ||
+                      isSimulating
+                    }
+                    style={
+                      styles.secondaryButton
+                    }
+                  >
+                    {isSimulating
+                      ? "Simulating..."
+                      : "Simulate Fund Transaction"}
+                  </button>
+
+                  {simulation && (
+                    <div
+                      style={
+                        simulation.ok
+                          ? styles.simulationGood
+                          : styles.simulationBad
+                      }
+                    >
+                      <strong>
+                        {simulation.ok
+                          ? "✅ Simulation Passed"
+                          : "❌ Simulation Failed"}
+                      </strong>
+
+                      <pre
+                        style={
+                          styles.simulationText
+                        }
+                      >
+                        {
+                          simulation.message
+                        }
+                      </pre>
+                    </div>
+                  )}
+
+                  <button
+                    onClick={
+                      fundJob
+                    }
+                    disabled={
+                      loading ||
+                      isSimulating
+                    }
+                    style={
+                      styles.primaryButton
+                    }
+                  >
+                    {loading
+                      ? "Working..."
+                      : `Approve + Fund Job #${loadedJob.id.toString()}`}
+                  </button>
+                </>
               )}
 
               {approvalTransactionHash && (
@@ -2675,7 +2933,7 @@ function Info({
 
 /*
  * =========================================================
- * STATUS
+ * JOB STATUS
  * =========================================================
  */
 
@@ -2702,11 +2960,48 @@ function getStatusName(
 
 /*
  * =========================================================
+ * EXPIRY HELPERS
+ * =========================================================
+ */
+
+function isJobExpired(
+  expiredAt: bigint
+): boolean {
+  return (
+    expiredAt <=
+    BigInt(
+      Math.floor(
+        Date.now() /
+          1000
+      )
+    )
+  );
+}
+
+function formatTimestamp(
+  timestamp: bigint
+): string {
+  const milliseconds =
+    Number(timestamp) *
+    1000;
+
+  if (
+    !Number.isFinite(
+      milliseconds
+    )
+  ) {
+    return timestamp.toString();
+  }
+
+  return new Date(
+    milliseconds
+  ).toLocaleString();
+}
+
+/*
+ * =========================================================
  * ERROR EXTRACTION
  * =========================================================
- *
- * Viem errors can contain the useful revert
- * message several levels deep.
  */
 
 function extractRevertReason(
@@ -2715,7 +3010,7 @@ function extractRevertReason(
   if (
     error instanceof Error
   ) {
-    const anyError =
+    const extended =
       error as Error & {
         shortMessage?: string;
         details?: string;
@@ -2723,30 +3018,34 @@ function extractRevertReason(
       };
 
     if (
-      anyError.shortMessage
+      extended.shortMessage
     ) {
-      return anyError.shortMessage;
+      return extended.shortMessage;
     }
 
     if (
-      anyError.details
+      extended.details
     ) {
-      return anyError.details;
+      return extended.details;
     }
-
-    const causeReason =
-      extractRevertReason(
-        anyError.cause
-      );
 
     if (
-      causeReason !==
-      "No detailed revert reason was returned."
+      extended.cause
     ) {
-      return causeReason;
+      const nested =
+        extractRevertReason(
+          extended.cause
+        );
+
+      if (
+        nested !==
+        "No detailed revert reason was returned."
+      ) {
+        return nested;
+      }
     }
 
-    return anyError.message;
+    return extended.message;
   }
 
   if (
@@ -2761,17 +3060,17 @@ function extractRevertReason(
     typeof error ===
       "object"
   ) {
-    const obj =
+    const objectError =
       error as Record<
         string,
         unknown
       >;
 
     const candidates = [
-      obj.shortMessage,
-      obj.details,
-      obj.reason,
-      obj.message,
+      objectError.shortMessage,
+      objectError.details,
+      objectError.reason,
+      objectError.message,
     ];
 
     for (
@@ -2785,9 +3084,11 @@ function extractRevertReason(
       }
     }
 
-    if (obj.cause) {
+    if (
+      objectError.cause
+    ) {
       return extractRevertReason(
-        obj.cause
+        objectError.cause
       );
     }
 
@@ -2807,9 +3108,17 @@ function extractRevertReason(
   return "No detailed revert reason was returned.";
 }
 
+function formatError(
+  error: unknown
+): string {
+  return extractRevertReason(
+    error
+  );
+}
+
 /*
  * =========================================================
- * CHAIN ID
+ * CHAIN
  * =========================================================
  */
 
@@ -2862,12 +3171,6 @@ function normalizeChainId(
   );
 }
 
-/*
- * =========================================================
- * BSC TESTNET
- * =========================================================
- */
-
 function getBscTestnetChain() {
   return {
     id: 97,
@@ -2901,20 +3204,6 @@ function getBscTestnetChain() {
 
     testnet: true,
   } as const;
-}
-
-/*
- * =========================================================
- * GENERIC ERROR FORMATTER
- * =========================================================
- */
-
-function formatError(
-  error: unknown
-): string {
-  return extractRevertReason(
-    error
-  );
 }
 
 /*
@@ -3219,40 +3508,6 @@ const styles: Record<
       "1px solid #282c2e",
   },
 
-  tokenHint: {
-    color:
-      "#888",
-
-    fontSize:
-      "12px",
-  },
-
-  stepBox: {
-    marginTop:
-      "12px",
-
-    padding:
-      "14px",
-
-    borderRadius:
-      "10px",
-
-    background:
-      "#0d1011",
-
-    border:
-      "1px solid #282c2e",
-
-    color:
-      "#bbb",
-
-    fontSize:
-      "13px",
-
-    lineHeight:
-      "1.5",
-  },
-
   statusBanner: {
     marginTop:
       "14px",
@@ -3294,6 +3549,58 @@ const styles: Record<
 
     color:
       "#7ee2a8",
+
+    fontSize:
+      "13px",
+
+    lineHeight:
+      "1.5",
+  },
+
+  expiredBanner: {
+    marginTop:
+      "14px",
+
+    padding:
+      "14px",
+
+    borderRadius:
+      "9px",
+
+    background:
+      "rgba(255,90,90,.08)",
+
+    border:
+      "1px solid rgba(255,90,90,.28)",
+
+    color:
+      "#ffaaaa",
+
+    fontSize:
+      "13px",
+
+    lineHeight:
+      "1.5",
+  },
+
+  stepBox: {
+    marginTop:
+      "12px",
+
+    padding:
+      "14px",
+
+    borderRadius:
+      "10px",
+
+    background:
+      "#0d1011",
+
+    border:
+      "1px solid #282c2e",
+
+    color:
+      "#bbb",
 
     fontSize:
       "13px",
@@ -3380,23 +3687,6 @@ const styles: Record<
 
     fontSize:
       "12px",
-  },
-
-  success: {
-    marginTop:
-      "18px",
-
-    padding:
-      "16px",
-
-    borderRadius:
-      "10px",
-
-    background:
-      "rgba(50,200,120,.1)",
-
-    border:
-      "1px solid rgba(50,200,120,.3)",
   },
 
   verified: {
