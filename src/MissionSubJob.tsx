@@ -82,6 +82,20 @@ type WalletStatus =
   | "Connecting"
   | "Connected";
 
+type OnChainJob = {
+  id: bigint;
+  client: Address;
+  provider: Address;
+  evaluator: Address;
+  description: string;
+  budget: bigint;
+  expiredAt: bigint;
+  status: number;
+  hook: Address;
+  submittedAt: bigint;
+  deliverable: `0x${string}`;
+};
+
 const DEMO_AGENTS: Agent[] = [
   {
     id: "taskpilot",
@@ -109,20 +123,6 @@ const DEMO_AGENTS: Agent[] = [
     role: "QA Agent",
   },
 ];
-
-type OnChainJob = {
-  id: bigint;
-  client: Address;
-  provider: Address;
-  evaluator: Address;
-  description: string;
-  budget: bigint;
-  expiredAt: bigint;
-  status: number;
-  hook: Address;
-  submittedAt: bigint;
-  deliverable: `0x${string}`;
-};
 
 export default function MissionSubJob() {
   const [
@@ -309,12 +309,6 @@ export default function MissionSubJob() {
         ) ?? null
       : null;
 
-  /*
-   * ============================================================
-   * RESTORE
-   * ============================================================
-   */
-
   useEffect(() => {
     if (
       missions.length ===
@@ -360,13 +354,10 @@ export default function MissionSubJob() {
         if (
           savedTask.chainJobId
         ) {
-          const numericId =
+          setJobId(
             BigInt(
               savedTask.chainJobId
-            );
-
-          setJobId(
-            numericId
+            )
           );
         }
       }
@@ -406,12 +397,6 @@ export default function MissionSubJob() {
     }
   }, [missions]);
 
-  /*
-   * ============================================================
-   * SAVE SELECTION
-   * ============================================================
-   */
-
   useEffect(() => {
     if (
       selectedMissionId &&
@@ -427,18 +412,13 @@ export default function MissionSubJob() {
     selectedTaskId,
   ]);
 
-  /*
-   * ============================================================
-   * CONNECT WALLET
-   * ============================================================
-   */
-
   async function connectWallet() {
     try {
       setError(null);
       setWalletStatus(
         "Connecting"
       );
+
       setStatus(
         "Connecting test provider wallet..."
       );
@@ -455,6 +435,11 @@ export default function MissionSubJob() {
           showQrModal:
             true,
 
+          rpcMap: {
+            [BSC_TESTNET_CHAIN_ID]:
+              "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+          },
+
           metadata: {
             name:
               "BNB Agent Marketplace",
@@ -466,11 +451,6 @@ export default function MissionSubJob() {
               window.location.origin,
 
             icons: [],
-          },
-
-          rpcMap: {
-            [BSC_TESTNET_CHAIN_ID]:
-              "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
           },
         });
 
@@ -551,16 +531,12 @@ export default function MissionSubJob() {
       );
 
       setError(
-        formatError(err)
+        formatError(
+          err
+        )
       );
     }
   }
-
-  /*
-   * ============================================================
-   * TOKEN STATE
-   * ============================================================
-   */
 
   async function loadTokenState(
     walletAddress: Address
@@ -667,12 +643,6 @@ export default function MissionSubJob() {
     );
   }
 
-  /*
-   * ============================================================
-   * CREATE SUB-JOB
-   * ============================================================
-   */
-
   async function createSubJob() {
     if (
       !provider ||
@@ -690,7 +660,7 @@ export default function MissionSubJob() {
       !assignedAgent
     ) {
       setError(
-        "Select a mission task that already has an assigned agent."
+        "Select an assigned mission task first."
       );
       return;
     }
@@ -700,9 +670,7 @@ export default function MissionSubJob() {
         true
       );
 
-      setError(
-        null
-      );
+      setError(null);
 
       setStatus(
         "Preparing ERC-8183 sub-job..."
@@ -720,12 +688,6 @@ export default function MissionSubJob() {
             custom(provider),
         });
 
-      /*
-       * Use the connected wallet as a test provider.
-       *
-       * In the production marketplace this will be
-       * replaced by the agent's real registered wallet.
-       */
       const providerAddress =
         address;
 
@@ -847,7 +809,9 @@ export default function MissionSubJob() {
       );
 
       setError(
-        formatError(err)
+        formatError(
+          err
+        )
       );
     } finally {
       setLoading(
@@ -855,12 +819,6 @@ export default function MissionSubJob() {
       );
     }
   }
-
-  /*
-   * ============================================================
-   * REGISTER
-   * ============================================================
-   */
 
   async function registerSubJob() {
     if (
@@ -879,9 +837,7 @@ export default function MissionSubJob() {
         true
       );
 
-      setError(
-        null
-      );
+      setError(null);
 
       const whitelisted =
         (await publicClient.readContract(
@@ -970,7 +926,9 @@ export default function MissionSubJob() {
       );
 
       setError(
-        formatError(err)
+        formatError(
+          err
+        )
       );
     } finally {
       setLoading(
@@ -978,12 +936,6 @@ export default function MissionSubJob() {
       );
     }
   }
-
-  /*
-   * ============================================================
-   * SET BUDGET
-   * ============================================================
-   */
 
   async function setSubJobBudget() {
     if (
@@ -1003,9 +955,7 @@ export default function MissionSubJob() {
         true
       );
 
-      setError(
-        null
-      );
+      setError(null);
 
       const amount =
         parseUnits(
@@ -1014,15 +964,6 @@ export default function MissionSubJob() {
           ),
           tokenDecimals
         );
-
-      if (
-        amount <=
-        0n
-      ) {
-        throw new Error(
-          "Task budget must be greater than zero."
-        );
-      }
 
       if (
         tokenBalance !==
@@ -1034,9 +975,7 @@ export default function MissionSubJob() {
           `Insufficient ${tokenSymbol}. Balance: ${formatUnits(
             tokenBalance,
             tokenDecimals
-          )} ${tokenSymbol}; required: ${
-            selectedTask.budget
-          } ${tokenSymbol}.`
+          )} ${tokenSymbol}; required: ${selectedTask.budget} ${tokenSymbol}.`
         );
       }
 
@@ -1106,7 +1045,9 @@ export default function MissionSubJob() {
       );
 
       setError(
-        formatError(err)
+        formatError(
+          err
+        )
       );
     } finally {
       setLoading(
@@ -1114,12 +1055,6 @@ export default function MissionSubJob() {
       );
     }
   }
-
-  /*
-   * ============================================================
-   * APPROVE
-   * ============================================================
-   */
 
   async function approveSubJob() {
     if (
@@ -1140,9 +1075,7 @@ export default function MissionSubJob() {
         true
       );
 
-      setError(
-        null
-      );
+      setError(null);
 
       const amount =
         parseUnits(
@@ -1213,7 +1146,9 @@ export default function MissionSubJob() {
       );
 
       setError(
-        formatError(err)
+        formatError(
+          err
+        )
       );
     } finally {
       setLoading(
@@ -1221,12 +1156,6 @@ export default function MissionSubJob() {
       );
     }
   }
-
-  /*
-   * ============================================================
-   * FUND
-   * ============================================================
-   */
 
   async function fundSubJob() {
     if (
@@ -1246,9 +1175,7 @@ export default function MissionSubJob() {
         true
       );
 
-      setError(
-        null
-      );
+      setError(null);
 
       const amount =
         parseUnits(
@@ -1416,7 +1343,7 @@ export default function MissionSubJob() {
       );
 
       setError(
-        extractRevertReason(
+        formatError(
           err
         )
       );
@@ -1426,12 +1353,6 @@ export default function MissionSubJob() {
       );
     }
   }
-
-  /*
-   * ============================================================
-   * REFRESH ON-CHAIN JOB
-   * ============================================================
-   */
 
   async function refreshJob(
     id: bigint
@@ -1478,12 +1399,6 @@ export default function MissionSubJob() {
       }
     )) as OnChainJob;
   }
-
-  /*
-   * ============================================================
-   * UPDATE LOCAL MISSION
-   * ============================================================
-   */
 
   function updateMissionTaskChainJob(
     id: bigint
@@ -1593,12 +1508,6 @@ export default function MissionSubJob() {
     );
   }
 
-  /*
-   * ============================================================
-   * RENDER
-   * ============================================================
-   */
-
   return (
     <div
       style={
@@ -1647,13 +1556,9 @@ export default function MissionSubJob() {
               styles.testBadge
             }
           >
-            TESTNET
+            BSC TESTNET
           </div>
         </div>
-
-        {/* ================================================= */}
-        {/* IMPORTANT TEST MODE NOTICE */}
-        {/* ================================================= */}
 
         <div
           style={
@@ -1666,20 +1571,15 @@ export default function MissionSubJob() {
 
           <p>
             For this first integration, the connected
-            wallet acts as the provider wallet. We are
-            not using the placeholder demo addresses
-            from the Agent Registry.
+            wallet acts as the provider wallet.
           </p>
 
           <p>
-            Later, the provider address will come from
-            the agent's real ERC-8004 identity.
+            We will replace this with the agent's real
+            registered wallet after the sub-job lifecycle
+            is proven.
           </p>
         </div>
-
-        {/* ================================================= */}
-        {/* SELECT MISSION */}
-        {/* ================================================= */}
 
         <div
           style={
@@ -1699,8 +1599,8 @@ export default function MissionSubJob() {
               styles.panelSubtitle
             }
           >
-            Only tasks that already have an assigned
-            agent are shown.
+            Only tasks that already have an assigned agent
+            are shown.
           </p>
 
           <select
@@ -1718,6 +1618,14 @@ export default function MissionSubJob() {
               setSelectedTaskId(
                 ""
               );
+
+              setJob(
+                null
+              );
+
+              setJobId(
+                null
+              );
             }}
             style={
               styles.select
@@ -1729,18 +1637,18 @@ export default function MissionSubJob() {
 
             {missions.map(
               (
-                missionItem
+                item
               ) => (
                 <option
                   key={
-                    missionItem.id
+                    item.id
                   }
                   value={
-                    missionItem.id
+                    item.id
                   }
                 >
                   {
-                    missionItem.title
+                    item.title
                   }
                 </option>
               )
@@ -1753,12 +1661,20 @@ export default function MissionSubJob() {
             }
             onChange={(
               event
-            ) =>
+            ) => {
               setSelectedTaskId(
                 event.target
                   .value
-              )
-            }
+              );
+
+              setJob(
+                null
+              );
+
+              setJobId(
+                null
+              );
+            }}
             disabled={
               !selectedMission
             }
@@ -1795,10 +1711,6 @@ export default function MissionSubJob() {
             )}
           </select>
         </div>
-
-        {/* ================================================= */}
-        {/* TASK DETAILS */}
-        {/* ================================================= */}
 
         {selectedTask && (
           <div
@@ -1879,10 +1791,6 @@ export default function MissionSubJob() {
           </div>
         )}
 
-        {/* ================================================= */}
-        {/* WALLET */}
-        {/* ================================================= */}
-
         <div
           style={
             styles.panel
@@ -1895,6 +1803,32 @@ export default function MissionSubJob() {
           >
             3. Provider Wallet
           </h2>
+
+          <div
+            style={
+              styles.walletStatusRow
+            }
+          >
+            <span>
+              Wallet status
+            </span>
+
+            <strong
+              style={
+                walletStatus ===
+                "Connected"
+                  ? styles.connectedText
+                  : walletStatus ===
+                    "Connecting"
+                  ? styles.connectingText
+                  : styles.disconnectedText
+              }
+            >
+              {
+                walletStatus
+              }
+            </strong>
+          </div>
 
           {address ? (
             <div
@@ -1917,8 +1851,8 @@ export default function MissionSubJob() {
               </code>
 
               <p>
-                This wallet will be the test provider
-                for the ERC-8183 sub-job.
+                This wallet will act as the test
+                provider for the ERC-8183 sub-job.
               </p>
             </div>
           ) : (
@@ -1927,13 +1861,18 @@ export default function MissionSubJob() {
                 connectWallet
               }
               disabled={
-                loading
+                loading ||
+                walletStatus ===
+                  "Connecting"
               }
               style={
                 styles.primaryButton
               }
             >
-              Connect Test Provider Wallet
+              {walletStatus ===
+              "Connecting"
+                ? "Connecting..."
+                : "Connect Test Provider Wallet"}
             </button>
           )}
 
@@ -1945,7 +1884,7 @@ export default function MissionSubJob() {
               }
             >
               <span>
-                Payment token
+                Payment token balance
               </span>
 
               <strong>
@@ -1962,10 +1901,6 @@ export default function MissionSubJob() {
             </div>
           )}
         </div>
-
-        {/* ================================================= */}
-        {/* ACTIONS */}
-        {/* ================================================= */}
 
         {selectedTask &&
           address && (
@@ -1984,42 +1919,40 @@ export default function MissionSubJob() {
 
             <div
               style={
-                styles.flow
+                styles.stepFlow
               }
             >
-              <Flow
+              <Step
+                label="Create"
                 active={
                   jobId !==
                   null
                 }
-                label="Create"
               />
 
-              <Flow
-                active={
-                  job?.status !==
-                  undefined &&
-                  job?.status >=
-                    0
-                }
+              <Step
                 label="Register"
+                active={
+                  registerHash !==
+                  null
+                }
               />
 
-              <Flow
+              <Step
+                label="Budget"
                 active={
                   job?.budget !==
                     undefined &&
                   job.budget >
                     0n
                 }
-                label="Budget"
               />
 
-              <Flow
+              <Step
+                label="Approve"
                 active={
                   allowance !==
                     null &&
-                  selectedTask &&
                   allowance >=
                     parseUnits(
                       String(
@@ -2028,15 +1961,14 @@ export default function MissionSubJob() {
                       tokenDecimals
                     )
                 }
-                label="Approve"
               />
 
-              <Flow
+              <Step
+                label="Fund"
                 active={
                   job?.status ===
                   1
                 }
-                label="Fund"
               />
             </div>
 
@@ -2069,9 +2001,7 @@ export default function MissionSubJob() {
               disabled={
                 loading ||
                 jobId ===
-                  null ||
-                job?.status ===
-                  3
+                  null
               }
               style={
                 styles.secondaryButtonFull
@@ -2109,8 +2039,13 @@ export default function MissionSubJob() {
                 styles.secondaryButtonFull
               }
             >
-              Approve {selectedTask.budget}{" "}
-              {tokenSymbol}
+              Approve{" "}
+              {
+                selectedTask.budget
+              }{" "}
+              {
+                tokenSymbol
+              }
             </button>
 
             <button
@@ -2130,10 +2065,6 @@ export default function MissionSubJob() {
             </button>
           </div>
         )}
-
-        {/* ================================================= */}
-        {/* ON-CHAIN RESULT */}
-        {/* ================================================= */}
 
         {job && (
           <div
@@ -2212,10 +2143,6 @@ export default function MissionSubJob() {
           </div>
         )}
 
-        {/* ================================================= */}
-        {/* STATUS */}
-        {/* ================================================= */}
-
         <div
           style={
             styles.statusBox
@@ -2253,10 +2180,6 @@ export default function MissionSubJob() {
             </pre>
           </div>
         )}
-
-        {/* ================================================= */}
-        {/* HASHES */}
-        {/* ================================================= */}
 
         {(createHash ||
           registerHash ||
@@ -2317,12 +2240,6 @@ export default function MissionSubJob() {
   );
 }
 
-/*
- * ============================================================
- * SMALL COMPONENTS
- * ============================================================
- */
-
 function Info({
   label,
   value,
@@ -2359,25 +2276,27 @@ function Info({
   );
 }
 
-function Flow({
-  active,
+function Step({
   label,
+  active,
 }: {
-  active: boolean;
   label: string;
+  active: boolean;
 }) {
   return (
     <div
       style={
         active
-          ? styles.flowActive
-          : styles.flow
+          ? styles.stepActive
+          : styles.step
       }
     >
       <span>
-        {active
-          ? "✓"
-          : "○"}
+        {
+          active
+            ? "✓"
+            : "○"
+        }
       </span>
 
       <span>
@@ -2425,12 +2344,6 @@ function Transaction({
     </div>
   );
 }
-
-/*
- * ============================================================
- * HELPERS
- * ============================================================
- */
 
 async function waitForSuccess(
   hash: `0x${string}`
@@ -2494,6 +2407,110 @@ function getBscTestnetChain() {
     testnet:
       true,
   } as const;
+}
+
+function normalizeChainId(
+  value: unknown
+): number {
+  if (
+    typeof value ===
+    "number"
+  ) {
+    return value;
+  }
+
+  if (
+    typeof value ===
+    "bigint"
+  ) {
+    return Number(
+      value
+    );
+  }
+
+  if (
+    typeof value ===
+    "string"
+  ) {
+    return value
+      .toLowerCase()
+      .startsWith(
+        "0x"
+      )
+      ? parseInt(
+          value,
+          16
+        )
+      : Number(
+          value
+        );
+  }
+
+  throw new Error(
+    "Unable to determine chain ID."
+  );
+}
+
+function getStatusName(
+  status: number
+): string {
+  const statuses: Record<
+    number,
+    string
+  > = {
+    0: "Open",
+    1: "Funded",
+    2: "Submitted",
+    3: "Completed",
+    4: "Rejected",
+    5: "Expired",
+  };
+
+  return (
+    statuses[status] ??
+    `Unknown (${status})`
+  );
+}
+
+function formatError(
+  error: unknown
+): string {
+  if (
+    error instanceof Error
+  ) {
+    const extended =
+      error as Error & {
+        shortMessage?: string;
+        details?: string;
+        cause?: unknown;
+      };
+
+    if (
+      extended.shortMessage
+    ) {
+      return extended.shortMessage;
+    }
+
+    if (
+      extended.details
+    ) {
+      return extended.details;
+    }
+
+    if (
+      extended.cause
+    ) {
+      return formatError(
+        extended.cause
+      );
+    }
+
+    return extended.message;
+  }
+
+  return String(
+    error
+  );
 }
 
 function loadMissions(): Mission[] {
@@ -2582,122 +2599,6 @@ function loadSavedSubJob(): {
     return {};
   }
 }
-
-function normalizeChainId(
-  value: unknown
-): number {
-  if (
-    typeof value ===
-    "number"
-  ) {
-    return value;
-  }
-
-  if (
-    typeof value ===
-    "bigint"
-  ) {
-    return Number(
-      value
-    );
-  }
-
-  if (
-    typeof value ===
-    "string"
-  ) {
-    return value
-      .toLowerCase()
-      .startsWith("0x")
-      ? parseInt(
-          value,
-          16
-        )
-      : Number(
-          value
-        );
-  }
-
-  throw new Error(
-    "Unable to determine chain ID."
-  );
-}
-
-function getStatusName(
-  status: number
-): string {
-  const statuses: Record<
-    number,
-    string
-  > = {
-    0: "Open",
-    1: "Funded",
-    2: "Submitted",
-    3: "Completed",
-    4: "Rejected",
-    5: "Expired",
-  };
-
-  return (
-    statuses[status] ??
-    `Unknown (${status})`
-  );
-}
-
-function formatError(
-  error: unknown
-): string {
-  if (
-    error instanceof Error
-  ) {
-    const extended =
-      error as Error & {
-        shortMessage?: string;
-        details?: string;
-        cause?: unknown;
-      };
-
-    if (
-      extended.shortMessage
-    ) {
-      return extended.shortMessage;
-    }
-
-    if (
-      extended.details
-    ) {
-      return extended.details;
-    }
-
-    if (
-      extended.cause
-    ) {
-      return formatError(
-        extended.cause
-      );
-    }
-
-    return extended.message;
-  }
-
-  return String(
-    error
-  );
-}
-
-function extractRevertReason(
-  error: unknown
-): string {
-  return formatError(
-    error
-  );
-}
-
-/*
- * ============================================================
- * STYLES
- * ============================================================
- */
 
 const styles: Record<
   string,
@@ -2938,6 +2839,248 @@ const styles: Record<
       "12px",
     border:
       "1px solid #284737",
+    borderRadius:
+      "10px",
+    background:
+      "#101916",
+    color:
+      "#80d3a5",
+    fontSize:
+      "12px",
+  },
+
+  balanceBox: {
+    display:
+      "flex",
+    justifyContent:
+      "space-between",
+    gap:
+      "12px",
+    marginTop:
+      "12px",
+    padding:
+      "11px",
+    borderRadius:
+      "9px",
+    background:
+      "#0c1012",
+    color:
+      "#929aa1",
+    fontSize:
+      "12px",
+  },
+
+  walletStatusRow: {
+    display:
+      "flex",
+    justifyContent:
+      "space-between",
+    alignItems:
+      "center",
+    padding:
+      "10px 0",
+    borderBottom:
+      "1px solid #252b30",
+    color:
+      "#878f96",
+    fontSize:
+      "12px",
+  },
+
+  connectedText: {
+    color:
+      "#7fd3a5",
+  },
+
+  connectingText: {
+    color:
+      "#f0b90b",
+  },
+
+  disconnectedText: {
+    color:
+      "#9ca4aa",
+  },
+
+  primaryButton: {
+    width:
+      "100%",
+    marginTop:
+      "12px",
+    padding:
+      "13px",
+    border:
+      "none",
+    borderRadius:
+      "10px",
+    background:
+      "#f0b90b",
+    color:
+      "#111",
+    fontWeight:
+      900,
+    cursor:
+      "pointer",
+  },
+
+  secondaryButtonFull: {
+    width:
+      "100%",
+    marginTop:
+      "9px",
+    padding:
+      "12px",
+    border:
+      "1px solid #343a3f",
+    borderRadius:
+      "10px",
+    background:
+      "#171b1e",
+    color:
+      "#fff",
+    fontWeight:
+      800,
+    cursor:
+      "pointer",
+  },
+
+  disabledButton: {
+    width:
+      "100%",
+    marginTop:
+      "12px",
+    padding:
+      "12px",
+    border:
+      "none",
+    borderRadius:
+      "10px",
+    background:
+      "#292e32",
+    color:
+      "#626a70",
+    cursor:
+      "not-allowed",
+  },
+
+  stepFlow: {
+    display:
+      "flex",
+    flexWrap:
+      "wrap",
+    gap:
+      "8px",
+    marginTop:
+      "14px",
+  },
+
+  step: {
+    display:
+      "flex",
+    alignItems:
+      "center",
+    gap:
+      "6px",
+    padding:
+      "8px",
+    border:
+      "1px solid #2b3237",
+    borderRadius:
+      "8px",
+    background:
+      "#0d1012",
+    color:
+      "#6f787f",
+    fontSize:
+      "11px",
+  },
+
+  stepActive: {
+    display:
+      "flex",
+    alignItems:
+      "center",
+    gap:
+      "6px",
+    padding:
+      "8px",
+    border:
+      "1px solid #284737",
+    borderRadius:
+      "8px",
+    background:
+      "#101916",
+    color:
+      "#7fd3a5",
+    fontSize:
+      "11px",
+  },
+
+  statusBox: {
+    marginBottom:
+      "12px",
+    padding:
+      "13px",
+    border:
+      "1px solid #2f363b",
+    borderRadius:
+      "10px",
+    background:
+      "#13181b",
+    color:
+      "#b7bec4",
+    fontSize:
+      "12px",
+  },
+
+  errorBox: {
+    marginBottom:
+      "12px",
+    padding:
+      "13px",
+    border:
+      "1px solid #562e2e",
+    borderRadius:
+      "10px",
+    background:
+      "#211414",
+    color:
+      "#ffaaaa",
+  },
+
+  errorText: {
+    whiteSpace:
+      "pre-wrap",
+    overflowWrap:
+      "anywhere",
+    fontSize:
+      "11px",
+  },
+
+  transaction: {
+    display:
+      "flex",
+    justifyContent:
+      "space-between",
+    gap:
+      "10px",
+    padding:
+      "10px 0",
+    borderBottom:
+      "1px solid #252b30",
+    fontSize:
+      "12px",
+  },
+
+  link: {
+    color:
+      "#f0b90b",
+    fontWeight:
+      800,
+    textDecoration:
+      "none",
+  },
+};olid #284737",
     borderRadius:
       "10px",
     background:
