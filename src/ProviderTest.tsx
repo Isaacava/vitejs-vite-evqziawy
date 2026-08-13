@@ -10,7 +10,6 @@ import {
   stringToBytes,
   type Address,
   type EIP1193Provider,
-  type Hex,
 } from "viem";
 
 import {
