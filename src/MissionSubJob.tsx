@@ -34,9 +34,6 @@ const MISSION_STORAGE_KEY =
 const SUBJOB_STORAGE_KEY =
   "bnb_agent_marketplace_subjob";
 
-const MISSIONS_UPDATED_EVENT =
-  "bnb-missions-updated";
-
 type MissionStatus =
   | "Planning"
   | "Ready"
@@ -132,123 +129,87 @@ const DEMO_AGENTS: Agent[] = [
 ];
 
 export default function MissionSubJob() {
-  const [
-    missions,
-    setMissions,
-  ] = useState<Mission[]>(
-    loadMissions()
-  );
+  const [missions, setMissions] =
+    useState<Mission[]>(
+      loadMissions()
+    );
 
-  const [
-    selectedMissionId,
-    setSelectedMissionId,
-  ] = useState("");
+  const [selectedMissionId, setSelectedMissionId] =
+    useState("");
 
-  const [
-    selectedTaskId,
-    setSelectedTaskId,
-  ] = useState("");
+  const [selectedTaskId, setSelectedTaskId] =
+    useState("");
 
-  const [
-    provider,
-    setProvider,
-  ] = useState<EIP1193Provider | null>(
-    null
-  );
+  const [provider, setProvider] =
+    useState<EIP1193Provider | null>(
+      null
+    );
 
-  const [
-    address,
-    setAddress,
-  ] = useState<Address | null>(
-    null
-  );
+  const [address, setAddress] =
+    useState<Address | null>(
+      null
+    );
 
-  const [
-    walletStatus,
-    setWalletStatus,
-  ] = useState<WalletStatus>(
-    "Disconnected"
-  );
+  const [walletStatus, setWalletStatus] =
+    useState<WalletStatus>(
+      "Disconnected"
+    );
 
-  const [
-    tokenAddress,
-    setTokenAddress,
-  ] = useState<Address | null>(
-    null
-  );
+  const [tokenAddress, setTokenAddress] =
+    useState<Address | null>(
+      null
+    );
 
-  const [
-    tokenSymbol,
-    setTokenSymbol,
-  ] = useState("U");
+  const [tokenSymbol, setTokenSymbol] =
+    useState("U");
 
-  const [
-    tokenDecimals,
-    setTokenDecimals,
-  ] = useState(18);
+  const [tokenDecimals, setTokenDecimals] =
+    useState(18);
 
-  const [
-    tokenBalance,
-    setTokenBalance,
-  ] = useState<bigint | null>(
-    null
-  );
+  const [tokenBalance, setTokenBalance] =
+    useState<bigint | null>(
+      null
+    );
 
-  const [
-    allowance,
-    setAllowance,
-  ] = useState<bigint | null>(
-    null
-  );
+  const [allowance, setAllowance] =
+    useState<bigint | null>(
+      null
+    );
 
-  const [
-    job,
-    setJob,
-  ] = useState<OnChainJob | null>(
-    null
-  );
+  const [job, setJob] =
+    useState<OnChainJob | null>(
+      null
+    );
 
-  const [
-    jobId,
-    setJobId,
-  ] = useState<bigint | null>(
-    null
-  );
+  const [jobId, setJobId] =
+    useState<bigint | null>(
+      null
+    );
 
-  const [
-    statusMessage,
-    setStatusMessage,
-  ] = useState(
-    "Select a mission."
-  );
+  const [statusMessage, setStatusMessage] =
+    useState(
+      "Select a mission."
+    );
 
-  const [
-    errorMessage,
-    setErrorMessage,
-  ] = useState<string | null>(
-    null
-  );
+  const [errorMessage, setErrorMessage] =
+    useState<string | null>(
+      null
+    );
 
-  const [
-    loading,
-    setLoading,
-  ] = useState(false);
+  const [loading, setLoading] =
+    useState(false);
 
-  const [
-    refreshing,
-    setRefreshing,
-  ] = useState(false);
+  const [refreshing, setRefreshing] =
+    useState(false);
 
-  const [
-    transactionHashes,
-    setTransactionHashes,
-  ] = useState<{
-    create?: `0x${string}`;
-    register?: `0x${string}`;
-    budget?: `0x${string}`;
-    approval?: `0x${string}`;
-    fund?: `0x${string}`;
-  }>({});
+  const [transactionHashes, setTransactionHashes] =
+    useState<{
+      create?: `0x${string}`;
+      register?: `0x${string}`;
+      budget?: `0x${string}`;
+      approval?: `0x${string}`;
+      fund?: `0x${string}`;
+    }>({});
 
   const selectedMission =
     missions.find(
@@ -289,233 +250,11 @@ export default function MissionSubJob() {
 
   /*
    * ------------------------------------------------------------
-   * Mission loading
-   * ------------------------------------------------------------
-   */
-
-  function refreshMissions(
-    showMessage = true
-  ) {
-    setRefreshing(true);
-
-    const latest =
-      loadMissions();
-
-    setMissions(
-      latest
-    );
-
-    /*
-     * Keep the currently selected mission whenever
-     * it still exists.
-     */
-    const currentMission =
-      latest.find(
-        (mission) =>
-          mission.id ===
-          selectedMissionId
-      );
-
-    if (
-      currentMission
-    ) {
-      const currentTask =
-        currentMission.tasks.find(
-          (task) =>
-            task.id ===
-            selectedTaskId
-        );
-
-      if (
-        currentTask
-      ) {
-        setSelectedTaskId(
-          currentTask.id
-        );
-      } else {
-        const firstAssigned =
-          currentMission.tasks.find(
-            (task) =>
-              Boolean(
-                task.assignedAgentId
-              )
-          );
-
-        setSelectedTaskId(
-          firstAssigned?.id ??
-            ""
-        );
-      }
-    } else {
-      /*
-       * Select the first available mission even when
-       * there are zero assigned tasks.
-       */
-      const firstMission =
-        latest[0];
-
-      if (
-        firstMission
-      ) {
-        setSelectedMissionId(
-          firstMission.id
-        );
-
-        const firstAssigned =
-          firstMission.tasks.find(
-            (task) =>
-              Boolean(
-                task.assignedAgentId
-              )
-          );
-
-        setSelectedTaskId(
-          firstAssigned?.id ??
-            ""
-        );
-      } else {
-        setSelectedMissionId(
-          ""
-        );
-
-        setSelectedTaskId(
-          ""
-        );
-      }
-    }
-
-    setRefreshing(false);
-
-    if (
-      showMessage
-    ) {
-      setStatusMessage(
-        latest.length > 0
-          ? "✅ Missions refreshed."
-          : "No missions found."
-      );
-    }
-  }
-
-  useEffect(() => {
-    refreshMissions(
-      false
-    );
-  }, []);
-
-  useEffect(() => {
-    function handleMissionUpdate() {
-      refreshMissions(
-        false
-      );
-    }
-
-    window.addEventListener(
-      MISSIONS_UPDATED_EVENT,
-      handleMissionUpdate
-    );
-
-    return () => {
-      window.removeEventListener(
-        MISSIONS_UPDATED_EVENT,
-        handleMissionUpdate
-      );
-    };
-  }, [
-    selectedMissionId,
-    selectedTaskId,
-  ]);
-
-  useEffect(() => {
-    function handleStorage(
-      event: StorageEvent
-    ) {
-      if (
-        event.key ===
-          MISSION_STORAGE_KEY ||
-        event.key ===
-          null
-      ) {
-        refreshMissions(
-          false
-        );
-      }
-    }
-
-    window.addEventListener(
-      "storage",
-      handleStorage
-    );
-
-    return () => {
-      window.removeEventListener(
-        "storage",
-        handleStorage
-      );
-    };
-  }, [
-    selectedMissionId,
-    selectedTaskId,
-  ]);
-
-  useEffect(() => {
-    function handleFocus() {
-      refreshMissions(
-        false
-      );
-    }
-
-    function handleVisibility() {
-      if (
-        document.visibilityState ===
-        "visible"
-      ) {
-        refreshMissions(
-          false
-        );
-      }
-    }
-
-    window.addEventListener(
-      "focus",
-      handleFocus
-    );
-
-    document.addEventListener(
-      "visibilitychange",
-      handleVisibility
-    );
-
-    return () => {
-      window.removeEventListener(
-        "focus",
-        handleFocus
-      );
-
-      document.removeEventListener(
-        "visibilitychange",
-        handleVisibility
-      );
-    };
-  }, [
-    selectedMissionId,
-    selectedTaskId,
-  ]);
-
-  /*
-   * ------------------------------------------------------------
-   * Restore saved selection
+   * INITIALIZATION
    * ------------------------------------------------------------
    */
 
   useEffect(() => {
-    if (
-      missions.length ===
-      0
-    ) {
-      return;
-    }
-
     const saved =
       loadSavedSubJob();
 
@@ -578,15 +317,13 @@ export default function MissionSubJob() {
       }
     }
 
-    /*
-     * Do not require assignment just to select a mission.
-     */
-    const firstMission =
-      missions[0];
-
     if (
-      firstMission
+      missions.length >
+      0
     ) {
+      const firstMission =
+        missions[0];
+
       setSelectedMissionId(
         firstMission.id
       );
@@ -604,9 +341,13 @@ export default function MissionSubJob() {
           ""
       );
     }
-  }, [
-    missions,
-  ]);
+  }, []);
+
+  /*
+   * ------------------------------------------------------------
+   * SAVE SELECTION
+   * ------------------------------------------------------------
+   */
 
   useEffect(() => {
     if (
@@ -616,8 +357,10 @@ export default function MissionSubJob() {
       saveSubJob({
         missionId:
           selectedMissionId,
+
         taskId:
           selectedTaskId,
+
         jobId:
           jobId?.toString(),
       });
@@ -630,7 +373,129 @@ export default function MissionSubJob() {
 
   /*
    * ------------------------------------------------------------
-   * Selection handlers
+   * TOKEN STATE
+   * ------------------------------------------------------------
+   */
+
+  useEffect(() => {
+    if (
+      address
+    ) {
+      void refreshTokenState(
+        address
+      );
+    }
+  }, [
+    address,
+  ]);
+
+  /*
+   * ------------------------------------------------------------
+   * MANUAL MISSION REFRESH
+   * ------------------------------------------------------------
+   */
+
+  function refreshMissions() {
+    setRefreshing(
+      true
+    );
+
+    const latest =
+      loadMissions();
+
+    setMissions(
+      latest
+    );
+
+    /*
+     * Keep the user's selected mission if it still exists.
+     * This is deliberately NOT an effect watching selection.
+     */
+    const currentMission =
+      latest.find(
+        (mission) =>
+          mission.id ===
+          selectedMissionId
+      );
+
+    if (
+      currentMission
+    ) {
+      const currentTask =
+        currentMission.tasks.find(
+          (task) =>
+            task.id ===
+            selectedTaskId
+        );
+
+      if (
+        currentTask
+      ) {
+        setSelectedTaskId(
+          currentTask.id
+        );
+      } else {
+        const firstAssigned =
+          currentMission.tasks.find(
+            (task) =>
+              Boolean(
+                task.assignedAgentId
+              )
+          );
+
+        setSelectedTaskId(
+          firstAssigned?.id ??
+            ""
+        );
+      }
+    } else if (
+      latest.length >
+      0
+    ) {
+      const firstMission =
+        latest[0];
+
+      setSelectedMissionId(
+        firstMission.id
+      );
+
+      const firstAssigned =
+        firstMission.tasks.find(
+          (task) =>
+            Boolean(
+              task.assignedAgentId
+            )
+        );
+
+      setSelectedTaskId(
+        firstAssigned?.id ??
+          ""
+      );
+    } else {
+      setSelectedMissionId(
+        ""
+      );
+
+      setSelectedTaskId(
+        ""
+      );
+    }
+
+    setRefreshing(
+      false
+    );
+
+    setStatusMessage(
+      latest.length >
+        0
+        ? "✅ Missions refreshed."
+        : "No missions found."
+    );
+  }
+
+  /*
+   * ------------------------------------------------------------
+   * MISSION SELECTION
    * ------------------------------------------------------------
    */
 
@@ -685,10 +550,16 @@ export default function MissionSubJob() {
       mission
         ? firstAssigned
           ? "✅ Assigned task selected."
-          : "Mission selected. No agent has been assigned yet."
+          : "Mission selected. No agent assigned yet."
         : "Select a mission."
     );
   }
+
+  /*
+   * ------------------------------------------------------------
+   * TASK SELECTION
+   * ------------------------------------------------------------
+   */
 
   function handleTaskChange(
     taskId: string
@@ -727,13 +598,13 @@ export default function MissionSubJob() {
     setStatusMessage(
       task
         ? "✅ Task selected."
-        : "Select an assigned task."
+        : "Select a task."
     );
   }
 
   /*
    * ------------------------------------------------------------
-   * Wallet
+   * WALLET
    * ------------------------------------------------------------
    */
 
@@ -866,7 +737,7 @@ export default function MissionSubJob() {
 
   /*
    * ------------------------------------------------------------
-   * Payment token
+   * TOKEN STATE
    * ------------------------------------------------------------
    */
 
@@ -986,7 +857,7 @@ export default function MissionSubJob() {
 
   /*
    * ------------------------------------------------------------
-   * Create ERC-8183 job
+   * CREATE ERC-8183 JOB
    * ------------------------------------------------------------
    */
 
@@ -1008,7 +879,7 @@ export default function MissionSubJob() {
       !assignedAgent
     ) {
       setErrorMessage(
-        "Select a task with an assigned agent first."
+        "Select a task that has an assigned agent."
       );
 
       return;
@@ -1082,6 +953,7 @@ export default function MissionSubJob() {
       setTransactionHashes(
         (current) => ({
           ...current,
+
           create:
             hash,
         })
@@ -1159,7 +1031,7 @@ export default function MissionSubJob() {
 
   /*
    * ------------------------------------------------------------
-   * Register
+   * REGISTER
    * ------------------------------------------------------------
    */
 
@@ -1244,6 +1116,7 @@ export default function MissionSubJob() {
       setTransactionHashes(
         (current) => ({
           ...current,
+
           register:
             hash,
         })
@@ -1295,7 +1168,7 @@ export default function MissionSubJob() {
 
   /*
    * ------------------------------------------------------------
-   * Set budget
+   * SET BUDGET
    * ------------------------------------------------------------
    */
 
@@ -1331,6 +1204,20 @@ export default function MissionSubJob() {
           tokenDecimals
         );
 
+      if (
+        tokenBalance !==
+          null &&
+        tokenBalance <
+          amount
+      ) {
+        throw new Error(
+          `Insufficient ${tokenSymbol}. Balance: ${formatUnits(
+            tokenBalance,
+            tokenDecimals
+          )} ${tokenSymbol}.`
+        );
+      }
+
       const walletClient =
         getWalletClient(
           provider,
@@ -1364,6 +1251,7 @@ export default function MissionSubJob() {
       setTransactionHashes(
         (current) => ({
           ...current,
+
           budget:
             hash,
         })
@@ -1415,7 +1303,7 @@ export default function MissionSubJob() {
 
   /*
    * ------------------------------------------------------------
-   * Approve
+   * APPROVE
    * ------------------------------------------------------------
    */
 
@@ -1482,6 +1370,7 @@ export default function MissionSubJob() {
       setTransactionHashes(
         (current) => ({
           ...current,
+
           approval:
             hash,
         })
@@ -1533,7 +1422,7 @@ export default function MissionSubJob() {
 
   /*
    * ------------------------------------------------------------
-   * Fund
+   * FUND
    * ------------------------------------------------------------
    */
 
@@ -1670,6 +1559,7 @@ export default function MissionSubJob() {
       setTransactionHashes(
         (current) => ({
           ...current,
+
           fund:
             hash,
         })
@@ -1728,7 +1618,7 @@ export default function MissionSubJob() {
 
   /*
    * ------------------------------------------------------------
-   * On-chain reads
+   * ON-CHAIN JOB READ
    * ------------------------------------------------------------
    */
 
@@ -1766,7 +1656,7 @@ export default function MissionSubJob() {
 
   /*
    * ------------------------------------------------------------
-   * Local mission updates
+   * SAVE CHAIN JOB ID
    * ------------------------------------------------------------
    */
 
@@ -1825,6 +1715,12 @@ export default function MissionSubJob() {
     );
   }
 
+  /*
+   * ------------------------------------------------------------
+   * UPDATE CHAIN STATUS
+   * ------------------------------------------------------------
+   */
+
   function updateTaskChainStatus(
     onChainJob: OnChainJob
   ) {
@@ -1882,7 +1778,7 @@ export default function MissionSubJob() {
 
   /*
    * ------------------------------------------------------------
-   * Render
+   * RENDER
    * ------------------------------------------------------------
    */
 
@@ -1978,17 +1874,15 @@ export default function MissionSubJob() {
                   styles.muted
                 }
               >
-                Missions are loaded from the shared project
-                workspace.
+                Select a mission first, then select one of
+                its assigned tasks.
               </p>
             </div>
 
             <button
               type="button"
-              onClick={() =>
-                refreshMissions(
-                  true
-                )
+              onClick={
+                refreshMissions
               }
               disabled={
                 refreshing
@@ -2005,42 +1899,54 @@ export default function MissionSubJob() {
 
           <div
             style={
-              styles.missionSummary
+              styles.summary
             }
           >
-            <span>
-              Missions available
-            </span>
+            <div>
+              <span>
+                Missions
+              </span>
 
-            <strong>
-              {
-                missions.length
-              }
-            </strong>
+              <strong>
+                {
+                  missions.length
+                }
+              </strong>
+            </div>
 
-            <span>
-              Assigned tasks
-            </span>
+            <div>
+              <span>
+                Assigned tasks
+              </span>
 
-            <strong>
-              {
-                missions.reduce(
-                  (
-                    total,
-                    mission
-                  ) =>
-                    total +
-                    mission.tasks.filter(
-                      (task) =>
-                        Boolean(
-                          task.assignedAgentId
-                        )
-                    ).length,
-                  0
-                )
-              }
-            </strong>
+              <strong>
+                {
+                  missions.reduce(
+                    (
+                      total,
+                      mission
+                    ) =>
+                      total +
+                      mission.tasks.filter(
+                        (task) =>
+                          Boolean(
+                            task.assignedAgentId
+                          )
+                      ).length,
+                    0
+                  )
+                }
+              </strong>
+            </div>
           </div>
+
+          <label
+            style={
+              styles.label
+            }
+          >
+            Mission
+          </label>
 
           <select
             value={
@@ -2076,8 +1982,7 @@ export default function MissionSubJob() {
                 >
                   {
                     mission.title
-                  }
-                  {" "}
+                  }{" "}
                   —{" "}
                   {
                     mission.budget
@@ -2087,6 +1992,14 @@ export default function MissionSubJob() {
               )
             )}
           </select>
+
+          <label
+            style={
+              styles.label
+            }
+          >
+            Assigned Task
+          </label>
 
           <select
             value={
@@ -2213,13 +2126,13 @@ export default function MissionSubJob() {
                 2. Task details
               </h2>
 
-              <div
+              <span
                 style={
                   styles.readyBadge
                 }
               >
                 READY
-              </div>
+              </span>
             </div>
 
             <div
@@ -2714,6 +2627,12 @@ export default function MissionSubJob() {
   );
 }
 
+/*
+ * ============================================================
+ * SMALL COMPONENTS / HELPERS
+ * ============================================================
+ */
+
 function Info({
   label,
   value,
@@ -2933,12 +2852,6 @@ function saveMissions(
       MISSION_STORAGE_KEY,
       JSON.stringify(
         missions
-      )
-    );
-
-    window.dispatchEvent(
-      new CustomEvent(
-        MISSIONS_UPDATED_EVENT
       )
     );
   } catch {
@@ -3169,61 +3082,69 @@ const styles: Record<
       "pointer",
   },
 
-  missionSummary: {
+  summary: {
     display:
       "grid",
     gridTemplateColumns:
-      "1fr auto 1fr auto",
+      "1fr 1fr",
     gap:
       "8px",
-    alignItems:
-      "center",
     marginTop:
-      "12px",
-    marginBottom:
-      "10px",
+      "14px",
+  },
+
+  summaryBox: {
     padding:
-      "10px",
+      "11px",
     border:
-      "1px solid #252b30",
+      "1px solid #272d32",
     borderRadius:
       "9px",
     background:
       "#0d1012",
+  },
+
+  label: {
+    display:
+      "block",
+    marginTop:
+      "10px",
+    marginBottom:
+      "6px",
     color:
-      "#778087",
+      "#757e85",
     fontSize:
       "10px",
+    fontWeight:
+      800,
+    textTransform:
+      "uppercase",
+    letterSpacing:
+      "0.05em",
   },
 
   select: {
-  width:
-    "100%",
-
-  boxSizing:
-    "border-box",
-
-  marginTop:
-    "9px",
-
-  padding:
-    "12px",
-
-  border:
-    "1px solid #343a3f",
-
-  borderRadius:
-    "9px",
-
-  background:
-    "#0c1012",
-
-  color:
-    "#fff",
-
-  outline:
-    "none",
-},
+    display:
+      "block",
+    width:
+      "100%",
+    boxSizing:
+      "border-box",
+    marginTop:
+      "7px",
+    padding:
+      "12px",
+    border:
+      "1px solid #343a3f",
+    borderRadius:
+      "9px",
+    background:
+      "#0c1012",
+    color:
+      "#fff",
+    outline:
+      "none",
+  },
 
   emptyState: {
     display:
@@ -3345,17 +3266,6 @@ const styles: Record<
       "10px",
     fontWeight:
       900,
-  },
-
-  row: {
-    display:
-      "flex",
-    justifyContent:
-      "space-between",
-    alignItems:
-      "center",
-    gap:
-      "10px",
   },
 
   walletConnected: {
@@ -3604,6 +3514,449 @@ const styles: Record<
       "#f0b90b",
     textDecoration:
       "none",
+    fontWeight:
+      800,
+  },
+};ard: {
+    marginBottom:
+      "12px",
+    padding:
+      "13px",
+    border:
+      "1px solid #562e2e",
+    borderRadius:
+      "10px",
+    background:
+      "#211414",
+    color:
+      "#ffaaaa",
+  },
+
+  error: {
+    margin:
+      "8px 0 0",
+    whiteSpace:
+      "pre-wrap",
+    overflowWrap:
+      "anywhere",
+    fontSize:
+      "11px",
+  },
+
+  txRow: {
+    display:
+      "flex",
+    justifyContent:
+      "space-between",
+    alignItems:
+      "center",
+    gap:
+      "10px",
+    padding:
+      "10px 0",
+    borderBottom:
+      "1px solid #252b30",
+    fontSize:
+      "12px",
+  },
+
+  link: {
+    color:
+      "#f0b90b",
+    textDecoration:
+      "none",
+    fontWeight:
+      800,
+  },
+};
+
+    background:
+      "#0c1012",
+
+    color:
+      "#aeb5ba",
+
+    fontSize:
+      "12px",
+
+    lineHeight:
+      1.55,
+  },
+
+  success: {
+    display:
+      "grid",
+
+    gap:
+      "4px",
+
+    marginTop:
+      "12px",
+
+    padding:
+      "12px",
+
+    border:
+      "1px solid #284737",
+
+    borderRadius:
+      "10px",
+
+    background:
+      "#101916",
+
+    color:
+      "#80d3a5",
+
+    fontSize:
+      "12px",
+  },
+
+  row: {
+    display:
+      "flex",
+
+    justifyContent:
+      "space-between",
+
+    alignItems:
+      "center",
+
+    gap:
+      "10px",
+  },
+
+  walletConnected: {
+    color:
+      "#7fd3a5",
+
+    fontSize:
+      "12px",
+
+    fontWeight:
+      800,
+  },
+
+  walletConnecting: {
+    color:
+      "#f0b90b",
+
+    fontSize:
+      "12px",
+
+    fontWeight:
+      800,
+  },
+
+  walletDisconnected: {
+    color:
+      "#9ca4aa",
+
+    fontSize:
+      "12px",
+
+    fontWeight:
+      800,
+  },
+
+  balance: {
+    display:
+      "flex",
+
+    justifyContent:
+      "space-between",
+
+    marginTop:
+      "12px",
+
+    padding:
+      "11px",
+
+    borderRadius:
+      "9px",
+
+    background:
+      "#0c1012",
+
+    color:
+      "#929aa1",
+
+    fontSize:
+      "12px",
+  },
+
+  code: {
+    display:
+      "block",
+
+    marginTop:
+      "7px",
+
+    padding:
+      "10px",
+
+    borderRadius:
+      "8px",
+
+    background:
+      "#080a0c",
+
+    color:
+      "#8f979d",
+
+    fontSize:
+      "11px",
+
+    wordBreak:
+      "break-all",
+
+    whiteSpace:
+      "pre-wrap",
+  },
+
+  primaryButton: {
+    width:
+      "100%",
+
+    marginTop:
+      "12px",
+
+    padding:
+      "13px",
+
+    border:
+      "none",
+
+    borderRadius:
+      "10px",
+
+    background:
+      "#f0b90b",
+
+    color:
+      "#111",
+
+    fontWeight:
+      900,
+
+    cursor:
+      "pointer",
+  },
+
+  secondaryButton: {
+    width:
+      "100%",
+
+    marginTop:
+      "9px",
+
+    padding:
+      "12px",
+
+    border:
+      "1px solid #343a3f",
+
+    borderRadius:
+      "10px",
+
+    background:
+      "#171b1e",
+
+    color:
+      "#fff",
+
+    fontWeight:
+      800,
+
+    cursor:
+      "pointer",
+  },
+
+  disabledButton: {
+    width:
+      "100%",
+
+    marginTop:
+      "12px",
+
+    padding:
+      "13px",
+
+    border:
+      "none",
+
+    borderRadius:
+      "10px",
+
+    background:
+      "#292e32",
+
+    color:
+      "#626a70",
+
+    cursor:
+      "not-allowed",
+  },
+
+  steps: {
+    display:
+      "flex",
+
+    flexWrap:
+      "wrap",
+
+    gap:
+      "8px",
+
+    marginTop:
+      "14px",
+  },
+
+  step: {
+    display:
+      "flex",
+
+    alignItems:
+      "center",
+
+    gap:
+      "6px",
+
+    padding:
+      "8px 10px",
+
+    border:
+      "1px solid #2b3237",
+
+    borderRadius:
+      "8px",
+
+    background:
+      "#0d1012",
+
+    color:
+      "#727b82",
+
+    fontSize:
+      "11px",
+  },
+
+  stepComplete: {
+    display:
+      "flex",
+
+    alignItems:
+      "center",
+
+    gap:
+      "6px",
+
+    padding:
+      "8px 10px",
+
+    border:
+      "1px solid #284737",
+
+    borderRadius:
+      "8px",
+
+    background:
+      "#101916",
+
+    color:
+      "#7fd3a5",
+
+    fontSize:
+      "11px",
+  },
+
+  statusCard: {
+    marginBottom:
+      "12px",
+
+    padding:
+      "13px",
+
+    border:
+      "1px solid #2f363b",
+
+    borderRadius:
+      "10px",
+
+    background:
+      "#13181b",
+
+    color:
+      "#b7bec4",
+
+    fontSize:
+      "12px",
+  },
+
+  errorCard: {
+    marginBottom:
+      "12px",
+
+    padding:
+      "13px",
+
+    border:
+      "1px solid #562e2e",
+
+    borderRadius:
+      "10px",
+
+    background:
+      "#211414",
+
+    color:
+      "#ffaaaa",
+  },
+
+  error: {
+    margin:
+      "8px 0 0",
+
+    whiteSpace:
+      "pre-wrap",
+
+    overflowWrap:
+      "anywhere",
+
+    fontSize:
+      "11px",
+  },
+
+  txRow: {
+    display:
+      "flex",
+
+    justifyContent:
+      "space-between",
+
+    alignItems:
+      "center",
+
+    gap:
+      "10px",
+
+    padding:
+      "10px 0",
+
+    borderBottom:
+      "1px solid #252b30",
+
+    fontSize:
+      "12px",
+  },
+
+  link: {
+    color:
+      "#f0b90b",
+
+    textDecoration:
+      "none",
+
     fontWeight:
       800,
   },
