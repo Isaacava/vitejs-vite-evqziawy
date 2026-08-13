@@ -5,12 +5,14 @@ import React, {
 import ReactDOM from "react-dom/client";
 
 import Erc8183Test from "./Erc8183Test";
+import MissionPlanner from "./MissionPlanner";
 import ProviderTest from "./ProviderTest";
 import SettlementTest from "./SettlementTest";
 
 import "./index.css";
 
 type AppMode =
+  | "marketplace"
   | "client"
   | "provider"
   | "settlement";
@@ -20,7 +22,7 @@ function App() {
     mode,
     setMode,
   ] = useState<AppMode>(
-    "client"
+    "marketplace"
   );
 
   return (
@@ -34,7 +36,7 @@ function App() {
             8,
 
           padding:
-            12,
+            10,
 
           background:
             "#0b0d0e",
@@ -50,122 +52,73 @@ function App() {
 
           zIndex:
             100,
+
+          overflowX:
+            "auto",
         }}
       >
-        <button
+        <NavButton
+          active={
+            mode ===
+            "marketplace"
+          }
+          onClick={() =>
+            setMode(
+              "marketplace"
+            )
+          }
+        >
+          🏪 Marketplace
+        </NavButton>
+
+        <NavButton
+          active={
+            mode ===
+            "client"
+          }
           onClick={() =>
             setMode(
               "client"
             )
           }
-          style={{
-            flex: 1,
-
-            padding:
-              "10px 8px",
-
-            borderRadius:
-              8,
-
-            border:
-              "1px solid #34383a",
-
-            background:
-              mode ===
-              "client"
-                ? "#f0b90b"
-                : "#1b1e20",
-
-            color:
-              mode ===
-              "client"
-                ? "#111"
-                : "#fff",
-
-            fontWeight:
-              800,
-          }}
         >
           Client
-        </button>
+        </NavButton>
 
-        <button
+        <NavButton
+          active={
+            mode ===
+            "provider"
+          }
           onClick={() =>
             setMode(
               "provider"
             )
           }
-          style={{
-            flex: 1,
-
-            padding:
-              "10px 8px",
-
-            borderRadius:
-              8,
-
-            border:
-              "1px solid #34383a",
-
-            background:
-              mode ===
-              "provider"
-                ? "#f0b90b"
-                : "#1b1e20",
-
-            color:
-              mode ===
-              "provider"
-                ? "#111"
-                : "#fff",
-
-            fontWeight:
-              800,
-          }}
         >
           Provider
-        </button>
+        </NavButton>
 
-        <button
+        <NavButton
+          active={
+            mode ===
+            "settlement"
+          }
           onClick={() =>
             setMode(
               "settlement"
             )
           }
-          style={{
-            flex: 1,
-
-            padding:
-              "10px 8px",
-
-            borderRadius:
-              8,
-
-            border:
-              "1px solid #34383a",
-
-            background:
-              mode ===
-              "settlement"
-                ? "#f0b90b"
-                : "#1b1e20",
-
-            color:
-              mode ===
-              "settlement"
-                ? "#111"
-                : "#fff",
-
-            fontWeight:
-              800,
-          }}
         >
           Settlement
-        </button>
+        </NavButton>
       </div>
 
       {mode ===
-      "client" ? (
+      "marketplace" ? (
+        <MissionPlanner />
+      ) : mode ===
+        "client" ? (
         <Erc8183Test />
       ) : mode ===
         "provider" ? (
@@ -174,6 +127,60 @@ function App() {
         <SettlementTest />
       )}
     </div>
+  );
+}
+
+function NavButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={
+        onClick
+      }
+      style={{
+        flex:
+          "0 0 auto",
+
+        padding:
+          "10px 14px",
+
+        borderRadius:
+          9,
+
+        border:
+          "1px solid #34383a",
+
+        background:
+          active
+            ? "#f0b90b"
+            : "#1b1e20",
+
+        color:
+          active
+            ? "#111"
+            : "#fff",
+
+        fontWeight:
+          800,
+
+        whiteSpace:
+          "nowrap",
+
+        cursor:
+          "pointer",
+      }}
+    >
+      {
+        children
+      }
+    </button>
   );
 }
 
