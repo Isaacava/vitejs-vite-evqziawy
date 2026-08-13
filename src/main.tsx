@@ -7,6 +7,7 @@ import ReactDOM from "react-dom/client";
 import Erc8183Test from "./Erc8183Test";
 import MissionPlanner from "./MissionPlanner";
 import MissionWorkspace from "./MissionWorkspace";
+import AgentRegistry from "./AgentRegistry";
 import ProviderTest from "./ProviderTest";
 import SettlementTest from "./SettlementTest";
 
@@ -15,6 +16,7 @@ import "./index.css";
 type AppMode =
   | "marketplace"
   | "workspace"
+  | "agents"
   | "client"
   | "provider"
   | "settlement";
@@ -90,6 +92,20 @@ function App() {
         <NavButton
           active={
             mode ===
+            "agents"
+          }
+          onClick={() =>
+            setMode(
+              "agents"
+            )
+          }
+        >
+          🤖 Agents
+        </NavButton>
+
+        <NavButton
+          active={
+            mode ===
             "client"
           }
           onClick={() =>
@@ -136,6 +152,9 @@ function App() {
       ) : mode ===
         "workspace" ? (
         <MissionWorkspace />
+      ) : mode ===
+        "agents" ? (
+        <AgentRegistry />
       ) : mode ===
         "client" ? (
         <Erc8183Test />
