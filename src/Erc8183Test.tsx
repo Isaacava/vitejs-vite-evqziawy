@@ -68,18 +68,11 @@ export default function Erc8183Test() {
   const [status, setStatus] =
     useState("Not connected");
 
-  /*
-   * The job we're currently working with.
-   */
   const [jobId, setJobId] =
     useState<bigint | null>(
       null
     );
 
-  /*
-   * Input used to manually load an
-   * existing blockchain job.
-   */
   const [jobIdInput, setJobIdInput] =
     useState("");
 
@@ -107,18 +100,18 @@ export default function Erc8183Test() {
     );
 
   const [
-    registeredPolicy,
-    setRegisteredPolicy,
-  ] =
-    useState<Address | null>(
-      null
-    );
-
-  const [
     budgetTransactionHash,
     setBudgetTransactionHash,
   ] =
     useState<`0x${string}` | null>(
+      null
+    );
+
+  const [
+    registeredPolicy,
+    setRegisteredPolicy,
+  ] =
+    useState<Address | null>(
       null
     );
 
@@ -156,7 +149,7 @@ export default function Erc8183Test() {
 
   /*
    * ========================================================
-   * RESTORE LAST JOB FROM BROWSER STORAGE
+   * RESTORE LAST JOB ID
    * ========================================================
    */
 
@@ -212,37 +205,34 @@ export default function Erc8183Test() {
       );
 
       const wc =
-        await EthereumProvider.init(
-          {
-            projectId:
-              WALLETCONNECT_PROJECT_ID,
+        await EthereumProvider.init({
+          projectId:
+            WALLETCONNECT_PROJECT_ID,
 
-            optionalChains: [
-              BSC_TESTNET_CHAIN_ID,
-            ],
+          optionalChains: [
+            BSC_TESTNET_CHAIN_ID,
+          ],
 
-            showQrModal: true,
+          showQrModal: true,
 
-            metadata: {
-              name:
-                "BNB Agent Marketplace",
+          metadata: {
+            name:
+              "BNB Agent Marketplace",
 
-              description:
-                "ERC-8183 Testnet",
+            description:
+              "ERC-8183 Testnet",
 
-              url:
-                window.location
-                  .origin,
+            url:
+              window.location.origin,
 
-              icons: [],
-            },
+            icons: [],
+          },
 
-            rpcMap: {
-              [BSC_TESTNET_CHAIN_ID]:
-                "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
-            },
-          }
-        );
+          rpcMap: {
+            [BSC_TESTNET_CHAIN_ID]:
+              "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+          },
+        });
 
       await wc.connect();
 
@@ -251,8 +241,7 @@ export default function Erc8183Test() {
 
       if (
         !accounts ||
-        accounts.length ===
-          0
+        accounts.length === 0
       ) {
         throw new Error(
           "No wallet account returned."
@@ -262,17 +251,14 @@ export default function Erc8183Test() {
       const walletProvider =
         wc as unknown as EIP1193Provider;
 
-      const chain =
-        await walletProvider.request(
-          {
-            method:
-              "eth_chainId",
-          }
-        );
+      const rawChainId =
+        await walletProvider.request({
+          method: "eth_chainId",
+        });
 
       const chainId =
         normalizeChainId(
-          chain
+          rawChainId
         );
 
       if (
@@ -362,8 +348,10 @@ export default function Erc8183Test() {
       );
 
       /*
-       * Read the job directly from the
-       * official AgenticCommerce contract.
+       * IMPORTANT:
+       *
+       * Viem returns this as an object
+       * with named fields, not an array.
        */
       const result =
         (await publicClient.readContract(
@@ -381,87 +369,85 @@ export default function Erc8183Test() {
               id,
             ],
           }
-        )) as readonly [
-          bigint,
-          Address,
-          Address,
-          Address,
-          string,
-          bigint,
-          bigint,
-          number,
-          Address,
-          bigint,
-          `0x${string}`,
-        ];
+        )) as {
+          id: bigint;
+          client: Address;
+          provider: Address;
+          evaluator: Address;
+          description: string;
+          budget: bigint;
+          expiredAt: bigint;
+          status: number;
+          hook: Address;
+          submittedAt: bigint;
+          deliverable: `0x${string}`;
+        };
 
       const job: LoadedJob = {
         id:
-          result[0],
+          result.id,
 
         client:
-          result[1],
+          result.client,
 
         provider:
-          result[2],
+          result.provider,
 
         evaluator:
-          result[3],
+          result.evaluator,
 
         description:
-          result[4],
+          result.description,
 
         budget:
-          result[5],
+          result.budget,
 
         expiredAt:
-          result[6],
+          result.expiredAt,
 
         status:
-          Number(result[7]),
+          Number(
+            result.status
+          ),
 
         hook:
-          result[8],
+          result.hook,
 
         submittedAt:
-          result[9],
+          result.submittedAt,
 
         deliverable:
-          result[10],
+          result.deliverable,
       };
 
       /*
-       * Save it locally.
+       * Save locally so page reloads
+       * remember this job.
        */
       saveJobId(id);
 
-      setLoadedJob(job);
+      setLoadedJob(
+        job
+      );
 
-      /*
-       * Update description from the
-       * actual blockchain job.
-       */
       setDescription(
         job.description
       );
 
-      /*
-       * Update budget state.
-       */
       if (
-        job.budget >
-        0n
+        job.budget > 0n
       ) {
         setBudgetRaw(
           job.budget
         );
       } else {
-        setBudgetRaw(null);
+        setBudgetRaw(
+          null
+        );
       }
 
       /*
-       * Check whether the job has been
-       * registered with a policy.
+       * Check registration state.
        */
       try {
         const policy =
@@ -482,9 +468,12 @@ export default function Erc8183Test() {
             }
           )) as Address;
 
+        const zeroAddress =
+          "0x0000000000000000000000000000000000000000";
+
         if (
-          policy !==
-          "0x0000000000000000000000000000000000000000"
+          policy.toLowerCase() !==
+          zeroAddress
         ) {
           setRegisteredPolicy(
             policy
@@ -509,7 +498,9 @@ export default function Erc8183Test() {
         err
       );
 
-      setLoadedJob(null);
+      setLoadedJob(
+        null
+      );
 
       setStatus(
         "Could not load job"
@@ -525,7 +516,7 @@ export default function Erc8183Test() {
 
   /*
    * ========================================================
-   * AUTOMATICALLY LOAD SAVED JOB AFTER WALLET CONNECT
+   * AUTO-LOAD SAVED JOB AFTER CONNECT
    * ========================================================
    */
 
@@ -542,7 +533,6 @@ export default function Erc8183Test() {
       jobIdInput
     );
 
-    // Only do this after wallet connection.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     walletState,
@@ -626,7 +616,9 @@ export default function Erc8183Test() {
     );
 
     setTokenDecimals(
-      Number(decimals)
+      Number(
+        decimals
+      )
     );
 
     setTokenSymbol(
@@ -636,14 +628,18 @@ export default function Erc8183Test() {
     setTokenBalance(
       formatUnits(
         balance,
-        Number(decimals)
+        Number(
+          decimals
+        )
       )
     );
 
     return {
       tokenAddress,
       decimals:
-        Number(decimals),
+        Number(
+          decimals
+        ),
       symbol,
       balance,
     };
@@ -692,7 +688,9 @@ export default function Erc8183Test() {
         null
       );
 
-      setBudgetRaw(null);
+      setBudgetRaw(
+        null
+      );
 
       setStatus(
         "Preparing job..."
@@ -749,6 +747,9 @@ export default function Erc8183Test() {
           }
         );
 
+      /*
+       * Save transaction hash.
+       */
       setTransactionHash(
         hash
       );
@@ -774,7 +775,7 @@ export default function Erc8183Test() {
       }
 
       /*
-       * Get latest job counter.
+       * Get newest job ID.
        */
       const latestJobId =
         (await publicClient.readContract(
@@ -791,16 +792,12 @@ export default function Erc8183Test() {
         )) as bigint;
 
       /*
-       * Save immediately.
+       * Save and reload from blockchain.
        */
       saveJobId(
         latestJobId
       );
 
-      /*
-       * Load it from the blockchain
-       * so we don't rely on local state.
-       */
       await loadExistingJob(
         latestJobId.toString()
       );
@@ -923,7 +920,6 @@ export default function Erc8183Test() {
 
             args: [
               jobId,
-
               ERC8183_ADDRESSES.policy,
             ],
           }
@@ -1053,6 +1049,10 @@ export default function Erc8183Test() {
         null
       );
 
+      setStatus(
+        "Reading payment token..."
+      );
+
       const token =
         await loadPaymentToken();
 
@@ -1072,8 +1072,7 @@ export default function Erc8183Test() {
         );
 
       if (
-        amount <=
-        0n
+        amount <= 0n
       ) {
         throw new Error(
           "Budget must be greater than zero."
@@ -1093,7 +1092,9 @@ export default function Erc8183Test() {
               token.decimals
             )} ${token.symbol}`,
             `Required: ${trimmed} ${token.symbol}`,
-          ].join("\n")
+          ].join(
+            "\n"
+          )
         );
       }
 
@@ -1127,7 +1128,9 @@ export default function Erc8183Test() {
 
             args: [
               jobId,
+
               amount,
+
               "0x",
             ],
           }
@@ -1268,7 +1271,7 @@ export default function Erc8183Test() {
           )}
         </div>
 
-        {/* LOAD EXISTING JOB */}
+        {/* RESTORE / LOAD EXISTING JOB */}
         {address && (
           <div
             style={
@@ -1284,8 +1287,9 @@ export default function Erc8183Test() {
                 styles.subtitleSmall
               }
             >
-              Enter a job ID that already exists on
-              BSC Testnet.
+              Your last job ID is saved in this
+              browser. You can also enter any
+              existing testnet job ID.
             </p>
 
             <input
@@ -1382,9 +1386,7 @@ export default function Erc8183Test() {
                         budgetRaw,
                         tokenDecimals
                       )} ${tokenSymbol}`
-                    : loadedJob
-                        .budget
-                        .toString()
+                    : loadedJob.budget.toString()
                 }
               />
             </div>
@@ -1470,81 +1472,121 @@ export default function Erc8183Test() {
                 ? "Working..."
                 : "Create ERC-8183 Job"}
             </button>
-          </div>
-        )}
 
-        {/* REGISTER */}
-        {jobId !== null &&
-          loadedJob &&
-          address && (
-            <div
-              style={
-                styles.panel
-              }
-            >
-              <h3>
-                Register Job
-              </h3>
-
-              <p
+            {transactionHash && (
+              <div
                 style={
-                  styles.subtitleSmall
+                  styles.success
                 }
               >
-                Attach the official OptimisticPolicy
-                to Job #{jobId.toString()}.
-              </p>
+                <strong>
+                  ✓ createJob transaction confirmed
+                </strong>
 
-              {registeredPolicy ? (
-                <div
+                <p>
+                  Transaction:
+                </p>
+
+                <code
                   style={
-                    styles.verified
+                    styles.code
                   }
                 >
-                  ✓ Job is registered
-                  <br />
-                  Policy:
-                  <br />
-                  <code
-                    style={
-                      styles.code
-                    }
-                  >
-                    {registeredPolicy}
-                  </code>
-                </div>
-              ) : (
-                <button
-                  onClick={
-                    registerJob
-                  }
-                  disabled={
-                    loading
-                  }
-                  style={
-                    styles.primaryButton
-                  }
-                >
-                  {loading
-                    ? "Working..."
-                    : `Register Job #${jobId.toString()}`}
-                </button>
-              )}
+                  {transactionHash}
+                </code>
 
-              {registerTransactionHash && (
                 <a
-                  href={`https://testnet.bscscan.com/tx/${registerTransactionHash}`}
+                  href={`https://testnet.bscscan.com/tx/${transactionHash}`}
                   target="_blank"
                   rel="noreferrer"
                   style={
                     styles.link
                   }
                 >
-                  View registration transaction ↗
+                  View createJob transaction ↗
                 </a>
-              )}
-            </div>
-          )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* REGISTER */}
+        {loadedJob &&
+          address && (
+          <div
+            style={
+              styles.panel
+            }
+          >
+            <h3>
+              Register Job
+            </h3>
+
+            <p
+              style={
+                styles.subtitleSmall
+              }
+            >
+              Attach the official OptimisticPolicy
+              to Job #{loadedJob.id.toString()}.
+            </p>
+
+            {registeredPolicy ? (
+              <div
+                style={
+                  styles.verified
+                }
+              >
+                <strong>
+                  ✓ Job is registered
+                </strong>
+
+                <p>
+                  Policy:
+                </p>
+
+                <code
+                  style={
+                    styles.code
+                  }
+                >
+                  {
+                    registeredPolicy
+                  }
+                </code>
+              </div>
+            ) : (
+              <button
+                onClick={
+                  registerJob
+                }
+                disabled={
+                  loading
+                }
+                style={
+                  styles.primaryButton
+                }
+              >
+                {loading
+                  ? "Working..."
+                  : `Register Job #${loadedJob.id.toString()}`}
+              </button>
+            )}
+
+            {registerTransactionHash && (
+              <a
+                href={`https://testnet.bscscan.com/tx/${registerTransactionHash}`}
+                target="_blank"
+                rel="noreferrer"
+                style={
+                  styles.link
+                }
+              >
+                View registration transaction ↗
+              </a>
+            )}
+          </div>
+        )}
 
         {/* PAYMENT TOKEN */}
         {loadedJob &&
@@ -1559,32 +1601,43 @@ export default function Erc8183Test() {
                 Payment Token
               </h3>
 
+              <p
+                style={
+                  styles.subtitleSmall
+                }
+              >
+                This is the token used for ERC-8183
+                job payment.
+              </p>
+
               <button
-                onClick={async () => {
-                  try {
-                    setError(
-                      null
-                    );
+                onClick={
+                  async () => {
+                    try {
+                      setError(
+                        null
+                      );
 
-                    setStatus(
-                      "Reading payment token..."
-                    );
+                      setStatus(
+                        "Reading payment token..."
+                      );
 
-                    await loadPaymentToken();
+                      await loadPaymentToken();
 
-                    setStatus(
-                      "✅ Payment token loaded"
-                    );
-                  } catch (
-                    err
-                  ) {
-                    setError(
-                      formatError(
-                        err
-                      )
-                    );
+                      setStatus(
+                        "✅ Payment token loaded"
+                      );
+                    } catch (
+                      err
+                    ) {
+                      setError(
+                        formatError(
+                          err
+                        )
+                      );
+                    }
                   }
-                }}
+                }
                 disabled={
                   loading
                 }
@@ -1610,9 +1663,11 @@ export default function Erc8183Test() {
 
                   <Info
                     label="Decimals"
-                    value={String(
-                      tokenDecimals
-                    )}
+                    value={
+                      String(
+                        tokenDecimals
+                      )
+                    }
                   />
 
                   <Info
@@ -1646,7 +1701,7 @@ export default function Erc8183Test() {
             </div>
           )}
 
-        {/* BUDGET */}
+        {/* SET BUDGET */}
         {loadedJob &&
           registeredPolicy &&
           address && (
@@ -1664,8 +1719,8 @@ export default function Erc8183Test() {
                   styles.subtitleSmall
                 }
               >
-                Set the amount the provider can
-                earn for this job.
+                Set how much the agent can earn
+                for this job.
               </p>
 
               <label
@@ -1684,8 +1739,7 @@ export default function Erc8183Test() {
                   event
                 ) =>
                   setBudget(
-                    event.target
-                      .value
+                    event.target.value
                   )
                 }
                 type="number"
@@ -1719,19 +1773,20 @@ export default function Erc8183Test() {
                     styles.verified
                   }
                 >
-                  ✓ Budget already set
+                  <strong>
+                    ✓ Budget already set
+                  </strong>
 
                   {tokenDecimals !==
                     null && (
-                    <>
-                      <br />
+                    <p>
                       Amount:{" "}
                       {formatUnits(
                         budgetRaw,
                         tokenDecimals
                       )}{" "}
                       {tokenSymbol}
-                    </>
+                    </p>
                   )}
                 </div>
               ) : (
@@ -1797,7 +1852,7 @@ export default function Erc8183Test() {
 
 /*
  * ========================================================
- * HELPER COMPONENT
+ * INFO COMPONENT
  * ========================================================
  */
 
@@ -1835,7 +1890,7 @@ function Info({
 
 /*
  * ========================================================
- * STATUS NAMES
+ * JOB STATUS
  * ========================================================
  */
 
@@ -1862,7 +1917,7 @@ function getStatusName(
 
 /*
  * ========================================================
- * CHAIN
+ * BSC TESTNET
  * ========================================================
  */
 
@@ -1897,8 +1952,7 @@ function getBscTestnetChain() {
       },
     },
 
-    testnet:
-      true,
+    testnet: true,
   } as const;
 }
 
