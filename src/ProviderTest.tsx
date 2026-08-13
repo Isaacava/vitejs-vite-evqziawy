@@ -62,6 +62,12 @@ type DiagnosticState = {
   simulation: string;
 };
 
+type SimulationOutcome = {
+  passed: boolean;
+  message: string;
+  hash: `0x${string}`;
+};
+
 export default function ProviderTest() {
   const [provider, setProvider] =
     useState<EIP1193Provider | null>(null);
@@ -105,7 +111,7 @@ export default function ProviderTest() {
 
   /*
    * ========================================================
-   * RESTORE SAVED JOB
+   * RESTORE LAST JOB
    * ========================================================
    */
 
@@ -120,9 +126,7 @@ export default function ProviderTest() {
         saved &&
         /^\d+$/.test(saved)
       ) {
-        setJobIdInput(
-          saved
-        );
+        setJobIdInput(saved);
       }
     } catch (err) {
       console.warn(
@@ -255,13 +259,13 @@ export default function ProviderTest() {
 
   /*
    * ========================================================
-   * LOAD JOB
+   * LOAD JOB FROM CHAIN
    * ========================================================
    */
 
   async function loadJob(
     overrideId?: string
-  ) {
+  ): Promise<Job | null> {
     try {
       setError(null);
 
@@ -379,12 +383,8 @@ export default function ProviderTest() {
         id.toString()
       );
 
-      setRegisteredPolicy(
-        null
-      );
-
       /*
-       * Read the policy registered for this job.
+       * Load policy.
        */
       try {
         const policy =
@@ -408,40 +408,55 @@ export default function ProviderTest() {
         const zeroAddress =
           "0x0000000000000000000000000000000000000000";
 
-        if (
-          policy.toLowerCase() !==
-          zeroAddress
-        ) {
-          setRegisteredPolicy(
-            policy
-          );
-        }
+        setRegisteredPolicy(
+          policy.toLowerCase() ===
+            zeroAddress
+            ? null
+            : policy
+        );
       } catch (policyError) {
         console.warn(
           "Could not read job policy:",
           policyError
         );
+
+        setRegisteredPolicy(
+          null
+        );
       }
 
-      setDeliverable(
-        `Provider test result for Job #${id.toString()}:\n\nThe provider successfully received and processed this funded ERC-8183 job.\n\nTask:\n${loadedJob.description}`
-      );
+      /*
+       * Only prefill deliverable if we don't
+       * already have a user-created one.
+       */
+      if (
+        !deliverable.trim()
+      ) {
+        setDeliverable(
+          `Provider test result for Job #${id.toString()}:\n\nThe provider successfully received and processed this funded ERC-8183 job.\n\nTask:\n${loadedJob.description}`
+        );
+      }
 
-      setDeliverableHash(
-        null
-      );
-
-      setTransactionHash(
-        null
-      );
-
-      setDiagnostic(
-        null
-      );
+      /*
+       * Keep the on-chain deliverable hash
+       * if the job is already submitted.
+       */
+      if (
+        loadedJob.status ===
+          2 &&
+        loadedJob.deliverable !==
+          "0x0000000000000000000000000000000000000000000000000000000000000000"
+      ) {
+        setDeliverableHash(
+          loadedJob.deliverable
+        );
+      }
 
       setStatus(
         `✅ Job #${id.toString()} loaded`
       );
+
+      return loadedJob;
     } catch (err) {
       console.error(
         "Load provider job failed:",
@@ -452,10 +467,6 @@ export default function ProviderTest() {
         null
       );
 
-      setDiagnostic(
-        null
-      );
-
       setStatus(
         "Could not load job"
       );
@@ -463,372 +474,8 @@ export default function ProviderTest() {
       setError(
         formatError(err)
       );
-    } finally {
-      setLoading(false);
-    }
-  }
 
-  /*
-   * ========================================================
-   * RUN FULL DIAGNOSTIC
-   * ========================================================
-   */
-
-  async function runDiagnostic() {
-    try {
-      setError(null);
-
-      if (!address) {
-        throw new Error(
-          "Connect the provider wallet first."
-        );
-      }
-
-      const currentJob =
-        job;
-
-      if (!currentJob) {
-        throw new Error(
-          "Load a job first."
-        );
-      }
-
-      setLoading(true);
-
-      setStatus(
-        `Running full diagnostic for Job #${currentJob.id.toString()}...`
-      );
-
-      /*
-       * Refresh the job directly from chain.
-       */
-      const chainJob =
-        (await publicClient.readContract(
-          {
-            address:
-              ERC8183_ADDRESSES.commerce,
-
-            abi:
-              COMMERCE_ABI,
-
-            functionName:
-              "getJob",
-
-            args: [
-              currentJob.id,
-            ],
-          }
-        )) as {
-          id: bigint;
-          client: Address;
-          provider: Address;
-          evaluator: Address;
-          description: string;
-          budget: bigint;
-          expiredAt: bigint;
-          status: number;
-          hook: Address;
-          submittedAt: bigint;
-          deliverable: `0x${string}`;
-        };
-
-      /*
-       * Refresh policy.
-       */
-      let policy =
-        registeredPolicy;
-
-      try {
-        const policyResult =
-          (await publicClient.readContract(
-            {
-              address:
-                ERC8183_ADDRESSES.router,
-
-              abi:
-                ROUTER_ABI,
-
-              functionName:
-                "jobPolicy",
-
-              args: [
-                currentJob.id,
-              ],
-            }
-          )) as Address;
-
-        policy =
-          policyResult;
-      } catch {
-        policy =
-          null;
-      }
-
-      const currentTime =
-        BigInt(
-          Math.floor(
-            Date.now() /
-              1000
-          )
-        );
-
-      const expired =
-        chainJob.expiredAt <=
-        currentTime;
-
-      const providerMatches =
-        chainJob.provider.toLowerCase() ===
-        address.toLowerCase();
-
-      const statusIsFunded =
-        Number(
-          chainJob.status
-        ) === 1;
-
-      /*
-       * Prepare deliverable hash.
-       */
-      let hash =
-        deliverableHash;
-
-      if (
-        !hash &&
-        deliverable.trim()
-      ) {
-        hash =
-          keccak256(
-            stringToBytes(
-              deliverable
-            )
-          );
-
-        setDeliverableHash(
-          hash
-        );
-      }
-
-      /*
-       * Build diagnostic before simulation.
-       */
-      const preliminary: DiagnosticState =
-        {
-          jobId:
-            chainJob.id.toString(),
-
-          status:
-            getStatusName(
-              Number(
-                chainJob.status
-              )
-            ),
-
-          provider:
-            chainJob.provider,
-
-          connectedWallet:
-            address,
-
-          client:
-            chainJob.client,
-
-          evaluator:
-            chainJob.evaluator,
-
-          hook:
-            chainJob.hook,
-
-          policy:
-            policy ??
-            "Not available",
-
-          expiry:
-            formatTimestamp(
-              chainJob.expiredAt
-            ),
-
-          expired,
-
-          deliverable:
-            hash ??
-            chainJob.deliverable,
-
-          providerMatches,
-
-          statusIsFunded,
-
-          simulation:
-            "Not yet simulated",
-        };
-
-      setDiagnostic(
-        preliminary
-      );
-
-      /*
-       * Stop before simulation if basic state
-       * is already invalid.
-       */
-      if (
-        !providerMatches
-      ) {
-        throw new Error(
-          [
-            "Provider wallet mismatch.",
-
-            "",
-
-            `Job provider: ${chainJob.provider}`,
-
-            `Connected wallet: ${address}`,
-          ].join(
-            "\n"
-          )
-        );
-      }
-
-      if (
-        !statusIsFunded
-      ) {
-        throw new Error(
-          [
-            "Job is not FUNDED.",
-
-            "",
-
-            `Current state: ${getStatusName(
-              Number(
-                chainJob.status
-              )
-            )}`,
-          ].join(
-            "\n"
-          )
-        );
-      }
-
-      if (
-        expired
-      ) {
-        throw new Error(
-          [
-            "Job has expired.",
-
-            "",
-
-            `Expiry: ${formatTimestamp(
-              chainJob.expiredAt
-            )}`,
-          ].join(
-            "\n"
-          )
-        );
-      }
-
-      if (
-        !hash
-      ) {
-        throw new Error(
-          "No deliverable hash could be generated."
-        );
-      }
-
-      /*
-       * Simulate submit().
-       */
-      setStatus(
-        "Basic checks passed. Simulating submit()..."
-      );
-
-      try {
-        await publicClient.simulateContract(
-          {
-            address:
-              ERC8183_ADDRESSES.commerce,
-
-            abi:
-              COMMERCE_ABI,
-
-            functionName:
-              "submit",
-
-            args: [
-              chainJob.id,
-
-              hash,
-
-              "0x",
-            ],
-
-            account:
-              address,
-          }
-        );
-
-        const successDiagnostic: DiagnosticState =
-          {
-            ...preliminary,
-
-            deliverable:
-              hash,
-
-            simulation:
-              "✅ submit() simulation passed",
-          };
-
-        setDiagnostic(
-          successDiagnostic
-        );
-
-        setStatus(
-          "✅ Full diagnostic passed"
-        );
-      } catch (simulationError) {
-        const reason =
-          extractDetailedError(
-            simulationError
-          );
-
-        const failedDiagnostic: DiagnosticState =
-          {
-            ...preliminary,
-
-            deliverable:
-              hash,
-
-            simulation:
-              [
-                "❌ submit() simulation failed",
-
-                "",
-
-                "Error:",
-                reason,
-              ].join(
-                "\n"
-              ),
-          };
-
-        setDiagnostic(
-          failedDiagnostic
-        );
-
-        setStatus(
-          "❌ Full diagnostic completed — submit() still reverts"
-        );
-      }
-    } catch (err) {
-      console.error(
-        "Diagnostic failed:",
-        err
-      );
-
-      setStatus(
-        "Diagnostic failed"
-      );
-
-      setError(
-        formatError(err)
-      );
+      return null;
     } finally {
       setLoading(false);
     }
@@ -875,25 +522,27 @@ export default function ProviderTest() {
 
   /*
    * ========================================================
-   * SUBMIT
+   * FULL PROVIDER DIAGNOSTIC + SIMULATION
    * ========================================================
    */
 
-  async function submitDeliverable() {
+  async function runDiagnostic(): Promise<SimulationOutcome | null> {
     try {
       setError(null);
 
-      if (
-        !provider ||
-        !address
-      ) {
+      if (!address) {
         throw new Error(
           "Connect the provider wallet first."
         );
       }
 
+      /*
+       * Read the freshest job directly from BSC.
+       */
       const currentJob =
-        job;
+        await readJobDirectly(
+          jobIdInput
+        );
 
       if (!currentJob) {
         throw new Error(
@@ -901,88 +550,247 @@ export default function ProviderTest() {
         );
       }
 
-      if (
-        !deliverable.trim()
-      ) {
-        throw new Error(
-          "Enter a deliverable first."
-        );
-      }
+      setLoading(true);
 
-      setLoading(
-        true
+      setStatus(
+        `Running full diagnostic for Job #${currentJob.id.toString()}...`
       );
 
-      const hash =
-        deliverableHash ??
-        keccak256(
-          stringToBytes(
-            deliverable
+      /*
+       * Read registered policy.
+       */
+      let policy:
+        | Address
+        | null =
+        registeredPolicy;
+
+      try {
+        policy =
+          (await publicClient.readContract(
+            {
+              address:
+                ERC8183_ADDRESSES.router,
+
+              abi:
+                ROUTER_ABI,
+
+              functionName:
+                "jobPolicy",
+
+              args: [
+                currentJob.id,
+              ],
+            }
+          )) as Address;
+      } catch {
+        policy =
+          null;
+      }
+
+      setRegisteredPolicy(
+        policy
+      );
+
+      const currentTime =
+        BigInt(
+          Math.floor(
+            Date.now() /
+              1000
           )
         );
 
-      setDeliverableHash(
-        hash
-      );
+      const expired =
+        currentJob.expiredAt <=
+        currentTime;
 
-      /*
-       * Always refresh diagnostic state
-       * immediately before sending.
-       */
-      await runDiagnostic();
+      const providerMatches =
+        currentJob.provider.toLowerCase() ===
+        address.toLowerCase();
 
-      /*
-       * We intentionally require the user
-       * to run the diagnostic first and only
-       * allow a transaction when it passes.
-       */
-      const freshDiagnostic =
-        diagnostic;
+      const statusIsFunded =
+        currentJob.status ===
+        1;
+
+      const zeroDeliverable =
+        "0x0000000000000000000000000000000000000000000000000000000000000000";
+
+      let hash =
+        deliverableHash;
 
       if (
-        !freshDiagnostic
+        !hash &&
+        deliverable.trim()
       ) {
-        throw new Error(
-          "Run the full provider diagnostic first."
+        hash =
+          keccak256(
+            stringToBytes(
+              deliverable
+            )
+          );
+
+        setDeliverableHash(
+          hash
         );
       }
 
+      const preliminary: DiagnosticState =
+        {
+          jobId:
+            currentJob.id.toString(),
+
+          status:
+            getStatusName(
+              currentJob.status
+            ),
+
+          provider:
+            currentJob.provider,
+
+          connectedWallet:
+            address,
+
+          client:
+            currentJob.client,
+
+          evaluator:
+            currentJob.evaluator,
+
+          hook:
+            currentJob.hook,
+
+          policy:
+            policy ??
+            "Not available",
+
+          expiry:
+            formatTimestamp(
+              currentJob.expiredAt
+            ),
+
+          expired,
+
+          deliverable:
+            hash ??
+            currentJob.deliverable,
+
+          providerMatches,
+
+          statusIsFunded,
+
+          simulation:
+            "Not yet simulated",
+        };
+
+      setDiagnostic(
+        preliminary
+      );
+
+      /*
+       * If already submitted, there is no reason
+       * to simulate submit again.
+       */
       if (
-        !freshDiagnostic.simulation.includes(
-          "passed"
-        )
+        currentJob.status ===
+        2
+      ) {
+        const submittedDiagnostic: DiagnosticState =
+          {
+            ...preliminary,
+
+            simulation:
+              "✅ Job is already SUBMITTED. submit() is no longer available.",
+          };
+
+        setDiagnostic(
+          submittedDiagnostic
+        );
+
+        setStatus(
+          "✅ Job is already SUBMITTED"
+        );
+
+        return {
+          passed: false,
+
+          message:
+            submittedDiagnostic.simulation,
+
+          hash:
+            currentJob.deliverable,
+        };
+      }
+
+      if (
+        currentJob.status !==
+        1
       ) {
         throw new Error(
           [
-            "submit() simulation did not pass.",
+            `Job #${currentJob.id.toString()} is not FUNDED.`,
 
             "",
 
-            freshDiagnostic.simulation,
+            `Current status: ${getStatusName(
+              currentJob.status
+            )}`,
           ].join(
             "\n"
           )
         );
       }
 
-      const walletClient =
-        createWalletClient({
-          account:
-            address,
+      if (
+        !providerMatches
+      ) {
+        throw new Error(
+          [
+            "Provider wallet mismatch.",
 
-          chain:
-            getBscTestnetChain(),
+            "",
 
-          transport:
-            custom(provider),
-        });
+            `Job provider: ${currentJob.provider}`,
+
+            `Connected wallet: ${address}`,
+          ].join(
+            "\n"
+          )
+        );
+      }
+
+      if (
+        expired
+      ) {
+        throw new Error(
+          [
+            "Job has expired.",
+
+            "",
+
+            `Expiry: ${formatTimestamp(
+              currentJob.expiredAt
+            )}`,
+          ].join(
+            "\n"
+          )
+        );
+      }
+
+      if (
+        !hash ||
+        hash ===
+          zeroDeliverable
+      ) {
+        throw new Error(
+          "A valid deliverable hash is required."
+        );
+      }
 
       setStatus(
-        "Simulation passed. Waiting for wallet confirmation..."
+        "Basic checks passed. Simulating submit()..."
       );
 
-      const txHash =
-        await walletClient.writeContract(
+      try {
+        await publicClient.simulateContract(
           {
             address:
               ERC8183_ADDRESSES.commerce,
@@ -1000,6 +808,258 @@ export default function ProviderTest() {
 
               "0x",
             ],
+
+            account:
+              address,
+          }
+        );
+
+        const successDiagnostic: DiagnosticState =
+          {
+            ...preliminary,
+
+            deliverable:
+              hash,
+
+            simulation:
+              "✅ submit() simulation passed",
+          };
+
+        setDiagnostic(
+          successDiagnostic
+        );
+
+        setStatus(
+          "✅ submit() simulation passed"
+        );
+
+        return {
+          passed: true,
+
+          message:
+            "✅ submit() simulation passed",
+
+          hash,
+        };
+      } catch (simulationError) {
+        const reason =
+          extractDetailedError(
+            simulationError
+          );
+
+        const failedDiagnostic: DiagnosticState =
+          {
+            ...preliminary,
+
+            deliverable:
+              hash,
+
+            simulation:
+              [
+                "❌ submit() simulation failed",
+
+                "",
+
+                "Revert / error:",
+
+                reason,
+              ].join(
+                "\n"
+              ),
+          };
+
+        setDiagnostic(
+          failedDiagnostic
+        );
+
+        setStatus(
+          "❌ submit() simulation failed"
+        );
+
+        setError(
+          reason
+        );
+
+        return {
+          passed: false,
+
+          message:
+            reason,
+
+          hash,
+        };
+      }
+    } catch (err) {
+      console.error(
+        "Diagnostic failed:",
+        err
+      );
+
+      setStatus(
+        "Diagnostic failed"
+      );
+
+      setError(
+        formatError(err)
+      );
+
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  /*
+   * ========================================================
+   * ACTUAL SUBMIT
+   * ========================================================
+   */
+
+  async function submitDeliverable() {
+    try {
+      setError(null);
+
+      if (
+        !provider ||
+        !address
+      ) {
+        throw new Error(
+          "Connect the provider wallet first."
+        );
+      }
+
+      if (
+        !job
+      ) {
+        throw new Error(
+          "Load a job first."
+        );
+      }
+
+      /*
+       * Never submit again if already submitted.
+       */
+      if (
+        job.status ===
+        2
+      ) {
+        setStatus(
+          "✅ This job is already SUBMITTED."
+        );
+
+        return;
+      }
+
+      if (
+        job.status !==
+        1
+      ) {
+        throw new Error(
+          `Job is ${getStatusName(
+            job.status
+          )}, not FUNDED.`
+        );
+      }
+
+      if (
+        !deliverable.trim()
+      ) {
+        throw new Error(
+          "Enter a deliverable first."
+        );
+      }
+
+      setLoading(
+        true
+      );
+
+      /*
+       * Generate current hash.
+       */
+      const hash =
+        keccak256(
+          stringToBytes(
+            deliverable
+          )
+        );
+
+      setDeliverableHash(
+        hash
+      );
+
+      /*
+       * Simulate and use the RETURNED result.
+       *
+       * This fixes the previous React-state race.
+       */
+      const simulation =
+        await runDiagnostic();
+
+      if (
+        !simulation
+      ) {
+        throw new Error(
+          "Could not complete the submit simulation."
+        );
+      }
+
+      if (
+        !simulation.passed
+      ) {
+        throw new Error(
+          [
+            "submit() simulation did not pass.",
+
+            "",
+
+            simulation.message,
+          ].join(
+            "\n"
+          )
+        );
+      }
+
+      /*
+       * Create wallet client.
+       */
+      const walletClient =
+        createWalletClient({
+          account:
+            address,
+
+          chain:
+            getBscTestnetChain(),
+
+          transport:
+            custom(provider),
+        });
+
+      setStatus(
+        "Simulation passed. Waiting for wallet confirmation..."
+      );
+
+      /*
+       * Send transaction.
+       */
+      const txHash =
+        await walletClient.writeContract(
+          {
+            address:
+              ERC8183_ADDRESSES.commerce,
+
+            abi:
+              COMMERCE_ABI,
+
+            functionName:
+              "submit",
+
+            args: [
+              job.id,
+
+              hash,
+
+              "0x",
+            ],
           }
         );
 
@@ -1008,7 +1068,7 @@ export default function ProviderTest() {
       );
 
       setStatus(
-        "Submission transaction sent. Waiting for BSC..."
+        "Submission transaction sent. Waiting for BSC confirmation..."
       );
 
       const receipt =
@@ -1024,17 +1084,48 @@ export default function ProviderTest() {
         "success"
       ) {
         throw new Error(
-          "The submit transaction failed."
+          "The submit transaction was mined but failed."
         );
       }
 
-      await loadJob(
-        currentJob.id.toString()
+      /*
+       * Immediately refresh the actual blockchain state.
+       */
+      const refreshedJob =
+        await readJobDirectly(
+          job.id.toString()
+        );
+
+      if (
+        !refreshedJob
+      ) {
+        throw new Error(
+          "Submission succeeded, but the updated job could not be read."
+        );
+      }
+
+      setJob(
+        refreshedJob
       );
 
-      setStatus(
-        `✅ Job #${currentJob.id.toString()} submitted successfully`
-      );
+      if (
+        refreshedJob.status ===
+        2
+      ) {
+        setStatus(
+          `✅ Job #${job.id.toString()} is now SUBMITTED`
+        );
+
+        setError(
+          null
+        );
+      } else {
+        setStatus(
+          `Transaction confirmed, but job state is ${getStatusName(
+            refreshedJob.status
+          )}`
+        );
+      }
     } catch (err) {
       console.error(
         "Submit failed:",
@@ -1054,6 +1145,104 @@ export default function ProviderTest() {
       );
     }
   }
+
+  /*
+   * ========================================================
+   * DIRECT JOB READER
+   * ========================================================
+   */
+
+  async function readJobDirectly(
+    idInput: string
+  ): Promise<Job | null> {
+    const rawId =
+      idInput.trim();
+
+    if (
+      !rawId ||
+      !/^\d+$/.test(rawId)
+    ) {
+      throw new Error(
+        "Enter a valid numeric job ID."
+      );
+    }
+
+    const id =
+      BigInt(rawId);
+
+    const result =
+      (await publicClient.readContract(
+        {
+          address:
+            ERC8183_ADDRESSES.commerce,
+
+          abi:
+            COMMERCE_ABI,
+
+          functionName:
+            "getJob",
+
+          args: [
+            id,
+          ],
+        }
+      )) as {
+        id: bigint;
+        client: Address;
+        provider: Address;
+        evaluator: Address;
+        description: string;
+        budget: bigint;
+        expiredAt: bigint;
+        status: number;
+        hook: Address;
+        submittedAt: bigint;
+        deliverable: `0x${string}`;
+      };
+
+    return {
+      id:
+        result.id,
+
+      client:
+        result.client,
+
+      provider:
+        result.provider,
+
+      evaluator:
+        result.evaluator,
+
+      description:
+        result.description,
+
+      budget:
+        result.budget,
+
+      expiredAt:
+        result.expiredAt,
+
+      status:
+        Number(
+          result.status
+        ),
+
+      hook:
+        result.hook,
+
+      submittedAt:
+        result.submittedAt,
+
+      deliverable:
+        result.deliverable,
+    };
+  }
+
+  /*
+   * ========================================================
+   * RENDER
+   * ========================================================
+   */
 
   return (
     <div
@@ -1075,11 +1264,14 @@ export default function ProviderTest() {
             styles.subtitle
           }
         >
-          Diagnose and test the provider side of
-          ERC-8183.
+          Provider-side ERC-8183 testing:
+          receive work, submit a deliverable,
+          then wait for evaluation and settlement.
         </p>
 
-        {/* WALLET */}
+        {/* ================================================= */}
+        {/* PROVIDER WALLET */}
+        {/* ================================================= */}
 
         <div
           style={
@@ -1132,7 +1324,9 @@ export default function ProviderTest() {
           )}
         </div>
 
+        {/* ================================================= */}
         {/* LOAD JOB */}
+        {/* ================================================= */}
 
         {address && (
           <div
@@ -1141,7 +1335,7 @@ export default function ProviderTest() {
             }
           >
             <h3>
-              Load Funded Job
+              Load Job
             </h3>
 
             <input
@@ -1155,7 +1349,7 @@ export default function ProviderTest() {
                   event.target.value
                 )
               }
-              placeholder="Example: 502"
+              placeholder="Example: 503"
               type="number"
               min="0"
               style={
@@ -1174,16 +1368,16 @@ export default function ProviderTest() {
                 styles.secondaryButton
               }
             >
-              {
-                loading
-                  ? "Loading..."
-                  : "Load Job"
-              }
+              {loading
+                ? "Loading..."
+                : "Load Job"}
             </button>
           </div>
         )}
 
+        {/* ================================================= */}
         {/* JOB DETAILS */}
+        {/* ================================================= */}
 
         {job && (
           <div
@@ -1250,24 +1444,14 @@ export default function ProviderTest() {
 
             <div
               style={
-                job.status ===
-                  1 &&
-                !isExpired(
-                  job.expiredAt
+                getJobBannerStyle(
+                  job
                 )
-                  ? styles.good
-                  : styles.warning
               }
             >
-              {job.status ===
-                1 &&
-              !isExpired(
-                job.expiredAt
-              )
-                ? "✓ Job is FUNDED and not expired."
-                : `Current state: ${getStatusName(
-                    job.status
-                  )}`}
+              {getJobBannerText(
+                job
+              )}
             </div>
 
             <div
@@ -1287,10 +1471,28 @@ export default function ProviderTest() {
                 job.description
               }
             </div>
+
+            <button
+              onClick={() =>
+                void loadJob(
+                  job.id.toString()
+                )
+              }
+              disabled={
+                loading
+              }
+              style={
+                styles.secondaryButton
+              }
+            >
+              Refresh Job From Blockchain
+            </button>
           </div>
         )}
 
+        {/* ================================================= */}
         {/* DIAGNOSTIC */}
+        {/* ================================================= */}
 
         {job &&
           address && (
@@ -1308,8 +1510,9 @@ export default function ProviderTest() {
                   styles.subtitleSmall
                 }
               >
-                This checks the complete on-chain state
-                before we send a submit transaction.
+                This reads the current on-chain state
+                and tests submit() without sending a
+                transaction.
               </p>
 
               <button
@@ -1320,7 +1523,7 @@ export default function ProviderTest() {
                   loading
                 }
                 style={
-                  styles.primaryButton
+                  styles.secondaryButton
                 }
               >
                 {loading
@@ -1454,7 +1657,9 @@ export default function ProviderTest() {
             </div>
           )}
 
-        {/* DELIVERABLE */}
+        {/* ================================================= */}
+        {/* SUBMISSION SECTION */}
+        {/* ================================================= */}
 
         {job &&
           address && (
@@ -1464,110 +1669,209 @@ export default function ProviderTest() {
               }
             >
               <h3>
-                Deliverable
+                Work Submission
               </h3>
 
-              <textarea
-                value={
-                  deliverable
-                }
-                onChange={(
-                  event
-                ) => {
-                  setDeliverable(
-                    event.target.value
-                  );
-
-                  setDeliverableHash(
-                    null
-                  );
-
-                  setDiagnostic(
-                    null
-                  );
-                }}
-                rows={9}
-                disabled={
-                  loading
-                }
-                style={
-                  styles.textarea
-                }
-              />
-
-              <button
-                onClick={
-                  prepareDeliverable
-                }
-                disabled={
-                  loading
-                }
-                style={
-                  styles.secondaryButton
-                }
-              >
-                Prepare Deliverable Hash
-              </button>
-
-              {deliverableHash && (
+              {job.status === 0 && (
                 <div
                   style={
-                    styles.good
+                    styles.warning
                   }
                 >
-                  <strong>
-                    Deliverable hash
-                  </strong>
-
-                  <code
-                    style={
-                      styles.code
-                    }
-                  >
-                    {
-                      deliverableHash
-                    }
-                  </code>
+                  Job is still OPEN. The provider cannot
+                  submit until the client funds it.
                 </div>
               )}
 
-              <button
-                onClick={
-                  runDiagnostic
-                }
-                disabled={
-                  loading ||
-                  !deliverable.trim()
-                }
-                style={
-                  styles.secondaryButton
-                }
-              >
-                Run Diagnostic + Simulate submit()
-              </button>
+              {job.status === 1 && (
+                <>
+                  <p
+                    style={
+                      styles.subtitleSmall
+                    }
+                  >
+                    This is the provider's deliverable.
+                    Later this will come from the real
+                    AI agent.
+                  </p>
 
-              <button
-                onClick={
-                  submitDeliverable
-                }
-                disabled={
-                  loading ||
-                  !deliverable.trim()
-                }
-                style={
-                  styles.primaryButton
-                }
-              >
-                {
-                  loading
-                    ? "Working..."
-                    : `Submit Job #${job.id.toString()}`
-                }
-              </button>
+                  <textarea
+                    value={
+                      deliverable
+                    }
+                    onChange={(
+                      event
+                    ) => {
+                      setDeliverable(
+                        event.target.value
+                      );
+
+                      setDeliverableHash(
+                        null
+                      );
+
+                      setDiagnostic(
+                        null
+                      );
+                    }}
+                    rows={9}
+                    disabled={
+                      loading
+                    }
+                    style={
+                      styles.textarea
+                    }
+                  />
+
+                  <button
+                    onClick={
+                      prepareDeliverable
+                    }
+                    disabled={
+                      loading ||
+                      !deliverable.trim()
+                    }
+                    style={
+                      styles.secondaryButton
+                    }
+                  >
+                    Prepare Deliverable Hash
+                  </button>
+
+                  {deliverableHash && (
+                    <div
+                      style={
+                        styles.good
+                      }
+                    >
+                      <strong>
+                        Deliverable hash
+                      </strong>
+
+                      <code
+                        style={
+                          styles.code
+                        }
+                      >
+                        {
+                          deliverableHash
+                        }
+                      </code>
+                    </div>
+                  )}
+
+                  <button
+                    onClick={() =>
+                      void runDiagnostic()
+                    }
+                    disabled={
+                      loading ||
+                      !deliverable.trim()
+                    }
+                    style={
+                      styles.secondaryButton
+                    }
+                  >
+                    Run Diagnostic + Simulate submit()
+                  </button>
+
+                  <button
+                    onClick={
+                      submitDeliverable
+                    }
+                    disabled={
+                      loading ||
+                      !deliverable.trim()
+                    }
+                    style={
+                      styles.primaryButton
+                    }
+                  >
+                    {loading
+                      ? "Working..."
+                      : `Submit Job #${job.id.toString()}`}
+                  </button>
+                </>
+              )}
+
+              {job.status === 2 && (
+                <div
+                  style={
+                    styles.submittedBanner
+                  }
+                >
+                  <strong>
+                    ✅ Work Submitted
+                  </strong>
+
+                  <p>
+                    Job #{job.id.toString()} is now
+                    SUBMITTED on-chain.
+                  </p>
+
+                  <p>
+                    The provider should not submit again.
+                    The next stage is evaluation and
+                    settlement.
+                  </p>
+                </div>
+              )}
+
+              {job.status === 3 && (
+                <div
+                  style={
+                    styles.completedBanner
+                  }
+                >
+                  <strong>
+                    🎉 Job Completed
+                  </strong>
+
+                  <p>
+                    The evaluator has approved the work
+                    and the escrow has been released.
+                  </p>
+                </div>
+              )}
+
+              {job.status === 4 && (
+                <div
+                  style={
+                    styles.warning
+                  }
+                >
+                  <strong>
+                    Job Rejected
+                  </strong>
+
+                  <p>
+                    The evaluator rejected the submitted
+                    work.
+                  </p>
+                </div>
+              )}
+
+              {job.status === 5 && (
+                <div
+                  style={
+                    styles.warning
+                  }
+                >
+                  <strong>
+                    Job Expired
+                  </strong>
+
+                  <p>
+                    This job can no longer be submitted.
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
+        {/* ================================================= */}
         {/* TRANSACTION */}
+        {/* ================================================= */}
 
         {transactionHash && (
           <div
@@ -1610,7 +1914,9 @@ export default function ProviderTest() {
           </div>
         )}
 
+        {/* ================================================= */}
         {/* ERROR */}
+        {/* ================================================= */}
 
         {error && (
           <div
@@ -1705,6 +2011,92 @@ function getStatusName(
 
 /*
  * ============================================================
+ * BANNER HELPERS
+ * ============================================================
+ */
+
+function getJobBannerText(
+  job: Job
+): string {
+  if (
+    isExpired(
+      job.expiredAt
+    ) &&
+    job.status !==
+      3 &&
+    job.status !==
+      4 &&
+    job.status !==
+      5
+  ) {
+    return "⏰ This job has expired.";
+  }
+
+  switch (
+    job.status
+  ) {
+    case 0:
+      return "Job is OPEN.";
+
+    case 1:
+      return "✓ Job is FUNDED and ready for the provider.";
+
+    case 2:
+      return "✅ Job is SUBMITTED. Waiting for evaluation/settlement.";
+
+    case 3:
+      return "🎉 Job is COMPLETED.";
+
+    case 4:
+      return "Job is REJECTED.";
+
+    case 5:
+      return "Job is EXPIRED.";
+
+    default:
+      return `Current state: ${getStatusName(
+        job.status
+      )}`;
+  }
+}
+
+function getJobBannerStyle(
+  job: Job
+): React.CSSProperties {
+  if (
+    job.status ===
+    2
+  ) {
+    return styles.submittedBanner;
+  }
+
+  if (
+    job.status ===
+    3
+  ) {
+    return styles.completedBanner;
+  }
+
+  if (
+    isExpired(
+      job.expiredAt
+    )
+  ) {
+    return styles.warning;
+  }
+
+  if (
+    job.status ===
+    1
+  ) {
+    return styles.good;
+  }
+
+  return styles.warning;
+}
+
+/*
+ * ============================================================
  * EXPIRY
  * ============================================================
  */
@@ -1745,7 +2137,7 @@ function formatTimestamp(
 
 /*
  * ============================================================
- * ERROR DECODER
+ * ERROR EXTRACTION
  * ============================================================
  */
 
@@ -1839,15 +2231,6 @@ function extractDetailedError(
           depth + 1
         );
       }
-
-      if (
-        obj.contracts
-      ) {
-        collect(
-          obj.contracts,
-          depth + 1
-        );
-      }
     }
   }
 
@@ -1871,9 +2254,6 @@ function extractDetailedError(
     );
   }
 
-  /*
-   * Last-resort JSON representation.
-   */
   try {
     return JSON.stringify(
       error,
@@ -2325,6 +2705,52 @@ const styles: Record<
 
     border:
       "1px solid rgba(50,200,120,.3)",
+
+    color:
+      "#7ee2a8",
+
+    lineHeight:
+      "1.5",
+  },
+
+  submittedBanner: {
+    marginTop:
+      "14px",
+
+    padding:
+      "14px",
+
+    borderRadius:
+      "9px",
+
+    background:
+      "rgba(90,160,255,.08)",
+
+    border:
+      "1px solid rgba(90,160,255,.3)",
+
+    color:
+      "#9fc9ff",
+
+    lineHeight:
+      "1.5",
+  },
+
+  completedBanner: {
+    marginTop:
+      "14px",
+
+    padding:
+      "14px",
+
+    borderRadius:
+      "9px",
+
+    background:
+      "rgba(50,200,120,.12)",
+
+    border:
+      "1px solid rgba(50,200,120,.35)",
 
     color:
       "#7ee2a8",
