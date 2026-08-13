@@ -363,9 +363,7 @@ export default function AgentRegistry() {
         ""
     );
 
-    setNotice(
-      ""
-    );
+    setNotice("");
   }
 
   function chooseTask(
@@ -497,7 +495,7 @@ export default function AgentRegistry() {
             agent.id ===
             selectedTask.assignedAgentId
         )
-      : null;
+      : undefined;
 
   return (
     <div
@@ -837,7 +835,7 @@ export default function AgentRegistry() {
                 </div>
 
                 {missions.length ===
-                  0 ? (
+                0 ? (
                   <div
                     style={
                       styles.emptyState
@@ -966,7 +964,7 @@ export default function AgentRegistry() {
                                     agent.id ===
                                     task.assignedAgentId
                                 )
-                              : null;
+                              : undefined;
 
                           return (
                             <button
@@ -1313,7 +1311,7 @@ function AssignmentPreview({
 }: {
   agent: Agent;
   task: MissionTask;
-  existingAgent?: Agent;
+  existingAgent?: Agent | null;
 }) {
   const matches =
     agentMatchesTask(
