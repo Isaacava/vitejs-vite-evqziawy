@@ -8,6 +8,13 @@ import {
 } from "viem";
 import { bscTestnet } from "viem/chains";
 
+/*
+ * Official BNB Agentic Commerce / ERC-8183
+ * BSC Testnet deployment addresses.
+ *
+ * Source of truth:
+ * bnb-chain/apex-contracts/scripts/addresses.ts
+ */
 export const ERC8183_ADDRESSES = {
   commerce:
     "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address,
@@ -23,8 +30,7 @@ export const ERC8183_ADDRESSES = {
 } as const;
 
 /*
- * Keep these as plain ABI objects.
- * This avoids parseAbi running during module startup.
+ * AgenticCommerce ABI
  */
 export const COMMERCE_ABI = [
   {
@@ -60,6 +66,37 @@ export const COMMERCE_ABI = [
       },
     ],
   },
+
+  {
+    type: "function",
+    name: "setBudget",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "jobId",
+        type: "uint256",
+      },
+      {
+        name: "amount",
+        type: "uint256",
+      },
+    ],
+    outputs: [],
+  },
+
+  {
+    type: "function",
+    name: "fund",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "jobId",
+        type: "uint256",
+        },
+    ],
+    outputs: [],
+  },
+
   {
     type: "function",
     name: "paymentToken",
@@ -67,10 +104,25 @@ export const COMMERCE_ABI = [
     inputs: [],
     outputs: [
       {
+        name: "",
         type: "address",
       },
     ],
   },
+
+  {
+    type: "function",
+    name: "jobCounter",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [
+      {
+        name: "",
+        type: "uint256",
+      },
+    ],
+  },
+
   {
     type: "function",
     name: "getJob",
@@ -83,6 +135,7 @@ export const COMMERCE_ABI = [
     ],
     outputs: [
       {
+        name: "",
         type: "tuple",
         components: [
           {
@@ -133,17 +186,18 @@ export const COMMERCE_ABI = [
       },
     ],
   },
-  {
-    type: "function",
-    name: "jobCounter",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [
-      {
-        type: "uint256",
-      },
-    ],
-  },
+] as const;
+
+/*
+ * EvaluatorRouter ABI
+ *
+ * registerJob(jobId, policy) is called on
+ * the Router, not AgenticCommerce.
+ *
+ * The official Router also exposes jobPolicy()
+ * which we'll use to verify registration.
+ */
+export const ROUTER_ABI = [
   {
     type: "function",
     name: "registerJob",
@@ -160,36 +214,60 @@ export const COMMERCE_ABI = [
     ],
     outputs: [],
   },
+
   {
     type: "function",
-    name: "setBudget",
-    stateMutability: "nonpayable",
+    name: "jobPolicy",
+    stateMutability: "view",
     inputs: [
       {
         name: "jobId",
         type: "uint256",
       },
+    ],
+    outputs: [
       {
-        name: "amount",
-        type: "uint256",
+        name: "",
+        type: "address",
       },
     ],
-    outputs: [],
   },
+
   {
     type: "function",
-    name: "fund",
-    stateMutability: "nonpayable",
+    name: "policyWhitelist",
+    stateMutability: "view",
     inputs: [
       {
-        name: "jobId",
-        type: "uint256",
+        name: "policy",
+        type: "address",
       },
     ],
-    outputs: [],
+    outputs: [
+      {
+        name: "",
+        type: "bool",
+      },
+    ],
+  },
+
+  {
+    type: "function",
+    name: "commerce",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [
+      {
+        name: "",
+        type: "address",
+      },
+    ],
   },
 ] as const;
 
+/*
+ * ERC-20 ABI
+ */
 export const ERC20_ABI = [
   {
     type: "function",
@@ -203,10 +281,12 @@ export const ERC20_ABI = [
     ],
     outputs: [
       {
+        name: "",
         type: "uint256",
       },
     ],
   },
+
   {
     type: "function",
     name: "allowance",
@@ -223,10 +303,12 @@ export const ERC20_ABI = [
     ],
     outputs: [
       {
+        name: "",
         type: "uint256",
       },
     ],
   },
+
   {
     type: "function",
     name: "approve",
@@ -243,10 +325,12 @@ export const ERC20_ABI = [
     ],
     outputs: [
       {
+        name: "",
         type: "bool",
       },
     ],
   },
+
   {
     type: "function",
     name: "decimals",
@@ -254,10 +338,12 @@ export const ERC20_ABI = [
     inputs: [],
     outputs: [
       {
+        name: "",
         type: "uint8",
       },
     ],
   },
+
   {
     type: "function",
     name: "symbol",
@@ -265,18 +351,27 @@ export const ERC20_ABI = [
     inputs: [],
     outputs: [
       {
+        name: "",
         type: "string",
       },
     ],
   },
 ] as const;
 
+/*
+ * Public BSC Testnet client.
+ */
 export const publicClient =
   createPublicClient({
     chain: bscTestnet,
-    transport: http(),
+    transport: http(
+      "https://data-seed-prebsc-1-s1.bnbchain.org:8545"
+    ),
   });
 
+/*
+ * Wallet client helper.
+ */
 export function getWalletClient(
   provider: EIP1193Provider,
   account: Address
