@@ -1,10 +1,11 @@
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import './index.css'
-import DeployScreen from './DeployScreen.tsx'
+import React from "react";
+import ReactDOM from "react-dom/client";
+import Erc8183Test from "./Erc8183Test";
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
+ReactDOM.createRoot(
+  document.getElementById("root")!
+).render(
+  <React.StrictMode>
     <Erc8183Test />
-  </StrictMode>,
-)
+  </React.StrictMode>
+);
