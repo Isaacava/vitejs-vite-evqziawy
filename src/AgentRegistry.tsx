@@ -196,8 +196,8 @@ export default function AgentRegistry() {
   );
 
   const [
-    missionId,
-    setMissionId,
+    selectedMissionId,
+    setSelectedMissionId,
   ] = useState("");
 
   const [
@@ -231,7 +231,14 @@ export default function AgentRegistry() {
     missions.find(
       (mission) =>
         mission.id ===
-        missionId
+        selectedMissionId
+    ) ?? null;
+
+  const selectedTask =
+    selectedMission?.tasks.find(
+      (task) =>
+        task.id ===
+        selectedTaskId
     ) ?? null;
 
   const filteredAgents =
@@ -290,6 +297,14 @@ export default function AgentRegistry() {
       null
     );
 
+    setSelectedMissionId(
+      ""
+    );
+
+    setSelectedTaskId(
+      ""
+    );
+
     setNotice("");
   }
 
@@ -302,14 +317,14 @@ export default function AgentRegistry() {
     );
 
     if (
-      missionId &&
+      selectedMissionId &&
       !latest.some(
         (mission) =>
           mission.id ===
-          missionId
+          selectedMissionId
       )
     ) {
-      setMissionId(
+      setSelectedMissionId(
         ""
       );
 
@@ -317,25 +332,64 @@ export default function AgentRegistry() {
         ""
       );
     }
+
+    setNotice(
+      latest.length > 0
+        ? "✅ Missions refreshed."
+        : "No missions found."
+    );
   }
 
-  function handleMissionChange(
-    value: string
+  function chooseMission(
+    missionId: string
   ) {
-    setMissionId(
-      value
-    );
-
     const mission =
       missions.find(
         (item) =>
           item.id ===
-          value
+          missionId
       );
 
+    if (!mission) {
+      return;
+    }
+
+    setSelectedMissionId(
+      mission.id
+    );
+
     setSelectedTaskId(
-      mission?.tasks[0]?.id ??
+      mission.tasks[0]?.id ??
         ""
+    );
+
+    setNotice(
+      ""
+    );
+  }
+
+  function chooseTask(
+    taskId: string
+  ) {
+    if (
+      !selectedMission
+    ) {
+      return;
+    }
+
+    const task =
+      selectedMission.tasks.find(
+        (item) =>
+          item.id ===
+          taskId
+      );
+
+    if (!task) {
+      return;
+    }
+
+    setSelectedTaskId(
+      task.id
     );
 
     setNotice("");
@@ -363,7 +417,7 @@ export default function AgentRegistry() {
     }
 
     if (
-      !selectedTaskId
+      !selectedTask
     ) {
       setNotice(
         "Select a task first."
@@ -372,27 +426,12 @@ export default function AgentRegistry() {
       return;
     }
 
-    const task =
-      selectedMission.tasks.find(
-        (item) =>
-          item.id ===
-          selectedTaskId
-      );
-
-    if (!task) {
-      setNotice(
-        "The selected task could not be found."
-      );
-
-      return;
-    }
-
     if (
-      task.budget <
+      selectedTask.budget <
       selectedAgent.startingPrice
     ) {
       setNotice(
-        `${selectedAgent.name} starts from ${selectedAgent.startingPrice} U, while this task has a ${task.budget} U budget.`
+        `${selectedAgent.name} starts from ${selectedAgent.startingPrice} U, while this task has a ${selectedTask.budget} U budget.`
       );
 
       return;
@@ -416,23 +455,23 @@ export default function AgentRegistry() {
             tasks:
               mission.tasks.map(
                 (
-                  item
+                  task
                 ): MissionTask =>
-                  item.id ===
-                  selectedTaskId
+                  task.id ===
+                  selectedTask.id
                     ? {
-                        ...item,
+                        ...task,
 
                         assignedAgentId:
                           selectedAgent.id,
 
                         status:
-                          item.status ===
+                          task.status ===
                           "Planned"
                             ? "Ready"
-                            : item.status,
+                            : task.status,
                       }
-                    : item
+                    : task
               ),
           };
         }
@@ -447,9 +486,18 @@ export default function AgentRegistry() {
     );
 
     setNotice(
-      `✅ ${selectedAgent.name} assigned to ${task.title}.`
+      `✅ ${selectedAgent.name} assigned to ${selectedTask.title}.`
     );
   }
+
+  const assignedAgent =
+    selectedTask?.assignedAgentId
+      ? AGENTS.find(
+          (agent) =>
+            agent.id ===
+            selectedTask.assignedAgentId
+        )
+      : null;
 
   return (
     <div
@@ -549,30 +597,25 @@ export default function AgentRegistry() {
               All roles
             </option>
 
-            {[
-              "Project Manager",
-              "UI/UX Designer",
-              "Developer",
-              "SEO Specialist",
-              "QA Agent",
-            ].map(
-              (
-                role
-              ) => (
-                <option
-                  key={
-                    role
-                  }
-                  value={
-                    role
-                  }
-                >
-                  {
-                    role
-                  }
-                </option>
-              )
-            )}
+            <option value="Project Manager">
+              Project Manager
+            </option>
+
+            <option value="UI/UX Designer">
+              UI/UX Designer
+            </option>
+
+            <option value="Developer">
+              Developer
+            </option>
+
+            <option value="SEO Specialist">
+              SEO Specialist
+            </option>
+
+            <option value="QA Agent">
+              QA Agent
+            </option>
           </select>
         </section>
 
@@ -751,7 +794,7 @@ export default function AgentRegistry() {
               </div>
             </div>
 
-            <div
+            <section
               style={
                 styles.assignPanel
               }
@@ -777,113 +820,228 @@ export default function AgentRegistry() {
                   styles.assignSubtitle
                 }
               >
-                Select the mission and the exact task this
-                agent should handle.
+                Choose the mission and then the exact task.
               </p>
 
               <div
                 style={
-                  styles.assignGrid
+                  styles.assignmentSection
                 }
               >
-                <select
-                  value={
-                    missionId
-                  }
-                  onChange={(
-                    event
-                  ) =>
-                    handleMissionChange(
-                      event.target.value
-                    )
-                  }
+                <div
                   style={
-                    styles.select
+                    styles.label
                   }
                 >
-                  <option value="">
-                    Select mission
-                  </option>
+                  Mission
+                </div>
 
-                  {missions.map(
-                    (
-                      mission
-                    ) => (
-                      <option
-                        key={
-                          mission.id
-                        }
-                        value={
-                          mission.id
-                        }
-                      >
-                        {
-                          mission.title
-                        }
-                      </option>
-                    )
-                  )}
-                </select>
+                {missions.length ===
+                  0 ? (
+                  <div
+                    style={
+                      styles.emptyState
+                    }
+                  >
+                    <strong>
+                      No missions available.
+                    </strong>
 
-                <select
-                  value={
-                    selectedTaskId
-                  }
-                  onChange={(
-                    event
-                  ) =>
-                    setSelectedTaskId(
-                      event.target.value
-                    )
-                  }
-                  disabled={
-                    !selectedMission
-                  }
-                  style={
-                    styles.select
-                  }
-                >
-                  <option value="">
-                    Select task
-                  </option>
+                    <span>
+                      Create a mission in the Marketplace
+                      first.
+                    </span>
+                  </div>
+                ) : (
+                  <div
+                    style={
+                      styles.selectionGrid
+                    }
+                  >
+                    {missions.map(
+                      (
+                        mission
+                      ) => (
+                        <button
+                          type="button"
+                          key={
+                            mission.id
+                          }
+                          onClick={() =>
+                            chooseMission(
+                              mission.id
+                            )
+                          }
+                          style={
+                            selectedMissionId ===
+                            mission.id
+                              ? {
+                                  ...styles.selectionCard,
+                                  ...styles.selectionCardActive,
+                                }
+                              : styles.selectionCard
+                          }
+                        >
+                          <div
+                            style={
+                              styles.selectionCardTitle
+                            }
+                          >
+                            {
+                              mission.title
+                            }
+                          </div>
 
-                  {selectedMission?.tasks.map(
-                    (
-                      task
-                    ) => (
-                      <option
-                        key={
-                          task.id
-                        }
-                        value={
-                          task.id
-                        }
-                      >
-                        {
-                          task.title
-                        }{" "}
-                        —{" "}
-                        {
-                          task.budget
-                        }{" "}
-                        U
-                      </option>
-                    )
-                  )}
-                </select>
+                          <div
+                            style={
+                              styles.selectionCardMeta
+                            }
+                          >
+                            {
+                              mission.category
+                            }
+                            {" · "}
+                            {
+                              mission.tasks.length
+                            }{" "}
+                            tasks
+                          </div>
+
+                          <div
+                            style={
+                              styles.selectionCardBudget
+                            }
+                          >
+                            {
+                              mission.budget
+                            }{" "}
+                            U
+                          </div>
+                        </button>
+                      )
+                    )}
+                  </div>
+                )}
               </div>
 
-              {selectedMission &&
-                selectedTaskId && (
+              {selectedMission && (
+                <div
+                  style={
+                    styles.assignmentSection
+                  }
+                >
+                  <div
+                    style={
+                      styles.label
+                    }
+                  >
+                    Task
+                  </div>
+
+                  {selectedMission.tasks.length ===
+                  0 ? (
+                    <div
+                      style={
+                        styles.emptyState
+                      }
+                    >
+                      This mission has no tasks yet.
+                    </div>
+                  ) : (
+                    <div
+                      style={
+                        styles.selectionGrid
+                      }
+                    >
+                      {selectedMission.tasks.map(
+                        (
+                          task
+                        ) => {
+                          const taskAgent =
+                            task.assignedAgentId
+                              ? AGENTS.find(
+                                  (
+                                    agent
+                                  ) =>
+                                    agent.id ===
+                                    task.assignedAgentId
+                                )
+                              : null;
+
+                          return (
+                            <button
+                              type="button"
+                              key={
+                                task.id
+                              }
+                              onClick={() =>
+                                chooseTask(
+                                  task.id
+                                )
+                              }
+                              style={
+                                selectedTaskId ===
+                                task.id
+                                  ? {
+                                      ...styles.selectionCard,
+                                      ...styles.selectionCardActive,
+                                    }
+                                  : styles.selectionCard
+                              }
+                            >
+                              <div
+                                style={
+                                  styles.selectionCardTitle
+                                }
+                              >
+                                {
+                                  task.title
+                                }
+                              </div>
+
+                              <div
+                                style={
+                                  styles.selectionCardMeta
+                                }
+                              >
+                                {
+                                  task.role
+                                }
+                                {" · "}
+                                {
+                                  task.budget
+                                }{" "}
+                                U
+                              </div>
+
+                              <div
+                                style={
+                                  styles.selectionCardStatus
+                                }
+                              >
+                                {taskAgent
+                                  ? `Assigned: ${taskAgent.name}`
+                                  : "Unassigned"}
+                              </div>
+                            </button>
+                          );
+                        }
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {selectedTask && (
                 <AssignmentPreview
                   agent={
                     selectedAgent
                   }
-                  mission={
-                    selectedMission
+                  task={
+                    selectedTask
                   }
-                  taskId={
-                    selectedTaskId
+                  existingAgent={
+                    assignedAgent
                   }
                 />
               )}
@@ -915,7 +1073,7 @@ export default function AgentRegistry() {
               >
                 Assign Agent →
               </button>
-            </div>
+            </section>
           </section>
         )}
 
@@ -929,7 +1087,7 @@ export default function AgentRegistry() {
               styles.eyebrow
             }
           >
-            HOW THIS CONNECTS TO ERC-8183
+            MARKETPLACE FLOW
           </div>
 
           <h2
@@ -937,7 +1095,7 @@ export default function AgentRegistry() {
               styles.explainerTitle
             }
           >
-            Agent selection happens before the blockchain job
+            Mission → Agent → Task → ERC-8183
           </h2>
 
           <div
@@ -945,60 +1103,30 @@ export default function AgentRegistry() {
               styles.flow
             }
           >
-            {[
-              [
-                "01",
-                "User creates a mission",
-              ],
-              [
-                "02",
-                "Marketplace finds an agent",
-              ],
-              [
-                "03",
-                "Agent is assigned to task",
-              ],
-              [
-                "04",
-                "ERC-8183 sub-job is created",
-              ],
-              [
-                "05",
-                "Agent works and gets paid",
-              ],
-            ].map(
-              (
-                [
-                  number,
-                  text,
-                ]
-              ) => (
-                <div
-                  key={
-                    number
-                  }
-                  style={
-                    styles.flowStep
-                  }
-                >
-                  <span
-                    style={
-                      styles.flowNumber
-                    }
-                  >
-                    {
-                      number
-                    }
-                  </span>
+            <FlowStep
+              number="01"
+              text="User creates mission"
+            />
 
-                  <span>
-                    {
-                      text
-                    }
-                  </span>
-                </div>
-              )
-            )}
+            <FlowStep
+              number="02"
+              text="Select specialist"
+            />
+
+            <FlowStep
+              number="03"
+              text="Assign task"
+            />
+
+            <FlowStep
+              number="04"
+              text="Create sub-job"
+            />
+
+            <FlowStep
+              number="05"
+              text="Agent delivers"
+            />
           </div>
         </section>
       </div>
@@ -1180,26 +1308,13 @@ function Stat({
 
 function AssignmentPreview({
   agent,
-  mission,
-  taskId,
+  task,
+  existingAgent,
 }: {
   agent: Agent;
-  mission: Mission;
-  taskId: string;
+  task: MissionTask;
+  existingAgent?: Agent;
 }) {
-  const task =
-    mission.tasks.find(
-      (
-        item
-      ) =>
-        item.id ===
-        taskId
-    );
-
-  if (!task) {
-    return null;
-  }
-
   const matches =
     agentMatchesTask(
       agent,
@@ -1276,6 +1391,20 @@ function AssignmentPreview({
         </strong>
       </div>
 
+      {existingAgent && (
+        <div
+          style={
+            styles.previewExisting
+          }
+        >
+          Currently assigned to{" "}
+          {
+            existingAgent.name
+          }
+          .
+        </div>
+      )}
+
       <div
         style={
           styles.matchLine
@@ -1295,22 +1424,58 @@ function AssignmentPreview({
   );
 }
 
+function FlowStep({
+  number,
+  text,
+}: {
+  number: string;
+  text: string;
+}) {
+  return (
+    <div
+      style={
+        styles.flowStep
+      }
+    >
+      <span
+        style={
+          styles.flowNumber
+        }
+      >
+        {
+          number
+        }
+      </span>
+
+      <span>
+        {
+          text
+        }
+      </span>
+    </div>
+  );
+}
+
 function agentMatchesTask(
   agent: Agent,
   task: MissionTask
 ): boolean {
   const role =
-    task.role.toLowerCase();
+    task.role
+      .trim()
+      .toLowerCase();
+
+  const agentRole =
+    agent.role
+      .trim()
+      .toLowerCase();
 
   if (
-    agent.role
-      .toLowerCase()
-      .includes(
-        role
-      ) ||
+    agentRole.includes(
+      role
+    ) ||
     role.includes(
-      agent.role
-        .toLowerCase()
+      agentRole
     )
   ) {
     return true;
@@ -1332,15 +1497,21 @@ function agentMatchesTask(
     agent.capabilities.some(
       (
         capability
-      ) =>
-        role.includes(
-          capability.toLowerCase()
-        ) ||
-        capability
-          .toLowerCase()
-          .includes(
+      ) => {
+        const normalized =
+          capability
+            .trim()
+            .toLowerCase();
+
+        return (
+          role.includes(
+            normalized
+          ) ||
+          normalized.includes(
             role
           )
+        );
+      }
     )
   );
 }
@@ -1410,11 +1581,15 @@ function loadMissions(): Mission[] {
         raw
       );
 
-    return Array.isArray(
-      parsed
-    )
-      ? parsed
-      : [];
+    if (
+      !Array.isArray(
+        parsed
+      )
+    ) {
+      return [];
+    }
+
+    return parsed as Mission[];
   } catch {
     return [];
   }
@@ -1612,8 +1787,6 @@ const styles: Record<
       "#fff",
     cursor:
       "pointer",
-    transition:
-      "transform .15s ease, border-color .15s ease",
   },
 
   agentCardSelected: {
@@ -1902,34 +2075,103 @@ const styles: Record<
       "12px",
   },
 
-  assignGrid: {
+  assignmentSection: {
+    marginTop:
+      "14px",
+  },
+
+  selectionGrid: {
     display:
       "grid",
     gridTemplateColumns:
-      "repeat(auto-fit, minmax(210px, 1fr))",
+      "repeat(auto-fit, minmax(220px, 1fr))",
     gap:
-      "10px",
-    marginTop:
-      "15px",
+      "8px",
   },
 
-  select: {
+  selectionCard: {
+    position:
+      "relative",
     width:
       "100%",
-    boxSizing:
-      "border-box",
     padding:
-      "11px",
-    borderRadius:
-      "9px",
+      "13px",
+    textAlign:
+      "left",
     border:
-      "1px solid #343a3f",
+      "1px solid #2b3237",
+    borderRadius:
+      "10px",
     background:
-      "#0b0f11",
+      "#111518",
     color:
       "#fff",
-    outline:
-      "none",
+    cursor:
+      "pointer",
+  },
+
+  selectionCardActive: {
+    border:
+      "1px solid #f0b90b",
+    background:
+      "#171611",
+  },
+
+  selectionCardTitle: {
+    fontSize:
+      "13px",
+    fontWeight:
+      900,
+  },
+
+  selectionCardMeta: {
+    marginTop:
+      "5px",
+    color:
+      "#858e95",
+    fontSize:
+      "11px",
+  },
+
+  selectionCardBudget: {
+    marginTop:
+      "8px",
+    color:
+      "#f0b90b",
+    fontSize:
+      "12px",
+    fontWeight:
+      900,
+  },
+
+  selectionCardStatus: {
+    marginTop:
+      "8px",
+    color:
+      "#86a990",
+    fontSize:
+      "10px",
+  },
+
+  emptyState: {
+    display:
+      "grid",
+    gap:
+      "5px",
+    padding:
+      "13px",
+    border:
+      "1px solid #43361f",
+    borderRadius:
+      "10px",
+    background:
+      "#171511",
+    color:
+      "#c8b76f",
+    fontSize:
+      "12px",
+    lineHeight:
+      1.5,
   },
 
   previewGood: {
@@ -1960,6 +2202,15 @@ const styles: Record<
       "1px solid #453820",
     color:
       "#d0bb70",
+  },
+
+  previewExisting: {
+    marginTop:
+      "7px",
+    color:
+      "#c7b26c",
+    fontSize:
+      "11px",
   },
 
   previewTitle: {
