@@ -3,19 +3,11 @@ import {
   createWalletClient,
   custom,
   http,
-  parseAbi,
   type Address,
   type EIP1193Provider,
 } from "viem";
 import { bscTestnet } from "viem/chains";
 
-/**
- * Official BNB Agentic Commerce contracts
- * on BSC Testnet.
- *
- * Source:
- * bnb-chain/apex-contracts/scripts/addresses.ts
- */
 export const ERC8183_ADDRESSES = {
   commerce:
     "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address,
@@ -30,22 +22,254 @@ export const ERC8183_ADDRESSES = {
     "0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565" as Address,
 } as const;
 
-export const COMMERCE_ABI = parseAbi([
-  "function createJob(address provider,address evaluator,uint256 expiredAt,string description,address hook) returns (uint256 jobId)",
-  "function registerJob(uint256 jobId,address policy)",
-  "function setBudget(uint256 jobId,uint256 amount)",
-  "function fund(uint256 jobId)",
-  "function getJob(uint256 jobId) view returns (tuple(uint256 id,address client,address provider,address evaluator,string description,uint256 budget,uint256 expiredAt,uint8 status,address hook,uint256 submittedAt,bytes32 deliverable))",
-  "function paymentToken() view returns (address)",
-]);
+/*
+ * Keep these as plain ABI objects.
+ * This avoids parseAbi running during module startup.
+ */
+export const COMMERCE_ABI = [
+  {
+    type: "function",
+    name: "createJob",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "provider",
+        type: "address",
+      },
+      {
+        name: "evaluator",
+        type: "address",
+      },
+      {
+        name: "expiredAt",
+        type: "uint256",
+      },
+      {
+        name: "description",
+        type: "string",
+      },
+      {
+        name: "hook",
+        type: "address",
+      },
+    ],
+    outputs: [
+      {
+        name: "jobId",
+        type: "uint256",
+      },
+    ],
+  },
+  {
+    type: "function",
+    name: "paymentToken",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [
+      {
+        type: "address",
+      },
+    ],
+  },
+  {
+    type: "function",
+    name: "getJob",
+    stateMutability: "view",
+    inputs: [
+      {
+        name: "jobId",
+        type: "uint256",
+      },
+    ],
+    outputs: [
+      {
+        type: "tuple",
+        components: [
+          {
+            name: "id",
+            type: "uint256",
+          },
+          {
+            name: "client",
+            type: "address",
+          },
+          {
+            name: "provider",
+            type: "address",
+          },
+          {
+            name: "evaluator",
+            type: "address",
+          },
+          {
+            name: "description",
+            type: "string",
+          },
+          {
+            name: "budget",
+            type: "uint256",
+          },
+          {
+            name: "expiredAt",
+            type: "uint256",
+          },
+          {
+            name: "status",
+            type: "uint8",
+          },
+          {
+            name: "hook",
+            type: "address",
+          },
+          {
+            name: "submittedAt",
+            type: "uint256",
+          },
+          {
+            name: "deliverable",
+            type: "bytes32",
+          },
+        ],
+      },
+    ],
+  },
+  {
+    type: "function",
+    name: "jobCounter",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [
+      {
+        type: "uint256",
+      },
+    ],
+  },
+  {
+    type: "function",
+    name: "registerJob",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "jobId",
+        type: "uint256",
+      },
+      {
+        name: "policy",
+        type: "address",
+      },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "setBudget",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "jobId",
+        type: "uint256",
+      },
+      {
+        name: "amount",
+        type: "uint256",
+      },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "fund",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "jobId",
+        type: "uint256",
+      },
+    ],
+    outputs: [],
+  },
+] as const;
 
-export const ERC20_ABI = parseAbi([
-  "function balanceOf(address account) view returns (uint256)",
-  "function allowance(address owner,address spender) view returns (uint256)",
-  "function approve(address spender,uint256 amount) returns (bool)",
-  "function decimals() view returns (uint8)",
-  "function symbol() view returns (string)",
-]);
+export const ERC20_ABI = [
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [
+      {
+        name: "account",
+        type: "address",
+      },
+    ],
+    outputs: [
+      {
+        type: "uint256",
+      },
+    ],
+  },
+  {
+    type: "function",
+    name: "allowance",
+    stateMutability: "view",
+    inputs: [
+      {
+        name: "owner",
+        type: "address",
+      },
+      {
+        name: "spender",
+        type: "address",
+      },
+    ],
+    outputs: [
+      {
+        type: "uint256",
+      },
+    ],
+  },
+  {
+    type: "function",
+    name: "approve",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "spender",
+        type: "address",
+      },
+      {
+        name: "amount",
+        type: "uint256",
+      },
+    ],
+    outputs: [
+      {
+        type: "bool",
+      },
+    ],
+  },
+  {
+    type: "function",
+    name: "decimals",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [
+      {
+        type: "uint8",
+      },
+    ],
+  },
+  {
+    type: "function",
+    name: "symbol",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [
+      {
+        type: "string",
+      },
+    ],
+  },
+] as const;
 
 export const publicClient =
   createPublicClient({
@@ -55,7 +279,7 @@ export const publicClient =
 
 export function getWalletClient(
   provider: EIP1193Provider,
-  account: Address,
+  account: Address
 ) {
   return createWalletClient({
     account,
