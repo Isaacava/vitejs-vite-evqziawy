@@ -128,124 +128,88 @@ const DEMO_AGENTS: Agent[] = [
 ];
 
 export default function MissionSubJob() {
-  const [
-    missions,
-    setMissions,
-  ] = useState<Mission[]>(
-    loadMissions()
-  );
+  const [missions, setMissions] =
+    useState<Mission[]>(
+      loadMissions()
+    );
 
-  const [
-    selectedMissionId,
-    setSelectedMissionId,
-  ] = useState("");
+  const [selectedMissionId, setSelectedMissionId] =
+    useState("");
 
-  const [
-    selectedTaskId,
-    setSelectedTaskId,
-  ] = useState("");
+  const [selectedTaskId, setSelectedTaskId] =
+    useState("");
 
-  const [
-    provider,
-    setProvider,
-  ] = useState<EIP1193Provider | null>(
-    null
-  );
+  const [provider, setProvider] =
+    useState<EIP1193Provider | null>(
+      null
+    );
 
-  const [
-    address,
-    setAddress,
-  ] = useState<Address | null>(
-    null
-  );
+  const [address, setAddress] =
+    useState<Address | null>(
+      null
+    );
 
-  const [
-    walletStatus,
-    setWalletStatus,
-  ] = useState<WalletStatus>(
-    "Disconnected"
-  );
+  const [walletStatus, setWalletStatus] =
+    useState<WalletStatus>(
+      "Disconnected"
+    );
 
-  const [
-    tokenAddress,
-    setTokenAddress,
-  ] = useState<Address | null>(
-    null
-  );
+  const [tokenAddress, setTokenAddress] =
+    useState<Address | null>(
+      null
+    );
 
-  const [
-    tokenSymbol,
-    setTokenSymbol,
-  ] = useState("U");
+  const [tokenSymbol, setTokenSymbol] =
+    useState("U");
 
-  const [
-    tokenDecimals,
-    setTokenDecimals,
-  ] = useState(18);
+  const [tokenDecimals, setTokenDecimals] =
+    useState(18);
 
-  const [
-    tokenBalance,
-    setTokenBalance,
-  ] = useState<bigint | null>(
-    null
-  );
+  const [tokenBalance, setTokenBalance] =
+    useState<bigint | null>(
+      null
+    );
 
-  const [
-    allowance,
-    setAllowance,
-  ] = useState<bigint | null>(
-    null
-  );
+  const [allowance, setAllowance] =
+    useState<bigint | null>(
+      null
+    );
 
-  const [
-    job,
-    setJob,
-  ] = useState<OnChainJob | null>(
-    null
-  );
+  const [job, setJob] =
+    useState<OnChainJob | null>(
+      null
+    );
 
-  const [
-    jobId,
-    setJobId,
-  ] = useState<bigint | null>(
-    null
-  );
+  const [jobId, setJobId] =
+    useState<bigint | null>(
+      null
+    );
 
-  const [
-    statusMessage,
-    setStatusMessage,
-  ] = useState(
-    "Select an assigned task."
-  );
+  const [statusMessage, setStatusMessage] =
+    useState(
+      "Select an assigned task."
+    );
 
-  const [
-    errorMessage,
-    setErrorMessage,
-  ] = useState<string | null>(
-    null
-  );
+  const [errorMessage, setErrorMessage] =
+    useState<string | null>(
+      null
+    );
 
-  const [
-    loading,
-    setLoading,
-  ] = useState(false);
+  const [loading, setLoading] =
+    useState(false);
 
-  const [
-    transactionHashes,
-    setTransactionHashes,
-  ] = useState<{
-    create?: `0x${string}`;
-    register?: `0x${string}`;
-    budget?: `0x${string}`;
-    approval?: `0x${string}`;
-    fund?: `0x${string}`;
-  }>({});
+  const [transactionHashes, setTransactionHashes] =
+    useState<{
+      create?: `0x${string}`;
+      register?: `0x${string}`;
+      budget?: `0x${string}`;
+      approval?: `0x${string}`;
+      fund?: `0x${string}`;
+    }>({});
 
   const selectedMission =
     missions.find(
-      (
-        mission
-      ) =>
+      (mission) =>
         mission.id ===
         selectedMissionId
     ) ?? null;
@@ -255,24 +219,18 @@ export default function MissionSubJob() {
       () =>
         selectedMission
           ? selectedMission.tasks.filter(
-              (
-                task
-              ) =>
+              (task) =>
                 Boolean(
                   task.assignedAgentId
                 )
             )
           : [],
-      [
-        selectedMission,
-      ]
+      [selectedMission]
     );
 
   const selectedTask =
     selectedMission?.tasks.find(
-      (
-        task
-      ) =>
+      (task) =>
         task.id ===
         selectedTaskId
     ) ?? null;
@@ -280,9 +238,7 @@ export default function MissionSubJob() {
   const assignedAgent =
     selectedTask?.assignedAgentId
       ? DEMO_AGENTS.find(
-          (
-            agent
-          ) =>
+          (agent) =>
             agent.id ===
             selectedTask.assignedAgentId
         ) ?? null
@@ -302,28 +258,20 @@ export default function MissionSubJob() {
     if (saved) {
       const savedMission =
         missions.find(
-          (
-            mission
-          ) =>
+          (mission) =>
             mission.id ===
             saved.missionId
         );
 
-      if (
-        savedMission
-      ) {
+      if (savedMission) {
         const savedTask =
           savedMission.tasks.find(
-            (
-              task
-            ) =>
+            (task) =>
               task.id ===
               saved.taskId
           );
 
-        if (
-          savedTask
-        ) {
+        if (savedTask) {
           setSelectedMissionId(
             savedMission.id
           );
@@ -332,9 +280,7 @@ export default function MissionSubJob() {
             savedTask.id
           );
 
-          if (
-            saved.jobId
-          ) {
+          if (saved.jobId) {
             setJobId(
               BigInt(
                 saved.jobId
@@ -349,46 +295,34 @@ export default function MissionSubJob() {
 
     const firstMission =
       missions.find(
-        (
-          mission
-        ) =>
+        (mission) =>
           mission.tasks.some(
-            (
-              task
-            ) =>
+            (task) =>
               Boolean(
                 task.assignedAgentId
               )
           )
       );
 
-    if (
-      firstMission
-    ) {
+    if (firstMission) {
       setSelectedMissionId(
         firstMission.id
       );
 
       const firstTask =
         firstMission.tasks.find(
-          (
-            task
-          ) =>
+          (task) =>
             Boolean(
               task.assignedAgentId
             )
         );
 
-      if (
-        firstTask
-      ) {
+      if (firstTask) {
         setSelectedTaskId(
           firstTask.id
         );
 
-        if (
-          firstTask.chainJobId
-        ) {
+        if (firstTask.chainJobId) {
           setJobId(
             BigInt(
               firstTask.chainJobId
@@ -420,9 +354,7 @@ export default function MissionSubJob() {
   ]);
 
   useEffect(() => {
-    if (
-      address
-    ) {
+    if (address) {
       void refreshTokenState(
         address
       );
@@ -431,9 +363,7 @@ export default function MissionSubJob() {
 
   async function connectWallet() {
     try {
-      setErrorMessage(
-        null
-      );
+      setErrorMessage(null);
 
       setWalletStatus(
         "Connecting"
@@ -760,11 +690,8 @@ export default function MissionSubJob() {
         );
 
       setTransactionHashes(
-        (
-          current
-        ) => ({
+        (current) => ({
           ...current,
-
           create:
             hash,
         })
@@ -909,11 +836,8 @@ export default function MissionSubJob() {
         );
 
       setTransactionHashes(
-        (
-          current
-        ) => ({
+        (current) => ({
           ...current,
-
           register:
             hash,
         })
@@ -1030,11 +954,8 @@ export default function MissionSubJob() {
         );
 
       setTransactionHashes(
-        (
-          current
-        ) => ({
+        (current) => ({
           ...current,
-
           budget:
             hash,
         })
@@ -1135,11 +1056,8 @@ export default function MissionSubJob() {
         );
 
       setTransactionHashes(
-        (
-          current
-        ) => ({
+        (current) => ({
           ...current,
-
           approval:
             hash,
         })
@@ -1310,11 +1228,8 @@ export default function MissionSubJob() {
         );
 
       setTransactionHashes(
-        (
-          current
-        ) => ({
+        (current) => ({
           ...current,
-
           fund:
             hash,
         })
@@ -2488,16 +2403,12 @@ const styles: Record<
   page: {
     minHeight:
       "100vh",
-
     padding:
       "24px 16px 60px",
-
     background:
       "#090b0d",
-
     color:
       "#f1f2ef",
-
     fontFamily:
       "Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
   },
@@ -2505,7 +2416,6 @@ const styles: Record<
   container: {
     maxWidth:
       "860px",
-
     margin:
       "0 auto",
   },
@@ -2513,16 +2423,12 @@ const styles: Record<
   header: {
     display:
       "flex",
-
     justifyContent:
       "space-between",
-
     alignItems:
       "flex-start",
-
     gap:
       "16px",
-
     marginBottom:
       "18px",
   },
@@ -2530,13 +2436,10 @@ const styles: Record<
   eyebrow: {
     fontSize:
       "10px",
-
     fontWeight:
       900,
-
     letterSpacing:
       "0.13em",
-
     color:
       "#7f878e",
   },
@@ -2544,10 +2447,8 @@ const styles: Record<
   title: {
     margin:
       "7px 0",
-
     fontSize:
       "30px",
-
     letterSpacing:
       "-0.03em",
   },
@@ -2555,13 +2456,10 @@ const styles: Record<
   subtitle: {
     margin:
       0,
-
     color:
       "#929aa1",
-
     lineHeight:
       1.6,
-
     fontSize:
       "14px",
   },
@@ -2569,22 +2467,16 @@ const styles: Record<
   badge: {
     padding:
       "8px 10px",
-
     borderRadius:
       "999px",
-
     background:
       "#1b1810",
-
     color:
       "#f0b90b",
-
     fontWeight:
       900,
-
     fontSize:
       "10px",
-
     whiteSpace:
       "nowrap",
   },
@@ -2592,25 +2484,18 @@ const styles: Record<
   notice: {
     marginBottom:
       "14px",
-
     padding:
       "14px",
-
     border:
       "1px solid #463a20",
-
     borderRadius:
       "12px",
-
     background:
       "#171511",
-
     color:
       "#c5b774",
-
     fontSize:
       "12px",
-
     lineHeight:
       1.55,
   },
@@ -2618,16 +2503,12 @@ const styles: Record<
   card: {
     marginBottom:
       "14px",
-
     padding:
       "18px",
-
     border:
       "1px solid #252b30",
-
     borderRadius:
       "14px",
-
     background:
       "#111518",
   },
@@ -2635,10 +2516,8 @@ const styles: Record<
   muted: {
     margin:
       "5px 0 12px",
-
     color:
       "#7f878e",
-
     fontSize:
       "12px",
   },
@@ -2646,13 +2525,10 @@ const styles: Record<
   grid: {
     display:
       "grid",
-
     gridTemplateColumns:
       "repeat(auto-fit, minmax(150px, 1fr))",
-
     gap:
       "8px",
-
     marginTop:
       "14px",
   },
@@ -2660,16 +2536,12 @@ const styles: Record<
   info: {
     padding:
       "11px",
-
     border:
       "1px solid #272d32",
-
     borderRadius:
       "9px",
-
     background:
       "#0d1012",
-
     minWidth:
       0,
   },
@@ -2677,13 +2549,10 @@ const styles: Record<
   infoLabel: {
     display:
       "block",
-
     color:
       "#737c83",
-
     fontSize:
       "10px",
-
     textTransform:
       "uppercase",
   },
@@ -2691,13 +2560,10 @@ const styles: Record<
   infoValue: {
     display:
       "block",
-
     marginTop:
       "4px",
-
     fontSize:
       "12px",
-
     wordBreak:
       "break-word",
   },
@@ -2705,31 +2571,22 @@ const styles: Record<
   select: {
     display:
       "block",
-
     width:
       "100%",
-
     boxSizing:
       "border-box",
-
     marginTop:
       "9px",
-
     padding:
       "12px",
-
     border:
       "1px solid #343a3f",
-
     borderRadius:
       "9px",
-
     background:
       "#0c1012",
-
     color:
       "#fff",
-
     outline:
       "none",
   },
@@ -2737,22 +2594,16 @@ const styles: Record<
   description: {
     marginTop:
       "14px",
-
     padding:
       "12px",
-
     borderRadius:
       "9px",
-
     background:
       "#0c1012",
-
     color:
       "#aeb5ba",
-
     fontSize:
       "12px",
-
     lineHeight:
       1.55,
   },
@@ -2760,22 +2611,16 @@ const styles: Record<
   success: {
     marginTop:
       "12px",
-
     padding:
       "12px",
-
     border:
       "1px solid #284737",
-
     borderRadius:
       "10px",
-
     background:
       "#101916",
-
     color:
       "#80d3a5",
-
     fontSize:
       "12px",
   },
@@ -2783,13 +2628,10 @@ const styles: Record<
   row: {
     display:
       "flex",
-
     justifyContent:
       "space-between",
-
     alignItems:
       "center",
-
     gap:
       "10px",
   },
@@ -2797,10 +2639,8 @@ const styles: Record<
   walletConnected: {
     color:
       "#7fd3a5",
-
     fontSize:
       "12px",
-
     fontWeight:
       800,
   },
@@ -2808,10 +2648,8 @@ const styles: Record<
   walletConnecting: {
     color:
       "#f0b90b",
-
     fontSize:
       "12px",
-
     fontWeight:
       800,
   },
@@ -2819,10 +2657,8 @@ const styles: Record<
   walletDisconnected: {
     color:
       "#9ca4aa",
-
     fontSize:
       "12px",
-
     fontWeight:
       800,
   },
@@ -2830,25 +2666,18 @@ const styles: Record<
   balance: {
     display:
       "flex",
-
     justifyContent:
       "space-between",
-
     marginTop:
       "12px",
-
     padding:
       "11px",
-
     borderRadius:
       "9px",
-
     background:
       "#0c1012",
-
     color:
       "#929aa1",
-
     fontSize:
       "12px",
   },
@@ -2856,28 +2685,20 @@ const styles: Record<
   code: {
     display:
       "block",
-
     marginTop:
       "9px",
-
     padding:
       "10px",
-
     borderRadius:
       "8px",
-
     background:
       "#080a0c",
-
     color:
       "#8f979d",
-
     fontSize:
       "11px",
-
     wordBreak:
       "break-all",
-
     whiteSpace:
       "pre-wrap",
   },
@@ -2885,28 +2706,20 @@ const styles: Record<
   primaryButton: {
     width:
       "100%",
-
     marginTop:
       "12px",
-
     padding:
       "13px",
-
     border:
       "none",
-
     borderRadius:
       "10px",
-
     background:
       "#f0b90b",
-
     color:
       "#111",
-
     fontWeight:
       900,
-
     cursor:
       "pointer",
   },
@@ -2914,28 +2727,20 @@ const styles: Record<
   secondaryButton: {
     width:
       "100%",
-
     marginTop:
       "9px",
-
     padding:
       "12px",
-
     border:
       "1px solid #343a3f",
-
     borderRadius:
       "10px",
-
     background:
       "#171b1e",
-
     color:
       "#fff",
-
     fontWeight:
       800,
-
     cursor:
       "pointer",
   },
@@ -2943,25 +2748,18 @@ const styles: Record<
   disabledButton: {
     width:
       "100%",
-
     marginTop:
       "12px",
-
     padding:
       "13px",
-
     border:
       "none",
-
     borderRadius:
       "10px",
-
     background:
       "#292e32",
-
     color:
       "#626a70",
-
     cursor:
       "not-allowed",
   },
@@ -2969,13 +2767,10 @@ const styles: Record<
   steps: {
     display:
       "flex",
-
     flexWrap:
       "wrap",
-
     gap:
       "8px",
-
     marginTop:
       "14px",
   },
@@ -2983,28 +2778,20 @@ const styles: Record<
   step: {
     display:
       "flex",
-
     alignItems:
       "center",
-
     gap:
       "6px",
-
     padding:
       "8px 10px",
-
     border:
       "1px solid #2b3237",
-
     borderRadius:
       "8px",
-
     background:
       "#0d1012",
-
     color:
       "#727b82",
-
     fontSize:
       "11px",
   },
@@ -3012,28 +2799,20 @@ const styles: Record<
   stepComplete: {
     display:
       "flex",
-
     alignItems:
       "center",
-
     gap:
       "6px",
-
     padding:
       "8px 10px",
-
     border:
       "1px solid #284737",
-
     borderRadius:
       "8px",
-
     background:
       "#101916",
-
     color:
       "#7fd3a5",
-
     fontSize:
       "11px",
   },
@@ -3041,22 +2820,16 @@ const styles: Record<
   statusCard: {
     marginBottom:
       "12px",
-
     padding:
       "13px",
-
     border:
       "1px solid #2f363b",
-
     borderRadius:
       "10px",
-
     background:
       "#13181b",
-
     color:
       "#b7bec4",
-
     fontSize:
       "12px",
   },
@@ -3064,19 +2837,14 @@ const styles: Record<
   errorCard: {
     marginBottom:
       "12px",
-
     padding:
       "13px",
-
     border:
       "1px solid #562e2e",
-
     borderRadius:
       "10px",
-
     background:
       "#211414",
-
     color:
       "#ffaaaa",
   },
@@ -3084,13 +2852,10 @@ const styles: Record<
   error: {
     margin:
       "8px 0 0",
-
     whiteSpace:
       "pre-wrap",
-
     overflowWrap:
       "anywhere",
-
     fontSize:
       "11px",
   },
@@ -3098,121 +2863,10 @@ const styles: Record<
   txRow: {
     display:
       "flex",
-
     justifyContent:
       "space-between",
-
     alignItems:
       "center",
-
-    gap:
-      "10px",
-
-    padding:
-      "10px 0",
-
-    borderBottom:
-      "1px solid #252b30",
-
-    fontSize:
-      "12px",
-  },
-
-  link: {
-    color:
-      "#f0b90b",
-
-    textDecoration:
-      "none",
-
-    fontWeight:
-      800,
-  },
-};    alignItems:
-      "center",
-    gap:
-      "6px",
-    padding:
-      "8px",
-    border:
-      "1px solid #2b3237",
-    borderRadius:
-      "8px",
-    background:
-      "#0d1012",
-    color:
-      "#6f787f",
-    fontSize:
-      "11px",
-  },
-
-  stepActive: {
-    display:
-      "flex",
-    alignItems:
-      "center",
-    gap:
-      "6px",
-    padding:
-      "8px",
-    border:
-      "1px solid #284737",
-    borderRadius:
-      "8px",
-    background:
-      "#101916",
-    color:
-      "#7fd3a5",
-    fontSize:
-      "11px",
-  },
-
-  statusBox: {
-    marginBottom:
-      "12px",
-    padding:
-      "13px",
-    border:
-      "1px solid #2f363b",
-    borderRadius:
-      "10px",
-    background:
-      "#13181b",
-    color:
-      "#b7bec4",
-    fontSize:
-      "12px",
-  },
-
-  errorBox: {
-    marginBottom:
-      "12px",
-    padding:
-      "13px",
-    border:
-      "1px solid #562e2e",
-    borderRadius:
-      "10px",
-    background:
-      "#211414",
-    color:
-      "#ffaaaa",
-  },
-
-  errorText: {
-    whiteSpace:
-      "pre-wrap",
-    overflowWrap:
-      "anywhere",
-    fontSize:
-      "11px",
-  },
-
-  transaction: {
-    display:
-      "flex",
-    justifyContent:
-      "space-between",
     gap:
       "10px",
     padding:
@@ -3226,198 +2880,9 @@ const styles: Record<
   link: {
     color:
       "#f0b90b",
-    fontWeight:
-      800,
     textDecoration:
       "none",
-  },
-};olid #284737",
-    borderRadius:
-      "10px",
-    background:
-      "#101916",
-    color:
-      "#80d3a5",
-    fontSize:
-      "12px",
-  },
-
-  balanceBox: {
-    display:
-      "flex",
-    justifyContent:
-      "space-between",
-    gap:
-      "12px",
-    marginTop:
-      "12px",
-    padding:
-      "11px",
-    borderRadius:
-      "9px",
-    background:
-      "#0c1012",
-    color:
-      "#929aa1",
-    fontSize:
-      "12px",
-  },
-
-  primaryButton: {
-    width:
-      "100%",
-    marginTop:
-      "12px",
-    padding:
-      "13px",
-    border:
-      "none",
-    borderRadius:
-      "10px",
-    background:
-      "#f0b90b",
-    color:
-      "#111",
-    fontWeight:
-      900,
-    cursor:
-      "pointer",
-  },
-
-  secondaryButtonFull: {
-    width:
-      "100%",
-    marginTop:
-      "9px",
-    padding:
-      "12px",
-    border:
-      "1px solid #343a3f",
-    borderRadius:
-      "10px",
-    background:
-      "#171b1e",
-    color:
-      "#fff",
     fontWeight:
       800,
-    cursor:
-      "pointer",
-  },
-
-  disabledButton: {
-    width:
-      "100%",
-    marginTop:
-      "12px",
-    padding:
-      "12px",
-    border:
-      "none",
-    borderRadius:
-      "10px",
-    background:
-      "#292e32",
-    color:
-      "#626a70",
-    cursor:
-      "not-allowed",
-  },
-
-  flow: {
-    display:
-      "flex",
-    flexWrap:
-      "wrap",
-    gap:
-      "8px",
-    marginTop:
-      "14px",
-  },
-
-  flowActive: {
-    display:
-      "flex",
-    alignItems:
-      "center",
-    gap:
-      "6px",
-    padding:
-      "8px",
-    borderRadius:
-      "8px",
-    background:
-      "#101916",
-    color:
-      "#7fd3a5",
-    fontSize:
-      "11px",
-    border:
-      "1px solid #284737",
-  },
-
-  statusBox: {
-    marginBottom:
-      "12px",
-    padding:
-      "13px",
-    border:
-      "1px solid #2f363b",
-    borderRadius:
-      "10px",
-    background:
-      "#13181b",
-    color:
-      "#b7bec4",
-    fontSize:
-      "12px",
-  },
-
-  errorBox: {
-    marginBottom:
-      "12px",
-    padding:
-      "13px",
-    border:
-      "1px solid #562e2e",
-    borderRadius:
-      "10px",
-    background:
-      "#211414",
-    color:
-      "#ffaaaa",
-  },
-
-  errorText: {
-    whiteSpace:
-      "pre-wrap",
-    overflowWrap:
-      "anywhere",
-    fontSize:
-      "11px",
-  },
-
-  transaction: {
-    display:
-      "flex",
-    justifyContent:
-      "space-between",
-    gap:
-      "10px",
-    padding:
-      "10px 0",
-    borderBottom:
-      "1px solid #252b30",
-    fontSize:
-      "12px",
-  },
-
-  link: {
-    color:
-      "#f0b90b",
-    fontWeight:
-      800,
-    textDecoration:
-      "none",
   },
 };
