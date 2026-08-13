@@ -23,6 +23,7 @@ type MissionTask = {
   description: string;
   budget: number;
   status: TaskStatus;
+  assignedAgentId?: string;
 };
 
 type Mission = {
@@ -34,6 +35,12 @@ type Mission = {
   createdAt: string;
   status: MissionStatus;
   tasks: MissionTask[];
+};
+
+type Agent = {
+  id: string;
+  name: string;
+  role: string;
 };
 
 type ChatMessage = {
@@ -78,6 +85,34 @@ const ACTIVITY_STORAGE_PREFIX =
 
 const FILES_STORAGE_PREFIX =
   "bnb_agent_marketplace_files_";
+
+const AGENTS: Agent[] = [
+  {
+    id: "taskpilot",
+    name: "TaskPilot",
+    role: "Project Manager",
+  },
+  {
+    id: "pixelcraft",
+    name: "PixelCraft",
+    role: "UI/UX Designer",
+  },
+  {
+    id: "codeforge",
+    name: "CodeForge",
+    role: "Developer",
+  },
+  {
+    id: "rankpilot",
+    name: "RankPilot",
+    role: "SEO Specialist",
+  },
+  {
+    id: "verifyai",
+    name: "VerifyAI",
+    role: "QA Agent",
+  },
+];
 
 export default function MissionWorkspace() {
   const [
@@ -147,12 +182,6 @@ export default function MissionWorkspace() {
         selectedMissionId
     ) ?? null;
 
-  /*
-   * ========================================================
-   * LOAD PROJECT DATA
-   * ========================================================
-   */
-
   useEffect(() => {
     if (!mission) {
       setChatMessages([]);
@@ -183,12 +212,6 @@ export default function MissionWorkspace() {
     mission?.id,
   ]);
 
-  /*
-   * ========================================================
-   * AUTO-SELECT FIRST MISSION
-   * ========================================================
-   */
-
   useEffect(() => {
     if (
       !selectedMissionId &&
@@ -211,12 +234,6 @@ export default function MissionWorkspace() {
     selectedMissionId,
   ]);
 
-  /*
-   * ========================================================
-   * SELECT MISSION
-   * ========================================================
-   */
-
   function selectMission(
     id: string
   ) {
@@ -231,30 +248,15 @@ export default function MissionWorkspace() {
     setNotice("");
   }
 
-  /*
-   * ========================================================
-   * REFRESH MISSIONS
-   * ========================================================
-   */
-
   function refreshMissions() {
-    const refreshed =
-      loadMissions();
-
     setMissions(
-      refreshed
+      loadMissions()
     );
 
     setNotice(
       "Workspace refreshed."
     );
   }
-
-  /*
-   * ========================================================
-   * UPDATE TASK STATUS
-   * ========================================================
-   */
 
   function updateTaskStatus(
     taskId: string,
@@ -263,6 +265,15 @@ export default function MissionWorkspace() {
     if (!mission) {
       return;
     }
+
+    const targetTask =
+      mission.tasks.find(
+        (
+          task
+        ) =>
+          task.id ===
+          taskId
+      );
 
     const updatedMissions =
       missions.map(
@@ -291,7 +302,7 @@ export default function MissionWorkspace() {
                   : task
             );
 
-          const completed =
+          const allCompleted =
             updatedTasks.length >
               0 &&
             updatedTasks.every(
@@ -316,7 +327,7 @@ export default function MissionWorkspace() {
             );
 
           const nextStatus: MissionStatus =
-            completed
+            allCompleted
               ? "Completed"
               : started
               ? "In Progress"
@@ -340,47 +351,52 @@ export default function MissionWorkspace() {
       updatedMissions
     );
 
-    const changedTask =
-      mission.tasks.find(
-        (
-          task
-        ) =>
-          task.id ===
-          taskId
-      );
+    addActivity({
+      title:
+        `${targetTask?.title ?? "Task"} updated`,
 
-    addActivity(
-      {
-        title:
-          `${changedTask?.title ?? "Task"} updated`,
+      description:
+        `Task status changed to ${newStatus}.`,
 
-        description:
-          `Task status changed to ${newStatus}.`,
-
-        icon:
-          newStatus ===
-          "Completed"
-            ? "✅"
-            : newStatus ===
-              "In Progress"
-            ? "🔄"
-            : "📋",
-      }
-    );
+      icon:
+        newStatus ===
+        "Completed"
+          ? "✅"
+          : newStatus ===
+            "In Progress"
+          ? "🔄"
+          : "📋",
+    });
 
     setNotice(
       "Task updated."
     );
   }
 
-  /*
-   * ========================================================
-   * QUICK START PROJECT
-   * ========================================================
-   */
-
   function startProject() {
     if (!mission) {
+      return;
+    }
+
+    const firstUnassigned =
+      mission.tasks.find(
+        (
+          task
+        ) =>
+          !task.assignedAgentId
+      );
+
+    if (
+      firstUnassigned
+    ) {
+      setNotice(
+        "Assign agents to the mission tasks before starting the project."
+      );
+
+      setActiveTab(
+        "tasks"
+      );
+
       return;
     }
 
@@ -398,10 +414,8 @@ export default function MissionWorkspace() {
 
           return {
             ...item,
-
             status:
               "In Progress",
-
             tasks:
               item.tasks.map(
                 (
@@ -409,7 +423,6 @@ export default function MissionWorkspace() {
                   index
                 ): MissionTask => ({
                   ...task,
-
                   status:
                     index ===
                     0
@@ -429,45 +442,30 @@ export default function MissionWorkspace() {
       updatedMissions
     );
 
-    addActivity(
-      {
-        title:
-          "Mission started",
+    addActivity({
+      title:
+        "Mission started",
+      description:
+        "The assigned agent team is ready to begin coordinated work.",
+      icon:
+        "🚀",
+    });
 
-        description:
-          "The project team is ready to begin coordinated work.",
-
-        icon:
-          "🚀",
-      }
-    );
-
-    addChatMessage(
-      {
-        sender:
-          "Project Manager",
-
-        role:
-          "Project Manager",
-
-        message:
-          "Mission started. I have organized the team and will coordinate the work.",
-
-        kind:
-          "agent",
-      }
-    );
+    addChatMessage({
+      sender:
+        "TaskPilot",
+      role:
+        "Project Manager",
+      message:
+        "Mission started. I have confirmed the assigned team and will coordinate the work.",
+      kind:
+        "agent",
+    });
 
     setNotice(
       "Mission started. Team is ready."
     );
   }
-
-  /*
-   * ========================================================
-   * SEND MESSAGE
-   * ========================================================
-   */
 
   function sendMessage() {
     if (
@@ -477,21 +475,16 @@ export default function MissionWorkspace() {
       return;
     }
 
-    addChatMessage(
-      {
-        sender:
-          "You",
-
-        role:
-          "Client",
-
-        message:
-          newMessage.trim(),
-
-        kind:
-          "user",
-      }
-    );
+    addChatMessage({
+      sender:
+        "You",
+      role:
+        "Client",
+      message:
+        newMessage.trim(),
+      kind:
+        "user",
+    });
 
     setNewMessage("");
 
@@ -499,12 +492,6 @@ export default function MissionWorkspace() {
       "Message added to the project room."
     );
   }
-
-  /*
-   * ========================================================
-   * ADD SYSTEM CHAT MESSAGE
-   * ========================================================
-   */
 
   function addChatMessage(
     message: Omit<
@@ -519,10 +506,8 @@ export default function MissionWorkspace() {
     const item: ChatMessage =
       {
         ...message,
-
         id:
           createId(),
-
         timestamp:
           new Date().toISOString(),
       };
@@ -542,14 +527,8 @@ export default function MissionWorkspace() {
     );
   }
 
-  /*
-   * ========================================================
-   * ACTIVITY
-   * ========================================================
-   */
-
   function addActivity(
-    activityInput: Omit<
+    item: Omit<
       ActivityItem,
       "id" | "timestamp"
     >
@@ -558,19 +537,17 @@ export default function MissionWorkspace() {
       return;
     }
 
-    const item: ActivityItem =
+    const activityItem: ActivityItem =
       {
-        ...activityInput,
-
+        ...item,
         id:
           createId(),
-
         timestamp:
           new Date().toISOString(),
       };
 
     const updated = [
-      item,
+      activityItem,
       ...activity,
     ];
 
@@ -584,31 +561,8 @@ export default function MissionWorkspace() {
     );
   }
 
-  /*
-   * ========================================================
-   * ADD DEMO ARTIFACT
-   * ========================================================
-   */
-
   function createDemoArtifact() {
     if (!mission) {
-      return;
-    }
-
-    const existing =
-      files.find(
-        (
-          file
-        ) =>
-          file.name ===
-          "project-plan.md"
-      );
-
-    if (existing) {
-      setNotice(
-        "The project plan artifact already exists."
-      );
-
       return;
     }
 
@@ -616,23 +570,25 @@ export default function MissionWorkspace() {
       {
         id:
           createId(),
-
         name:
           "project-plan.md",
-
         type:
           "Markdown",
-
         size:
           "4.2 KB",
-
         updatedAt:
           new Date().toISOString(),
       };
 
     const updated = [
       file,
-      ...files,
+      ...files.filter(
+        (
+          item
+        ) =>
+          item.name !==
+          file.name
+      ),
     ];
 
     setFiles(
@@ -644,29 +600,19 @@ export default function MissionWorkspace() {
       updated
     );
 
-    addActivity(
-      {
-        title:
-          "Project artifact created",
-
-        description:
-          "Project Manager created project-plan.md.",
-
-        icon:
-          "📄",
-      }
-    );
+    addActivity({
+      title:
+        "Project artifact created",
+      description:
+        "TaskPilot created project-plan.md.",
+      icon:
+        "📄",
+    });
 
     setNotice(
       "Demo project artifact created."
     );
   }
-
-  /*
-   * ========================================================
-   * PROGRESS
-   * ========================================================
-   */
 
   const progress =
     useMemo(() => {
@@ -696,25 +642,16 @@ export default function MissionWorkspace() {
             "In Progress"
         ).length;
 
-      const weighted =
-        completed +
-        inProgress *
-          0.5;
-
       return Math.round(
-        (weighted /
+        ((completed +
+          inProgress *
+            0.5) /
           mission.tasks.length) *
           100
       );
     }, [
       mission,
     ]);
-
-  /*
-   * ========================================================
-   * NO MISSION STATE
-   * ========================================================
-   */
 
   if (
     missions.length ===
@@ -745,8 +682,7 @@ export default function MissionWorkspace() {
 
           <p>
             Create a mission in the Marketplace
-            first. Your project workspace will
-            appear here automatically.
+            first.
           </p>
 
           <button
@@ -757,18 +693,12 @@ export default function MissionWorkspace() {
               styles.secondaryButton
             }
           >
-            Refresh Workspace
+            Refresh
           </button>
         </div>
       </div>
     );
   }
-
-  /*
-   * ========================================================
-   * MISSION NOT SELECTED
-   * ========================================================
-   */
 
   if (!mission) {
     return (
@@ -818,10 +748,7 @@ export default function MissionWorkspace() {
                     {
                       item.budget
                     }{" "}
-                    U ·{" "}
-                    {
-                      item.status
-                    }
+                    U
                   </span>
                 </button>
               )
@@ -843,10 +770,6 @@ export default function MissionWorkspace() {
           styles.container
         }
       >
-        {/* ================================================= */}
-        {/* HEADER */}
-        {/* ================================================= */}
-
         <div
           style={
             styles.header
@@ -936,10 +859,6 @@ export default function MissionWorkspace() {
           </div>
         </div>
 
-        {/* ================================================= */}
-        {/* PROGRESS */}
-        {/* ================================================= */}
-
         <div
           style={
             styles.progressCard
@@ -986,7 +905,6 @@ export default function MissionWorkspace() {
             <div
               style={{
                 ...styles.progressFill,
-
                 width:
                   `${progress}%`,
               }}
@@ -1015,11 +933,10 @@ export default function MissionWorkspace() {
               {
                 mission.tasks.length
               }{" "}
-              total tasks
+              tasks
             </span>
 
             <span>
-              Budget{" "}
               {
                 mission.budget
               }{" "}
@@ -1028,117 +945,70 @@ export default function MissionWorkspace() {
           </div>
         </div>
 
-        {/* ================================================= */}
-        {/* TABS */}
-        {/* ================================================= */}
-
         <div
           style={
             styles.tabs
           }
         >
-          <TabButton
-            active={
-              activeTab ===
-              "overview"
-            }
-            onClick={() =>
-              setActiveTab(
-                "overview"
-              )
-            }
-          >
-            Overview
-          </TabButton>
-
-          <TabButton
-            active={
-              activeTab ===
-              "tasks"
-            }
-            onClick={() =>
-              setActiveTab(
-                "tasks"
-              )
-            }
-          >
-            Tasks
-          </TabButton>
-
-          <TabButton
-            active={
-              activeTab ===
-              "team"
-            }
-            onClick={() =>
-              setActiveTab(
-                "team"
-              )
-            }
-          >
-            Team
-          </TabButton>
-
-          <TabButton
-            active={
-              activeTab ===
-              "chat"
-            }
-            onClick={() =>
-              setActiveTab(
-                "chat"
-              )
-            }
-          >
-            Communication
-          </TabButton>
-
-          <TabButton
-            active={
-              activeTab ===
-              "files"
-            }
-            onClick={() =>
-              setActiveTab(
-                "files"
-              )
-            }
-          >
-            Files
-          </TabButton>
-
-          <TabButton
-            active={
-              activeTab ===
-              "deliverables"
-            }
-            onClick={() =>
-              setActiveTab(
-                "deliverables"
-              )
-            }
-          >
-            Deliverables
-          </TabButton>
-
-          <TabButton
-            active={
-              activeTab ===
-              "activity"
-            }
-            onClick={() =>
-              setActiveTab(
-                "activity"
-              )
-            }
-          >
-            Activity
-          </TabButton>
+          {[
+            [
+              "overview",
+              "Overview",
+            ],
+            [
+              "tasks",
+              "Tasks",
+            ],
+            [
+              "team",
+              "Team",
+            ],
+            [
+              "chat",
+              "Communication",
+            ],
+            [
+              "files",
+              "Files",
+            ],
+            [
+              "deliverables",
+              "Deliverables",
+            ],
+            [
+              "activity",
+              "Activity",
+            ],
+          ].map(
+            (
+              [
+                key,
+                label,
+              ]
+            ) => (
+              <button
+                key={
+                  key
+                }
+                onClick={() =>
+                  setActiveTab(
+                    key as typeof activeTab
+                  )
+                }
+                style={
+                  activeTab ===
+                  key
+                    ? styles.tabActive
+                    : styles.tab
+                }
+              >
+                {
+                  label
+                }
+              </button>
+            )
+          )}
         </div>
-
-        {/* ================================================= */}
-        {/* NOTICE */}
-        {/* ================================================= */}
 
         {notice && (
           <div
@@ -1146,13 +1016,11 @@ export default function MissionWorkspace() {
               styles.notice
             }
           >
-            {notice}
+            {
+              notice
+            }
           </div>
         )}
-
-        {/* ================================================= */}
-        {/* OVERVIEW */}
-        {/* ================================================= */}
 
         {activeTab ===
           "overview" && (
@@ -1221,9 +1089,22 @@ export default function MissionWorkspace() {
                 <InfoCard
                   label="Tasks"
                   value={String(
-                    mission.tasks
-                      .length
+                    mission.tasks.length
                   )}
+                />
+
+                <InfoCard
+                  label="Assigned"
+                  value={`${mission.tasks.filter(
+                    (
+                      task
+                    ) =>
+                      Boolean(
+                        task.assignedAgentId
+                      )
+                  ).length}/${
+                    mission.tasks.length
+                  }`}
                 />
 
                 <InfoCard
@@ -1231,13 +1112,6 @@ export default function MissionWorkspace() {
                   value={
                     mission.category
                   }
-                />
-
-                <InfoCard
-                  label="Created"
-                  value={formatDate(
-                    mission.createdAt
-                  )}
                 />
               </div>
 
@@ -1272,7 +1146,7 @@ export default function MissionWorkspace() {
                       styles.eyebrow
                     }
                   >
-                    TEAM STATUS
+                    ASSIGNED TEAM
                   </div>
 
                   <h2
@@ -1293,25 +1167,35 @@ export default function MissionWorkspace() {
                 {mission.tasks.map(
                   (
                     task
-                  ) => (
-                    <TeamMember
-                      key={
-                        task.id
-                      }
-                      task={
-                        task
-                      }
-                    />
-                  )
+                  ) => {
+                    const agent =
+                      AGENTS.find(
+                        (
+                          item
+                        ) =>
+                          item.id ===
+                          task.assignedAgentId
+                      );
+
+                    return (
+                      <TeamMember
+                        key={
+                          task.id
+                        }
+                        task={
+                          task
+                        }
+                        agent={
+                          agent
+                        }
+                      />
+                    );
+                  }
                 )}
               </div>
             </div>
           </div>
         )}
-
-        {/* ================================================= */}
-        {/* TASKS */}
-        {/* ================================================= */}
 
         {activeTab ===
           "tasks" && (
@@ -1347,8 +1231,8 @@ export default function MissionWorkspace() {
                     styles.panelSubtitle
                   }
                 >
-                  Each task will eventually become
-                  an ERC-8183 sub-job.
+                  Each assigned task will become an
+                  ERC-8183 sub-job in the next phase.
                 </p>
               </div>
 
@@ -1372,32 +1256,42 @@ export default function MissionWorkspace() {
               {mission.tasks.map(
                 (
                   task
-                ) => (
-                  <WorkspaceTask
-                    key={
-                      task.id
-                    }
-                    task={
-                      task
-                    }
-                    onStatusChange={(
-                      nextStatus
-                    ) =>
-                      updateTaskStatus(
-                        task.id,
+                ) => {
+                  const agent =
+                    AGENTS.find(
+                      (
+                        item
+                      ) =>
+                        item.id ===
+                        task.assignedAgentId
+                    );
+
+                  return (
+                    <WorkspaceTask
+                      key={
+                        task.id
+                      }
+                      task={
+                        task
+                      }
+                      agent={
+                        agent
+                      }
+                      onStatusChange={(
                         nextStatus
-                      )
-                    }
-                  />
-                )
+                      ) =>
+                        updateTaskStatus(
+                          task.id,
+                          nextStatus
+                        )
+                      }
+                    />
+                  );
+                }
               )}
             </div>
           </div>
         )}
-
-        {/* ================================================= */}
-        {/* TEAM */}
-        {/* ================================================= */}
 
         {activeTab ===
           "team" && (
@@ -1433,8 +1327,8 @@ export default function MissionWorkspace() {
                     styles.panelSubtitle
                   }
                 >
-                  Specialist agents assigned to
-                  this mission.
+                  Assigned specialist agents for this
+                  mission.
                 </p>
               </div>
             </div>
@@ -1447,76 +1341,84 @@ export default function MissionWorkspace() {
               {mission.tasks.map(
                 (
                   task
-                ) => (
-                  <div
-                    key={
-                      task.id
-                    }
-                    style={
-                      styles.agentCard
-                    }
-                  >
+                ) => {
+                  const agent =
+                    AGENTS.find(
+                      (
+                        item
+                      ) =>
+                        item.id ===
+                        task.assignedAgentId
+                    );
+
+                  return (
                     <div
+                      key={
+                        task.id
+                      }
                       style={
-                        styles.agentAvatar
+                        styles.agentCard
                       }
                     >
-                      {
-                        getRoleIcon(
-                          task.role
-                        )
-                      }
-                    </div>
-
-                    <div
-                      style={
-                        styles.agentMain
-                      }
-                    >
-                      <strong>
-                        {
-                          task.role
-                        }
-                      </strong>
-
-                      <span
+                      <div
                         style={
-                          styles.agentTask
+                          styles.agentAvatar
                         }
                       >
                         {
-                          task.title
+                          getRoleIcon(
+                            agent?.role ??
+                              task.role
+                          )
                         }
-                      </span>
+                      </div>
 
-                      <span
+                      <div
                         style={
-                          styles.agentBudget
+                          styles.agentMain
                         }
                       >
-                        Budget{" "}
-                        {
-                          task.budget
-                        }{" "}
-                        U
-                      </span>
-                    </div>
+                        <strong>
+                          {
+                            agent?.name ??
+                              "Agent not assigned"
+                          }
+                        </strong>
 
-                    <TaskStatusBadge
-                      status={
-                        task.status
-                      }
-                    />
-                  </div>
-                )
+                        <span
+                          style={
+                            styles.agentTask
+                          }
+                        >
+                          {
+                            task.title
+                          }
+                        </span>
+
+                        <span
+                          style={
+                            styles.agentBudget
+                          }
+                        >
+                          {
+                            task.budget
+                          }{" "}
+                          U task budget
+                        </span>
+                      </div>
+
+                      <TaskStatusBadge
+                        status={
+                          task.status
+                        }
+                      />
+                    </div>
+                  );
+                }
               )}
             </div>
           </div>
         )}
-
-        {/* ================================================= */}
-        {/* CHAT */}
-        {/* ================================================= */}
 
         {activeTab ===
           "chat" && (
@@ -1546,15 +1448,6 @@ export default function MissionWorkspace() {
                 >
                   Team Communication
                 </h2>
-
-                <p
-                  style={
-                    styles.panelSubtitle
-                  }
-                >
-                  Client, coordinator, and agents
-                  communicate in one project room.
-                </p>
               </div>
             </div>
 
@@ -1570,21 +1463,10 @@ export default function MissionWorkspace() {
                     styles.emptyChat
                   }
                 >
-                  <div
-                    style={
-                      styles.emptyIcon
-                    }
-                  >
-                    💬
-                  </div>
-
+                  💬
                   <strong>
                     No messages yet
                   </strong>
-
-                  <p>
-                    Start the project conversation.
-                  </p>
                 </div>
               ) : (
                 chatMessages.map(
@@ -1604,52 +1486,42 @@ export default function MissionWorkspace() {
               )}
             </div>
 
-            <div
+            <textarea
+              value={
+                newMessage
+              }
+              onChange={(
+                event
+              ) =>
+                setNewMessage(
+                  event.target
+                    .value
+                )
+              }
+              placeholder="Message the project team..."
+              rows={3}
               style={
-                styles.composer
+                styles.messageInput
+              }
+            />
+
+            <button
+              onClick={
+                sendMessage
+              }
+              disabled={
+                !newMessage.trim()
+              }
+              style={
+                newMessage.trim()
+                  ? styles.primaryButton
+                  : styles.disabledButton
               }
             >
-              <textarea
-                value={
-                  newMessage
-                }
-                onChange={(
-                  event
-                ) =>
-                  setNewMessage(
-                    event.target
-                      .value
-                  )
-                }
-                placeholder="Send a message to the project team..."
-                rows={3}
-                style={
-                  styles.messageInput
-                }
-              />
-
-              <button
-                onClick={
-                  sendMessage
-                }
-                disabled={
-                  !newMessage.trim()
-                }
-                style={
-                  newMessage.trim()
-                    ? styles.primaryButton
-                    : styles.disabledButton
-                }
-              >
-                Send Message
-              </button>
-            </div>
+              Send Message
+            </button>
           </div>
         )}
-
-        {/* ================================================= */}
-        {/* FILES */}
-        {/* ================================================= */}
 
         {activeTab ===
           "files" && (
@@ -1679,15 +1551,6 @@ export default function MissionWorkspace() {
                 >
                   Project Files
                 </h2>
-
-                <p
-                  style={
-                    styles.panelSubtitle
-                  }
-                >
-                  Shared artifacts produced by the
-                  team will appear here.
-                </p>
               </div>
 
               <button
@@ -1709,21 +1572,9 @@ export default function MissionWorkspace() {
                   styles.empty
                 }
               >
-                <div
-                  style={
-                    styles.emptyIcon
-                  }
-                >
-                  📁
-                </div>
-
-                <strong>
-                  No project files yet
-                </strong>
-
+                📁
                 <p>
-                  Agents will place shared artifacts
-                  here.
+                  No files yet.
                 </p>
               </div>
             ) : (
@@ -1773,18 +1624,6 @@ export default function MissionWorkspace() {
                           }
                         </span>
                       </div>
-
-                      <span
-                        style={
-                          styles.fileDate
-                        }
-                      >
-                        {
-                          formatDate(
-                            file.updatedAt
-                          )
-                        }
-                      </span>
                     </div>
                   )
                 )}
@@ -1797,22 +1636,13 @@ export default function MissionWorkspace() {
               }
             >
               <strong>
-                Next: Git integration
-              </strong>
-
-              <p>
-                Software projects will connect
-                agents to a shared repository so
-                developers can work on the same codebase
-                without overwriting one another.
-              </p>
+                Next:
+              </strong>{" "}
+              Git repository integration for shared
+              agent development.
             </div>
           </div>
         )}
-
-        {/* ================================================= */}
-        {/* DELIVERABLES */}
-        {/* ================================================= */}
 
         {activeTab ===
           "deliverables" && (
@@ -1842,15 +1672,6 @@ export default function MissionWorkspace() {
                 >
                   Final Deliverables
                 </h2>
-
-                <p
-                  style={
-                    styles.panelSubtitle
-                  }
-                >
-                  This is where the completed work will
-                  be handed back to the user.
-                </p>
               </div>
             </div>
 
@@ -1862,25 +1683,22 @@ export default function MissionWorkspace() {
               <DeliveryCard
                 icon="🌐"
                 title="Live Preview"
-                description="Open the finished project in a browser."
+                description="Open the finished project."
                 action="Open Preview"
-                disabled
               />
 
               <DeliveryCard
                 icon="💻"
                 title="Source Code"
-                description="Open the project repository or browse the code."
+                description="Browse the final repository."
                 action="View Code"
-                disabled
               />
 
               <DeliveryCard
                 icon="📦"
                 title="Download"
-                description="Download the final project as a ZIP archive."
+                description="Download the final project ZIP."
                 action="Download ZIP"
-                disabled
               />
 
               <DeliveryCard
@@ -1888,34 +1706,10 @@ export default function MissionWorkspace() {
                 title="Deployment"
                 description="Deploy the completed project."
                 action="Deploy Project"
-                disabled
               />
-            </div>
-
-            <div
-              style={
-                styles.deliveryInfo
-              }
-            >
-              <strong>
-                How final delivery will work
-              </strong>
-
-              <p>
-                Agents create artifacts in the shared
-                workspace. The final evaluator verifies
-                the project. Once accepted, the
-                marketplace produces the final project
-                package and makes it available to the
-                user.
-              </p>
             </div>
           </div>
         )}
-
-        {/* ================================================= */}
-        {/* ACTIVITY */}
-        {/* ================================================= */}
 
         {activeTab ===
           "activity" && (
@@ -1945,15 +1739,6 @@ export default function MissionWorkspace() {
                 >
                   Activity
                 </h2>
-
-                <p
-                  style={
-                    styles.panelSubtitle
-                  }
-                >
-                  Everything that happens in the
-                  project will be recorded here.
-                </p>
               </div>
             </div>
 
@@ -1964,20 +1749,9 @@ export default function MissionWorkspace() {
                   styles.empty
                 }
               >
-                <div
-                  style={
-                    styles.emptyIcon
-                  }
-                >
-                  🕘
-                </div>
-
-                <strong>
-                  No activity yet
-                </strong>
-
+                🕘
                 <p>
-                  Start the mission to see activity.
+                  No activity yet.
                 </p>
               </div>
             ) : (
@@ -2025,18 +1799,6 @@ export default function MissionWorkspace() {
                           }
                         </p>
                       </div>
-
-                      <span
-                        style={
-                          styles.activityDate
-                        }
-                      >
-                        {
-                          formatDate(
-                            item.timestamp
-                          )
-                        }
-                      </span>
                     </div>
                   )
                 )}
@@ -2049,84 +1811,13 @@ export default function MissionWorkspace() {
   );
 }
 
-/*
- * ============================================================
- * COMPONENTS
- * ============================================================
- */
-
-function TabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={
-        onClick
-      }
-      style={
-        active
-          ? styles.tabActive
-          : styles.tab
-      }
-    >
-      {
-        children
-      }
-    </button>
-  );
-}
-
-function MissionStatus({
-  status,
-}: {
-  status: MissionStatus;
-}) {
-  return (
-    <span
-      style={
-        getStatusStyle(
-          status
-        )
-      }
-    >
-      {
-        status
-      }
-    </span>
-  );
-}
-
-function TaskStatusBadge({
-  status,
-}: {
-  status: TaskStatus;
-}) {
-  return (
-    <span
-      style={
-        getTaskStatusStyle(
-          status
-        )
-      }
-    >
-      {
-        status
-      }
-    </span>
-  );
-}
-
 function WorkspaceTask({
   task,
+  agent,
   onStatusChange,
 }: {
   task: MissionTask;
+  agent?: Agent;
   onStatusChange: (
     status: TaskStatus
   ) => void;
@@ -2144,7 +1835,8 @@ function WorkspaceTask({
       >
         {
           getRoleIcon(
-            task.role
+            agent?.role ??
+              task.role
           )
         }
       </div>
@@ -2175,9 +1867,9 @@ function WorkspaceTask({
                 styles.workspaceRole
               }
             >
-              {
-                task.role
-              }
+              {agent
+                ? `${agent.name} · ${agent.role}`
+                : `${task.role} · No agent assigned`}
             </span>
           </div>
 
@@ -2254,8 +1946,10 @@ function WorkspaceTask({
 
 function TeamMember({
   task,
+  agent,
 }: {
   task: MissionTask;
+  agent?: Agent;
 }) {
   return (
     <div
@@ -2270,7 +1964,8 @@ function TeamMember({
       >
         {
           getRoleIcon(
-            task.role
+            agent?.role ??
+              task.role
           )
         }
       </div>
@@ -2281,12 +1976,16 @@ function TeamMember({
         }
       >
         <strong>
-          {
-            task.role
-          }
+          {agent
+            ? agent.name
+            : "Unassigned"}
         </strong>
 
-        <span>
+        <span
+          style={
+            styles.teamTask
+          }
+        >
           {
             task.title
           }
@@ -2299,6 +1998,46 @@ function TeamMember({
         }
       />
     </div>
+  );
+}
+
+function MissionStatus({
+  status,
+}: {
+  status: MissionStatus;
+}) {
+  return (
+    <span
+      style={
+        getStatusStyle(
+          status
+        )
+      }
+    >
+      {
+        status
+      }
+    </span>
+  );
+}
+
+function TaskStatusBadge({
+  status,
+}: {
+  status: TaskStatus;
+}) {
+  return (
+    <span
+      style={
+        getTaskStatusStyle(
+          status
+        )
+      }
+    >
+      {
+        status
+      }
+    </span>
   );
 }
 
@@ -2343,50 +2082,42 @@ function ChatBubble({
 }: {
   message: ChatMessage;
 }) {
-  const isUser =
+  const user =
     message.kind ===
     "user";
 
   return (
     <div
       style={
-        isUser
+        user
           ? styles.chatRowUser
           : styles.chatRow
       }
     >
       <div
         style={
-          isUser
+          user
             ? styles.chatBubbleUser
             : styles.chatBubble
         }
       >
-        <div
+        <strong>
+          {
+            message.sender
+          }
+        </strong>
+
+        <span
           style={
-            styles.chatHeader
+            styles.chatRole
           }
         >
-          <strong>
-            {
-              message.sender
-            }
-          </strong>
-
-          <span>
-            {
-              message.role
-            }
-          </span>
-
-          <span>
-            {
-              formatTime(
-                message.timestamp
-              )
-            }
-          </span>
-        </div>
+          {" "}
+          ·{" "}
+          {
+            message.role
+          }
+        </span>
 
         <p
           style={
@@ -2407,13 +2138,11 @@ function DeliveryCard({
   title,
   description,
   action,
-  disabled,
 }: {
   icon: string;
   title: string;
   description: string;
   action: string;
-  disabled?: boolean;
 }) {
   return (
     <div
@@ -2437,20 +2166,20 @@ function DeliveryCard({
         }
       </strong>
 
-      <p>
+      <p
+        style={
+          styles.deliveryDescription
+        }
+      >
         {
           description
         }
       </p>
 
       <button
-        disabled={
-          disabled
-        }
+        disabled
         style={
-          disabled
-            ? styles.disabledButton
-            : styles.primaryButton
+          styles.disabledButton
         }
       >
         {
@@ -2460,12 +2189,6 @@ function DeliveryCard({
     </div>
   );
 }
-
-/*
- * ============================================================
- * HELPERS
- * ============================================================
- */
 
 function getRoleIcon(
   role: string
@@ -2484,12 +2207,6 @@ function getRoleIcon(
   if (
     value.includes(
       "developer"
-    ) ||
-    value.includes(
-      "engineer"
-    ) ||
-    value.includes(
-      "specialist"
     )
   ) {
     return "💻";
@@ -2498,9 +2215,6 @@ function getRoleIcon(
   if (
     value.includes(
       "seo"
-    ) ||
-    value.includes(
-      "growth"
     )
   ) {
     return "🔎";
@@ -2509,40 +2223,12 @@ function getRoleIcon(
   if (
     value.includes(
       "qa"
-    ) ||
-    value.includes(
-      "quality"
     )
   ) {
     return "🧪";
   }
 
   if (
-    value.includes(
-      "research"
-    ) ||
-    value.includes(
-      "analyst"
-    )
-  ) {
-    return "📊";
-  }
-
-  if (
-    value.includes(
-      "content"
-    ) ||
-    value.includes(
-      "report"
-    )
-  ) {
-    return "📝";
-  }
-
-  if (
-    value.includes(
-      "project"
-    ) ||
     value.includes(
       "manager"
     )
@@ -2556,7 +2242,7 @@ function getRoleIcon(
 function createId(): string {
   return `${Date.now()}-${Math.random()
     .toString(36)
-    .slice(2, 9)}`;
+    .slice(2, 8)}`;
 }
 
 function formatDate(
@@ -2577,40 +2263,6 @@ function formatDate(
 
   return date.toLocaleString();
 }
-
-function formatTime(
-  value: string
-): string {
-  const date =
-    new Date(
-      value
-    );
-
-  if (
-    Number.isNaN(
-      date.getTime()
-    )
-  ) {
-    return "";
-  }
-
-  return date.toLocaleTimeString(
-    [],
-    {
-      hour:
-        "2-digit",
-
-      minute:
-        "2-digit",
-    }
-  );
-}
-
-/*
- * ============================================================
- * STORAGE
- * ============================================================
- */
 
 function loadMissions(): Mission[] {
   try {
@@ -2812,26 +2464,20 @@ function loadFiles(
 
 function saveFiles(
   missionId: string,
-  items: ProjectFile[]
+  files: ProjectFile[]
 ) {
   try {
     window.localStorage.setItem(
       FILES_STORAGE_PREFIX +
         missionId,
       JSON.stringify(
-        items
+        files
       )
     );
   } catch {
     // Ignore storage failure.
   }
 }
-
-/*
- * ============================================================
- * STATUS STYLES
- * ============================================================
- */
 
 function getStatusStyle(
   status: MissionStatus
@@ -2887,12 +2533,6 @@ function getTaskStatusStyle(
   return styles.taskStatusPlanned;
 }
 
-/*
- * ============================================================
- * STYLES
- * ============================================================
- */
-
 const styles: Record<
   string,
   React.CSSProperties
@@ -2911,12 +2551,12 @@ const styles: Record<
       "#f2f2ef",
 
     fontFamily:
-      "Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+      "Inter, system-ui, sans-serif",
   },
 
   container: {
     maxWidth:
-      "1100px",
+      "1080px",
 
     margin:
       "0 auto",
@@ -2924,7 +2564,7 @@ const styles: Record<
 
   emptyPage: {
     maxWidth:
-      "520px",
+      "500px",
 
     margin:
       "100px auto",
@@ -2933,15 +2573,12 @@ const styles: Record<
       "center",
 
     color:
-      "#9aa1a7",
+      "#939ca2",
   },
 
   emptyIcon: {
     fontSize:
       "42px",
-
-    marginBottom:
-      "14px",
   },
 
   header: {
@@ -2955,7 +2592,7 @@ const styles: Record<
       "flex-start",
 
     gap:
-      "20px",
+      "18px",
 
     marginBottom:
       "18px",
@@ -2965,14 +2602,11 @@ const styles: Record<
     display:
       "flex",
 
-    alignItems:
-      "center",
-
     gap:
       "8px",
 
-    flexShrink:
-      0,
+    alignItems:
+      "center",
   },
 
   missionSelect: {
@@ -2993,9 +2627,6 @@ const styles: Record<
 
     color:
       "#fff",
-
-    outline:
-      "none",
   },
 
   eyebrow: {
@@ -3009,7 +2640,7 @@ const styles: Record<
       "0.14em",
 
     color:
-      "#7f888f",
+      "#7f878e",
   },
 
   title: {
@@ -3018,9 +2649,6 @@ const styles: Record<
 
     fontSize:
       "30px",
-
-    lineHeight:
-      1.1,
 
     letterSpacing:
       "-0.03em",
@@ -3048,7 +2676,7 @@ const styles: Record<
       "18px",
 
     marginBottom:
-      "16px",
+      "15px",
 
     border:
       "1px solid #282e33",
@@ -3069,9 +2697,6 @@ const styles: Record<
 
     alignItems:
       "center",
-
-    gap:
-      "16px",
   },
 
   progressLabel: {
@@ -3100,9 +2725,6 @@ const styles: Record<
   },
 
   progressTrack: {
-    width:
-      "100%",
-
     height:
       "8px",
 
@@ -3113,7 +2735,7 @@ const styles: Record<
       "999px",
 
     background:
-      "#252a2e",
+      "#242a2e",
 
     overflow:
       "hidden",
@@ -3128,9 +2750,6 @@ const styles: Record<
 
     background:
       "#f0b90b",
-
-    transition:
-      "width .25s ease",
   },
 
   progressMeta: {
@@ -3147,13 +2766,13 @@ const styles: Record<
       "8px",
 
     marginTop:
-      "10px",
+      "9px",
+
+    color:
+      "#727b82",
 
     fontSize:
       "11px",
-
-    color:
-      "#707980",
   },
 
   tabs: {
@@ -3161,13 +2780,10 @@ const styles: Record<
       "flex",
 
     gap:
-      "7px",
+      "6px",
 
     overflowX:
       "auto",
-
-    paddingBottom:
-      "5px",
 
     marginBottom:
       "12px",
@@ -3178,28 +2794,25 @@ const styles: Record<
       "0 0 auto",
 
     padding:
-      "10px 12px",
-
-    borderRadius:
-      "9px",
+      "9px 11px",
 
     border:
       "1px solid #292f34",
+
+    borderRadius:
+      "9px",
 
     background:
       "#111518",
 
     color:
-      "#90989f",
+      "#8d959c",
 
     fontWeight:
       700,
 
     cursor:
       "pointer",
-
-    whiteSpace:
-      "nowrap",
   },
 
   tabActive: {
@@ -3207,13 +2820,13 @@ const styles: Record<
       "0 0 auto",
 
     padding:
-      "10px 12px",
-
-    borderRadius:
-      "9px",
+      "9px 11px",
 
     border:
       "1px solid #f0b90b",
+
+    borderRadius:
+      "9px",
 
     background:
       "#f0b90b",
@@ -3226,9 +2839,6 @@ const styles: Record<
 
     cursor:
       "pointer",
-
-    whiteSpace:
-      "nowrap",
   },
 
   notice: {
@@ -3238,20 +2848,20 @@ const styles: Record<
     padding:
       "11px 13px",
 
+    border:
+      "1px solid #383e43",
+
     borderRadius:
       "10px",
 
     background:
-      "#151a1d",
-
-    border:
-      "1px solid #31383d",
+      "#15191c",
 
     color:
       "#b7bec4",
 
     fontSize:
-      "13px",
+      "12px",
   },
 
   grid: {
@@ -3262,7 +2872,7 @@ const styles: Record<
       "repeat(auto-fit, minmax(320px, 1fr))",
 
     gap:
-      "14px",
+      "13px",
   },
 
   panel: {
@@ -3295,19 +2905,13 @@ const styles: Record<
 
   panelTitle: {
     margin:
-      "6px 0 0",
+      "5px 0 0",
 
     fontSize:
       "20px",
-
-    letterSpacing:
-      "-0.02em",
   },
 
   panelSubtitle: {
-    margin:
-      "5px 0 0",
-
     color:
       "#7f878e",
 
@@ -3320,7 +2924,7 @@ const styles: Record<
 
   goal: {
     margin:
-      "15px 0",
+      "14px 0",
 
     color:
       "#b2b8bd",
@@ -3334,7 +2938,7 @@ const styles: Record<
       "grid",
 
     gridTemplateColumns:
-      "repeat(2, minmax(0, 1fr))",
+      "repeat(2, 1fr)",
 
     gap:
       "8px",
@@ -3342,16 +2946,16 @@ const styles: Record<
 
   infoCard: {
     padding:
-      "12px",
-
-    borderRadius:
-      "10px",
-
-    background:
-      "#0c0f11",
+      "11px",
 
     border:
-      "1px solid #242a2e",
+      "1px solid #252b30",
+
+    borderRadius:
+      "9px",
+
+    background:
+      "#0d1012",
   },
 
   infoLabel: {
@@ -3359,16 +2963,13 @@ const styles: Record<
       "block",
 
     color:
-      "#747d84",
+      "#737c83",
 
     fontSize:
       "10px",
 
     textTransform:
       "uppercase",
-
-    letterSpacing:
-      "0.08em",
   },
 
   infoValue: {
@@ -3376,10 +2977,108 @@ const styles: Record<
       "block",
 
     marginTop:
-      "5px",
+      "4px",
 
     fontSize:
       "13px",
+  },
+
+  primaryButton: {
+    width:
+      "100%",
+
+    marginTop:
+      "15px",
+
+    padding:
+      "13px",
+
+    border:
+      "none",
+
+    borderRadius:
+      "10px",
+
+    background:
+      "#f0b90b",
+
+    color:
+      "#111",
+
+    fontWeight:
+      900,
+
+    cursor:
+      "pointer",
+  },
+
+  secondaryButton: {
+    padding:
+      "9px 12px",
+
+    border:
+      "1px solid #343a3f",
+
+    borderRadius:
+      "9px",
+
+    background:
+      "#171b1e",
+
+    color:
+      "#dfe3e6",
+
+    fontWeight:
+      700,
+
+    cursor:
+      "pointer",
+  },
+
+  disabledButton: {
+    width:
+      "100%",
+
+    marginTop:
+      "12px",
+
+    padding:
+      "11px",
+
+    border:
+      "none",
+
+    borderRadius:
+      "9px",
+
+    background:
+      "#292e32",
+
+    color:
+      "#636b71",
+
+    cursor:
+      "not-allowed",
+  },
+
+  budgetPill: {
+    padding:
+      "7px 10px",
+
+    borderRadius:
+      "999px",
+
+    background:
+      "#1b1810",
+
+    color:
+      "#f0b90b",
+
+    fontWeight:
+      900,
+
+    fontSize:
+      "12px",
   },
 
   teamList: {
@@ -3406,14 +3105,14 @@ const styles: Record<
     padding:
       "11px",
 
+    border:
+      "1px solid #252b30",
+
     borderRadius:
       "10px",
 
     background:
-      "#0c0f11",
-
-    border:
-      "1px solid #242a2e",
+      "#0d1012",
   },
 
   teamAvatar: {
@@ -3443,9 +3142,6 @@ const styles: Record<
     flex:
       1,
 
-    minWidth:
-      0,
-
     display:
       "grid",
 
@@ -3453,116 +3149,12 @@ const styles: Record<
       "2px",
   },
 
-  teamMainSpan: {
+  teamTask: {
     color:
-      "#7f878e",
+      "#7e878d",
 
     fontSize:
       "11px",
-  },
-
-  primaryButton: {
-    width:
-      "100%",
-
-    marginTop:
-      "16px",
-
-    padding:
-      "13px 16px",
-
-    border:
-      "none",
-
-    borderRadius:
-      "10px",
-
-    background:
-      "#f0b90b",
-
-    color:
-      "#101010",
-
-    fontWeight:
-      900,
-
-    cursor:
-      "pointer",
-  },
-
-  secondaryButton: {
-    marginTop:
-      "14px",
-
-    padding:
-      "10px 13px",
-
-    borderRadius:
-      "9px",
-
-    border:
-      "1px solid #343a3f",
-
-    background:
-      "#171b1e",
-
-    color:
-      "#e0e4e7",
-
-    fontWeight:
-      700,
-
-    cursor:
-      "pointer",
-  },
-
-  disabledButton: {
-    width:
-      "100%",
-
-    marginTop:
-      "12px",
-
-    padding:
-      "11px",
-
-    border:
-      "none",
-
-    borderRadius:
-      "9px",
-
-    background:
-      "#2a2f33",
-
-    color:
-      "#626a70",
-
-    fontWeight:
-      800,
-
-    cursor:
-      "not-allowed",
-  },
-
-  budgetPill: {
-    padding:
-      "7px 10px",
-
-    borderRadius:
-      "999px",
-
-    background:
-      "#1d1a11",
-
-    color:
-      "#f0b90b",
-
-    fontWeight:
-      900,
-
-    fontSize:
-      "12px",
   },
 
   workspaceTaskList: {
@@ -3581,19 +3173,19 @@ const styles: Record<
       "flex",
 
     gap:
-      "13px",
+      "12px",
 
     padding:
-      "15px",
-
-    borderRadius:
-      "12px",
+      "14px",
 
     border:
       "1px solid #272d32",
 
+    borderRadius:
+      "12px",
+
     background:
-      "#0c1012",
+      "#0d1012",
   },
 
   taskIconLarge: {
@@ -3602,9 +3194,6 @@ const styles: Record<
 
     height:
       "42px",
-
-    flexShrink:
-      0,
 
     display:
       "grid",
@@ -3637,11 +3226,8 @@ const styles: Record<
     justifyContent:
       "space-between",
 
-    alignItems:
-      "flex-start",
-
     gap:
-      "12px",
+      "10px",
   },
 
   workspaceTaskTitle: {
@@ -3660,7 +3246,7 @@ const styles: Record<
       "3px",
 
     color:
-      "#737c83",
+      "#7d858c",
 
     fontSize:
       "11px",
@@ -3673,11 +3259,11 @@ const styles: Record<
     color:
       "#f0b90b",
 
-    fontSize:
-      "12px",
-
     fontWeight:
       900,
+
+    fontSize:
+      "12px",
   },
 
   taskDescription: {
@@ -3685,7 +3271,7 @@ const styles: Record<
       "9px 0",
 
     color:
-      "#939ba2",
+      "#929aa1",
 
     fontSize:
       "12px",
@@ -3702,7 +3288,7 @@ const styles: Record<
       "center",
 
     gap:
-      "9px",
+      "8px",
 
     flexWrap:
       "wrap",
@@ -3712,11 +3298,11 @@ const styles: Record<
     padding:
       "8px",
 
-    borderRadius:
-      "8px",
-
     border:
       "1px solid #30373c",
+
+    borderRadius:
+      "8px",
 
     background:
       "#13181b",
@@ -3728,86 +3314,6 @@ const styles: Record<
       "11px",
   },
 
-  taskStatusPlanned: {
-    padding:
-      "5px 8px",
-
-    borderRadius:
-      "999px",
-
-    background:
-      "#1a1d20",
-
-    color:
-      "#898f94",
-
-    fontSize:
-      "10px",
-
-    fontWeight:
-      800,
-  },
-
-  taskStatusReady: {
-    padding:
-      "5px 8px",
-
-    borderRadius:
-      "999px",
-
-    background:
-      "#141c22",
-
-    color:
-      "#8eb9db",
-
-    fontSize:
-      "10px",
-
-    fontWeight:
-      800,
-  },
-
-  taskStatusProgress: {
-    padding:
-      "5px 8px",
-
-    borderRadius:
-      "999px",
-
-    background:
-      "#151d17",
-
-    color:
-      "#7fca92",
-
-    fontSize:
-      "10px",
-
-    fontWeight:
-      800,
-  },
-
-  taskStatusCompleted: {
-    padding:
-      "5px 8px",
-
-    borderRadius:
-      "999px",
-
-    background:
-      "#101a16",
-
-    color:
-      "#7fd4a8",
-
-    fontSize:
-      "10px",
-
-    fontWeight:
-      800,
-  },
-
   agentCard: {
     display:
       "flex",
@@ -3816,19 +3322,19 @@ const styles: Record<
       "center",
 
     gap:
-      "12px",
+      "10px",
 
     padding:
-      "15px",
-
-    borderRadius:
-      "12px",
+      "14px",
 
     border:
       "1px solid #272d32",
 
+    borderRadius:
+      "11px",
+
     background:
-      "#0c1012",
+      "#0d1012",
   },
 
   teamGrid: {
@@ -3839,18 +3345,18 @@ const styles: Record<
       "repeat(auto-fit, minmax(280px, 1fr))",
 
     gap:
-      "10px",
+      "9px",
 
     marginTop:
-      "16px",
+      "15px",
   },
 
   agentAvatar: {
     width:
-      "45px",
+      "43px",
 
     height:
-      "45px",
+      "43px",
 
     display:
       "grid",
@@ -3859,13 +3365,13 @@ const styles: Record<
       "center",
 
     borderRadius:
-      "11px",
+      "10px",
 
     background:
       "#171c20",
 
     fontSize:
-      "21px",
+      "20px",
   },
 
   agentMain: {
@@ -3879,12 +3385,12 @@ const styles: Record<
       "grid",
 
     gap:
-      "2px",
+      "3px",
   },
 
   agentTask: {
     color:
-      "#858d94",
+      "#7f878e",
 
     fontSize:
       "11px",
@@ -3896,9 +3402,415 @@ const styles: Record<
 
     fontSize:
       "10px",
+  },
+
+  chatPanel: {
+    padding:
+      "18px",
+
+    border:
+      "1px solid #252b30",
+
+    borderRadius:
+      "15px",
+
+    background:
+      "#111518",
+  },
+
+  chatMessages: {
+    minHeight:
+      "330px",
+
+    maxHeight:
+      "500px",
+
+    overflowY:
+      "auto",
 
     marginTop:
-      "3px",
+      "15px",
+
+    padding:
+      "11px",
+
+    border:
+      "1px solid #252b30",
+
+    borderRadius:
+      "11px",
+
+    background:
+      "#0b0f11",
+  },
+
+  emptyChat: {
+    minHeight:
+      "280px",
+
+    display:
+      "flex",
+
+    flexDirection:
+      "column",
+
+    alignItems:
+      "center",
+
+    justifyContent:
+      "center",
+
+    color:
+      "#747c82",
+
+    gap:
+      "8px",
+  },
+
+  chatRow: {
+    display:
+      "flex",
+
+    marginBottom:
+      "8px",
+  },
+
+  chatRowUser: {
+    display:
+      "flex",
+
+    justifyContent:
+      "flex-end",
+
+    marginBottom:
+      "8px",
+  },
+
+  chatBubble: {
+    maxWidth:
+      "82%",
+
+    padding:
+      "10px",
+
+    border:
+      "1px solid #2a3136",
+
+    borderRadius:
+      "11px",
+
+    background:
+      "#171c20",
+  },
+
+  chatBubbleUser: {
+    maxWidth:
+      "82%",
+
+    padding:
+      "10px",
+
+    border:
+      "1px solid #44391c",
+
+    borderRadius:
+      "11px",
+
+    background:
+      "#1f1c14",
+  },
+
+  chatRole: {
+    color:
+      "#717a81",
+
+    fontSize:
+      "10px",
+  },
+
+  chatText: {
+    margin:
+      "7px 0 0",
+
+    color:
+      "#c8ced2",
+
+    fontSize:
+      "12px",
+
+    lineHeight:
+      1.5,
+  },
+
+  messageInput: {
+    width:
+      "100%",
+
+    boxSizing:
+      "border-box",
+
+    marginTop:
+      "12px",
+
+    padding:
+      "12px",
+
+    border:
+      "1px solid #343a3f",
+
+    borderRadius:
+      "10px",
+
+    background:
+      "#0b0f11",
+
+    color:
+      "#fff",
+
+    resize:
+      "vertical",
+
+    outline:
+      "none",
+
+    fontFamily:
+      "inherit",
+  },
+
+  fileList: {
+    display:
+      "grid",
+
+    gap:
+      "8px",
+
+    marginTop:
+      "15px",
+  },
+
+  fileRow: {
+    display:
+      "flex",
+
+    alignItems:
+      "center",
+
+    gap:
+      "10px",
+
+    padding:
+      "11px",
+
+    border:
+      "1px solid #272d32",
+
+    borderRadius:
+      "10px",
+
+    background:
+      "#0d1012",
+  },
+
+  fileIcon: {
+    width:
+      "35px",
+
+    height:
+      "35px",
+
+    display:
+      "grid",
+
+    placeItems:
+      "center",
+
+    borderRadius:
+      "8px",
+
+    background:
+      "#171c20",
+  },
+
+  fileMain: {
+    flex:
+      1,
+
+    display:
+      "grid",
+
+    gap:
+      "2px",
+  },
+
+  deliveryGrid: {
+    display:
+      "grid",
+
+    gridTemplateColumns:
+      "repeat(auto-fit, minmax(210px, 1fr))",
+
+    gap:
+      "10px",
+
+    marginTop:
+      "15px",
+  },
+
+  deliveryCard: {
+    padding:
+      "14px",
+
+    border:
+      "1px solid #272d32",
+
+    borderRadius:
+      "11px",
+
+    background:
+      "#0d1012",
+  },
+
+  deliveryIcon: {
+    fontSize:
+      "25px",
+
+    marginBottom:
+      "8px",
+  },
+
+  deliveryDescription: {
+    color:
+      "#818a91",
+
+    fontSize:
+      "11px",
+
+    lineHeight:
+      1.5,
+  },
+
+  activityList: {
+    display:
+      "grid",
+
+    gap:
+      "8px",
+
+    marginTop:
+      "15px",
+  },
+
+  activityRow: {
+    display:
+      "flex",
+
+    alignItems:
+      "flex-start",
+
+    gap:
+      "10px",
+
+    padding:
+      "11px",
+
+    border:
+      "1px solid #272d32",
+
+    borderRadius:
+      "10px",
+
+    background:
+      "#0d1012",
+  },
+
+  activityIcon: {
+    width:
+      "31px",
+
+    height:
+      "31px",
+
+    display:
+      "grid",
+
+    placeItems:
+      "center",
+
+    borderRadius:
+      "8px",
+
+    background:
+      "#171c20",
+  },
+
+  activityMain: {
+    flex:
+      1,
+  },
+
+  activityMainP: {
+    margin:
+      "4px 0 0",
+
+    color:
+      "#818a91",
+
+    fontSize:
+      "11px",
+  },
+
+  empty: {
+    padding:
+      "40px 18px",
+
+    textAlign:
+      "center",
+
+    color:
+      "#757e85",
+  },
+
+  missionPicker: {
+    display:
+      "grid",
+
+    gap:
+      "8px",
+
+    marginTop:
+      "18px",
+  },
+
+  missionPickerButton: {
+    display:
+      "flex",
+
+    justifyContent:
+      "space-between",
+
+    gap:
+      "12px",
+
+    padding:
+      "13px",
+
+    border:
+      "1px solid #272d32",
+
+    borderRadius:
+      "10px",
+
+    background:
+      "#111518",
+
+    color:
+      "#fff",
+
+    textAlign:
+      "left",
+
+    cursor:
+      "pointer",
   },
 
   statusPlanning: {
@@ -3981,546 +3893,117 @@ const styles: Record<
       800,
   },
 
-  chatPanel: {
+  taskStatusPlanned: {
     padding:
-      "18px",
-
-    border:
-      "1px solid #252b30",
+      "5px 8px",
 
     borderRadius:
-      "15px",
+      "999px",
 
     background:
-      "#111518",
-  },
-
-  chatMessages: {
-    minHeight:
-      "360px",
-
-    maxHeight:
-      "540px",
-
-    overflowY:
-      "auto",
-
-    marginTop:
-      "18px",
-
-    padding:
-      "12px",
-
-    borderRadius:
-      "12px",
-
-    background:
-      "#0b0f11",
-
-    border:
-      "1px solid #22282c",
-  },
-
-  emptyChat: {
-    minHeight:
-      "300px",
-
-    display:
-      "flex",
-
-    flexDirection:
-      "column",
-
-    justifyContent:
-      "center",
-
-    alignItems:
-      "center",
-
-    textAlign:
-      "center",
+      "#1a1d20",
 
     color:
-      "#777f86",
-  },
+      "#898f94",
 
-  chatRow: {
-    display:
-      "flex",
-
-    justifyContent:
-      "flex-start",
-
-    marginBottom:
+    fontSize:
       "10px",
+
+    fontWeight:
+      800,
   },
 
-  chatRowUser: {
-    display:
-      "flex",
-
-    justifyContent:
-      "flex-end",
-
-    marginBottom:
-      "10px",
-  },
-
-  chatBubble: {
-    maxWidth:
-      "82%",
-
+  taskStatusReady: {
     padding:
+      "5px 8px",
+
+    borderRadius:
+      "999px",
+
+    background:
+      "#141c22",
+
+    color:
+      "#8eb9db",
+
+    fontSize:
+      "10px",
+
+    fontWeight:
+      800,
+  },
+
+  taskStatusProgress: {
+    padding:
+      "5px 8px",
+
+    borderRadius:
+      "999px",
+
+    background:
+      "#151d17",
+
+    color:
+      "#7fca92",
+
+    fontSize:
+      "10px",
+
+    fontWeight:
+      800,
+  },
+
+  taskStatusCompleted: {
+    padding:
+      "5px 8px",
+
+    borderRadius:
+      "999px",
+
+    background:
+      "#101a16",
+
+    color:
+      "#7fd4a8",
+
+    fontSize:
+      "10px",
+
+    fontWeight:
+      800,
+  },
+
+  teamTask: {
+    color:
+      "#7e878d",
+
+    fontSize:
       "11px",
-
-    borderRadius:
-      "11px 11px 11px 3px",
-
-    background:
-      "#171c20",
-
-    border:
-      "1px solid #2a3136",
-  },
-
-  chatBubbleUser: {
-    maxWidth:
-      "82%",
-
-    padding:
-      "11px",
-
-    borderRadius:
-      "11px 11px 3px 11px",
-
-    background:
-      "#1f1d14",
-
-    border:
-      "1px solid #423a1c",
-  },
-
-  chatHeader: {
-    display:
-      "flex",
-
-    gap:
-      "7px",
-
-    alignItems:
-      "center",
-
-    flexWrap:
-      "wrap",
-
-    fontSize:
-      "10px",
-  },
-
-  chatText: {
-    margin:
-      "7px 0 0",
-
-    color:
-      "#c6cbcf",
-
-    fontSize:
-      "12px",
-
-    lineHeight:
-      1.55,
-  },
-
-  composer: {
-    marginTop:
-      "12px",
-  },
-
-  messageInput: {
-    width:
-      "100%",
-
-    boxSizing:
-      "border-box",
-
-    padding:
-      "12px",
-
-    borderRadius:
-      "10px",
-
-    border:
-      "1px solid #343a3f",
-
-    background:
-      "#0b0f11",
-
-    color:
-      "#fff",
-
-    resize:
-      "vertical",
-
-    fontFamily:
-      "inherit",
-
-    outline:
-      "none",
-  },
-
-  fileList: {
-    display:
-      "grid",
-
-    gap:
-      "8px",
-
-    marginTop:
-      "18px",
-  },
-
-  fileRow: {
-    display:
-      "flex",
-
-    alignItems:
-      "center",
-
-    gap:
-      "11px",
-
-    padding:
-      "12px",
-
-    borderRadius:
-      "10px",
-
-    border:
-      "1px solid #272d32",
-
-    background:
-      "#0c1012",
-  },
-
-  fileIcon: {
-    width:
-      "37px",
-
-    height:
-      "37px",
-
-    display:
-      "grid",
-
-    placeItems:
-      "center",
-
-    borderRadius:
-      "9px",
-
-    background:
-      "#171c20",
-  },
-
-  fileMain: {
-    flex:
-      1,
-
-    minWidth:
-      0,
-
-    display:
-      "grid",
-
-    gap:
-      "3px",
-  },
-
-  fileMainSpan: {
-    color:
-      "#777f86",
-
-    fontSize:
-      "10px",
-  },
-
-  fileDate: {
-    color:
-      "#6f777e",
-
-    fontSize:
-      "10px",
   },
 
   comingSoon: {
     marginTop:
-      "16px",
-
-    padding:
-      "14px",
-
-    borderRadius:
-      "11px",
-
-    background:
-      "#15191c",
-
-    border:
-      "1px solid #2e3439",
-
-    color:
-      "#aeb5ba",
-
-    fontSize:
-      "12px",
-
-    lineHeight:
-      1.6,
-  },
-
-  deliveryGrid: {
-    display:
-      "grid",
-
-    gridTemplateColumns:
-      "repeat(auto-fit, minmax(210px, 1fr))",
-
-    gap:
-      "10px",
-
-    marginTop:
-      "18px",
-  },
-
-  deliveryCard: {
-    padding:
       "15px",
 
-    borderRadius:
-      "12px",
+    padding:
+      "13px",
 
     border:
-      "1px solid #282e33",
-
-    background:
-      "#0c1012",
-  },
-
-  deliveryIcon: {
-    fontSize:
-      "25px",
-
-    marginBottom:
-      "10px",
-  },
-
-  deliveryCardP: {
-    margin:
-      "6px 0",
-
-    color:
-      "#858e95",
-
-    fontSize:
-      "12px",
-
-    lineHeight:
-      1.55,
-  },
-
-  deliveryInfo: {
-    marginTop:
-      "16px",
-
-    padding:
-      "14px",
+      "1px solid #2d3439",
 
     borderRadius:
-      "11px",
+      "10px",
 
     background:
       "#13181b",
 
-    border:
-      "1px solid #2b3237",
-
     color:
-      "#adb4b9",
-
-    fontSize:
-      "12px",
-
-    lineHeight:
-      1.6,
-  },
-
-  activityList: {
-    display:
-      "grid",
-
-    gap:
-      "8px",
-
-    marginTop:
-      "16px",
-  },
-
-  activityRow: {
-    display:
-      "flex",
-
-    alignItems:
-      "flex-start",
-
-    gap:
-      "11px",
-
-    padding:
-      "12px",
-
-    borderRadius:
-      "10px",
-
-    border:
-      "1px solid #272d32",
-
-    background:
-      "#0c1012",
-  },
-
-  activityIcon: {
-    width:
-      "32px",
-
-    height:
-      "32px",
-
-    display:
-      "grid",
-
-    placeItems:
-      "center",
-
-    borderRadius:
-      "8px",
-
-    background:
-      "#171c20",
-  },
-
-  activityMain: {
-    flex:
-      1,
-
-    minWidth:
-      0,
-  },
-
-  activityMainP: {
-    margin:
-      "4px 0 0",
-
-    color:
-      "#818a91",
+      "#a9b1b6",
 
     fontSize:
       "11px",
 
     lineHeight:
-      1.5,
-  },
-
-  activityDate: {
-    color:
-      "#697177",
-
-    fontSize:
-      "10px",
-
-    whiteSpace:
-      "nowrap",
-  },
-
-  empty: {
-    padding:
-      "45px 20px",
-
-    textAlign:
-      "center",
-
-    color:
-      "#747d84",
-  },
-
-  missionPicker: {
-    display:
-      "grid",
-
-    gap:
-      "8px",
-
-    marginTop:
-      "20px",
-  },
-
-  missionPickerButton: {
-    display:
-      "flex",
-
-    justifyContent:
-      "space-between",
-
-    alignItems:
-      "center",
-
-    gap:
-      "12px",
-
-    width:
-      "100%",
-
-    padding:
-      "14px",
-
-    borderRadius:
-      "11px",
-
-    border:
-      "1px solid #272d32",
-
-    background:
-      "#111518",
-
-    color:
-      "#fff",
-
-    cursor:
-      "pointer",
-
-    textAlign:
-      "left",
-  },
-
-  smallButton: {
-    padding:
-      "9px 12px",
-
-    borderRadius:
-      "9px",
-
-    border:
-      "1px solid #353c41",
-
-    background:
-      "#171b1e",
-
-    color:
-      "#e0e4e7",
-
-    fontWeight:
-      700,
-
-    cursor:
-      "pointer",
+      1.55,
   },
 };
