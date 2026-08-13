@@ -5,6 +5,6 @@ import DeployScreen from './DeployScreen.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <DeployScreen />
+    <Erc8183Test />
   </StrictMode>,
 )
