@@ -128,10 +128,12 @@ const DEMO_AGENTS: Agent[] = [
 ];
 
 export default function MissionSubJob() {
-  const [missions, setMissions] =
-    useState<Mission[]>(
-      loadMissions()
-    );
+  const [
+    missions,
+    setMissions,
+  ] = useState<Mission[]>(
+    loadMissions()
+  );
 
   const [
     selectedMissionId,
@@ -307,7 +309,9 @@ export default function MissionSubJob() {
             saved.missionId
         );
 
-      if (savedMission) {
+      if (
+        savedMission
+      ) {
         const savedTask =
           savedMission.tasks.find(
             (
@@ -317,7 +321,9 @@ export default function MissionSubJob() {
               saved.taskId
           );
 
-        if (savedTask) {
+        if (
+          savedTask
+        ) {
           setSelectedMissionId(
             savedMission.id
           );
@@ -350,11 +356,15 @@ export default function MissionSubJob() {
             (
               task
             ) =>
-              task.assignedAgentId
+              Boolean(
+                task.assignedAgentId
+              )
           )
       );
 
-    if (firstMission) {
+    if (
+      firstMission
+    ) {
       setSelectedMissionId(
         firstMission.id
       );
@@ -364,10 +374,14 @@ export default function MissionSubJob() {
           (
             task
           ) =>
-            task.assignedAgentId
+            Boolean(
+              task.assignedAgentId
+            )
         );
 
-      if (firstTask) {
+      if (
+        firstTask
+      ) {
         setSelectedTaskId(
           firstTask.id
         );
@@ -383,9 +397,7 @@ export default function MissionSubJob() {
         }
       }
     }
-  }, [
-    missions,
-  ]);
+  }, [missions]);
 
   useEffect(() => {
     if (
@@ -409,24 +421,24 @@ export default function MissionSubJob() {
 
   useEffect(() => {
     if (
-      address &&
-      selectedTask
+      address
     ) {
       void refreshTokenState(
         address
       );
     }
-  }, [
-    address,
-    selectedTask?.id,
-  ]);
+  }, [address]);
 
   async function connectWallet() {
     try {
-      setErrorMessage(null);
+      setErrorMessage(
+        null
+      );
+
       setWalletStatus(
         "Connecting"
       );
+
       setStatusMessage(
         "Connecting provider wallet..."
       );
@@ -451,10 +463,13 @@ export default function MissionSubJob() {
           metadata: {
             name:
               "BNB Agent Marketplace",
+
             description:
               "ERC-8183 marketplace",
+
             url:
               window.location.origin,
+
             icons: [],
           },
         });
@@ -476,7 +491,7 @@ export default function MissionSubJob() {
       const walletProvider =
         wallet as unknown as EIP1193Provider;
 
-      const chainIdRaw =
+      const rawChainId =
         await walletProvider.request({
           method:
             "eth_chainId",
@@ -484,7 +499,7 @@ export default function MissionSubJob() {
 
       const chainId =
         normalizeChainId(
-          chainIdRaw
+          rawChainId
         );
 
       if (
@@ -492,7 +507,7 @@ export default function MissionSubJob() {
         BSC_TESTNET_CHAIN_ID
       ) {
         throw new Error(
-          `Wrong network. Connected chain ID: ${chainId}. Please use BNB Smart Chain Testnet (97).`
+          `Wrong network. Connected chain ID: ${chainId}. BSC Testnet requires 97.`
         );
       }
 
@@ -518,7 +533,9 @@ export default function MissionSubJob() {
       await refreshTokenState(
         walletAddress
       );
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         error
       );
@@ -543,13 +560,15 @@ export default function MissionSubJob() {
     walletAddress: Address
   ) {
     try {
-      const token =
+      const paymentToken =
         (await publicClient.readContract(
           {
             address:
               ERC8183_ADDRESSES.commerce,
+
             abi:
               COMMERCE_ABI,
+
             functionName:
               "paymentToken",
           }
@@ -560,9 +579,11 @@ export default function MissionSubJob() {
           await publicClient.readContract(
             {
               address:
-                token,
+                paymentToken,
+
               abi:
                 ERC20_ABI,
+
               functionName:
                 "decimals",
             }
@@ -573,9 +594,11 @@ export default function MissionSubJob() {
         (await publicClient.readContract(
           {
             address:
-              token,
+              paymentToken,
+
             abi:
               ERC20_ABI,
+
             functionName:
               "symbol",
           }
@@ -585,11 +608,14 @@ export default function MissionSubJob() {
         (await publicClient.readContract(
           {
             address:
-              token,
+              paymentToken,
+
             abi:
               ERC20_ABI,
+
             functionName:
               "balanceOf",
+
             args: [
               walletAddress,
             ],
@@ -600,11 +626,14 @@ export default function MissionSubJob() {
         (await publicClient.readContract(
           {
             address:
-              token,
+              paymentToken,
+
             abi:
               ERC20_ABI,
+
             functionName:
               "allowance",
+
             args: [
               walletAddress,
               ERC8183_ADDRESSES.commerce,
@@ -613,7 +642,7 @@ export default function MissionSubJob() {
         )) as bigint;
 
       setTokenAddress(
-        token
+        paymentToken
       );
 
       setTokenDecimals(
@@ -631,7 +660,9 @@ export default function MissionSubJob() {
       setAllowance(
         currentAllowance
       );
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         "Token state error:",
         error
@@ -647,6 +678,7 @@ export default function MissionSubJob() {
       setErrorMessage(
         "Connect the provider wallet first."
       );
+
       return;
     }
 
@@ -658,6 +690,7 @@ export default function MissionSubJob() {
       setErrorMessage(
         "Select an assigned task first."
       );
+
       return;
     }
 
@@ -665,6 +698,7 @@ export default function MissionSubJob() {
       setLoading(
         true
       );
+
       setErrorMessage(
         null
       );
@@ -730,6 +764,7 @@ export default function MissionSubJob() {
           current
         ) => ({
           ...current,
+
           create:
             hash,
         })
@@ -739,11 +774,9 @@ export default function MissionSubJob() {
         "Waiting for createJob confirmation..."
       );
 
-      await publicClient.waitForTransactionReceipt(
-        {
-          hash,
-        }
-      );
+      await publicClient.waitForTransactionReceipt({
+        hash,
+      });
 
       const counter =
         (await publicClient.readContract(
@@ -774,7 +807,9 @@ export default function MissionSubJob() {
       setStatusMessage(
         `✅ ERC-8183 Job #${counter.toString()} created.`
       );
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         error
       );
@@ -799,11 +834,13 @@ export default function MissionSubJob() {
     if (
       !provider ||
       !address ||
-      jobId === null
+      jobId ===
+        null
     ) {
       setErrorMessage(
         "Create the sub-job first."
       );
+
       return;
     }
 
@@ -811,6 +848,7 @@ export default function MissionSubJob() {
       setLoading(
         true
       );
+
       setErrorMessage(
         null
       );
@@ -875,25 +913,26 @@ export default function MissionSubJob() {
           current
         ) => ({
           ...current,
+
           register:
             hash,
         })
       );
 
-      await publicClient.waitForTransactionReceipt(
-        {
-          hash,
-        }
+      await publicClient.waitForTransactionReceipt({
+        hash,
+      });
+
+      await loadJob(
+        jobId
       );
 
       setStatusMessage(
         `✅ Job #${jobId.toString()} registered.`
       );
-
-      await loadJob(
-        jobId
-      );
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         error
       );
@@ -918,12 +957,14 @@ export default function MissionSubJob() {
     if (
       !provider ||
       !address ||
-      jobId === null ||
+      jobId ===
+        null ||
       !selectedTask
     ) {
       setErrorMessage(
         "Select a task and create the job first."
       );
+
       return;
     }
 
@@ -931,6 +972,7 @@ export default function MissionSubJob() {
       setLoading(
         true
       );
+
       setErrorMessage(
         null
       );
@@ -992,16 +1034,15 @@ export default function MissionSubJob() {
           current
         ) => ({
           ...current,
+
           budget:
             hash,
         })
       );
 
-      await publicClient.waitForTransactionReceipt(
-        {
-          hash,
-        }
-      );
+      await publicClient.waitForTransactionReceipt({
+        hash,
+      });
 
       await loadJob(
         jobId
@@ -1010,7 +1051,9 @@ export default function MissionSubJob() {
       setStatusMessage(
         `✅ Budget set to ${selectedTask.budget} ${tokenSymbol}.`
       );
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         error
       );
@@ -1041,6 +1084,7 @@ export default function MissionSubJob() {
       setErrorMessage(
         "Connect the wallet and select a task."
       );
+
       return;
     }
 
@@ -1048,6 +1092,7 @@ export default function MissionSubJob() {
       setLoading(
         true
       );
+
       setErrorMessage(
         null
       );
@@ -1094,16 +1139,15 @@ export default function MissionSubJob() {
           current
         ) => ({
           ...current,
+
           approval:
             hash,
         })
       );
 
-      await publicClient.waitForTransactionReceipt(
-        {
-          hash,
-        }
-      );
+      await publicClient.waitForTransactionReceipt({
+        hash,
+      });
 
       await refreshTokenState(
         address
@@ -1112,7 +1156,9 @@ export default function MissionSubJob() {
       setStatusMessage(
         `✅ ${selectedTask.budget} ${tokenSymbol} approved.`
       );
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         error
       );
@@ -1137,12 +1183,14 @@ export default function MissionSubJob() {
     if (
       !provider ||
       !address ||
-      jobId === null ||
+      jobId ===
+        null ||
       !selectedTask
     ) {
       setErrorMessage(
         "Prepare the sub-job first."
       );
+
       return;
     }
 
@@ -1150,6 +1198,7 @@ export default function MissionSubJob() {
       setLoading(
         true
       );
+
       setErrorMessage(
         null
       );
@@ -1186,9 +1235,7 @@ export default function MissionSubJob() {
           `On-chain budget is ${formatUnits(
             currentJob.budget,
             tokenDecimals
-          )} ${tokenSymbol}, expected ${
-            selectedTask.budget
-          } ${tokenSymbol}.`
+          )} ${tokenSymbol}; expected ${selectedTask.budget} ${tokenSymbol}.`
         );
       }
 
@@ -1212,27 +1259,25 @@ export default function MissionSubJob() {
         "Simulating fund()..."
       );
 
-      await publicClient.simulateContract(
-        {
-          address:
-            ERC8183_ADDRESSES.commerce,
+      await publicClient.simulateContract({
+        address:
+          ERC8183_ADDRESSES.commerce,
 
-          abi:
-            COMMERCE_ABI,
+        abi:
+          COMMERCE_ABI,
 
-          functionName:
-            "fund",
+        functionName:
+          "fund",
 
-          args: [
-            jobId,
-            amount,
-            "0x",
-          ],
+        args: [
+          jobId,
+          amount,
+          "0x",
+        ],
 
-          account:
-            address,
-        }
-      );
+        account:
+          address,
+      });
 
       const walletClient =
         getWalletClient(
@@ -1269,16 +1314,15 @@ export default function MissionSubJob() {
           current
         ) => ({
           ...current,
+
           fund:
             hash,
         })
       );
 
-      await publicClient.waitForTransactionReceipt(
-        {
-          hash,
-        }
-      );
+      await publicClient.waitForTransactionReceipt({
+        hash,
+      });
 
       const refreshed =
         await loadJob(
@@ -1294,7 +1338,9 @@ export default function MissionSubJob() {
           refreshed.status
         )}.`
       );
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         error
       );
@@ -1380,8 +1426,10 @@ export default function MissionSubJob() {
                   selectedTaskId
                     ? {
                         ...task,
+
                         chainJobId:
                           id.toString(),
+
                         chainJobStatus:
                           0,
                       }
@@ -1433,8 +1481,10 @@ export default function MissionSubJob() {
                   selectedTaskId
                     ? {
                         ...task,
+
                         chainJobId:
                           onChainJob.id.toString(),
+
                         chainJobStatus:
                           onChainJob.status,
                       }
@@ -1492,17 +1542,17 @@ export default function MissionSubJob() {
               }
             >
               Turn an assigned marketplace task into a
-              real on-chain ERC-8183 job.
+              real ERC-8183 job.
             </p>
           </div>
 
-          <span
+          <div
             style={
               styles.badge
             }
           >
             BSC TESTNET
-          </span>
+          </div>
         </header>
 
         <section
@@ -1516,8 +1566,8 @@ export default function MissionSubJob() {
 
           <p>
             The connected wallet acts as the provider for
-            this first integration. We are deliberately not
-            sending funds to the placeholder demo wallets.
+            this first integration. We are not sending
+            funds to placeholder demo wallets.
           </p>
         </section>
 
@@ -1530,6 +1580,14 @@ export default function MissionSubJob() {
             1. Select assigned task
           </h2>
 
+          <p
+            style={
+              styles.muted
+            }
+          >
+            Only tasks with an assigned agent are available.
+          </p>
+
           <select
             value={
               selectedMissionId
@@ -1537,12 +1595,9 @@ export default function MissionSubJob() {
             onChange={(
               event
             ) => {
-              const next =
-                event.target
-                  .value;
-
               setSelectedMissionId(
-                next
+                event.target
+                  .value
               );
 
               setSelectedTaskId(
@@ -1702,7 +1757,7 @@ export default function MissionSubJob() {
                   styles.success
                 }
               >
-                Existing on-chain job: #
+                Existing job: #
                 {
                   selectedTask.chainJobId
                 }
@@ -1727,9 +1782,13 @@ export default function MissionSubJob() {
 
             <span
               style={
-                getWalletStatusStyle(
-                  walletStatus
-                )
+                walletStatus ===
+                "Connected"
+                  ? styles.walletConnected
+                  : walletStatus ===
+                    "Connecting"
+                  ? styles.walletConnecting
+                  : styles.walletDisconnected
               }
             >
               {
@@ -1822,7 +1881,7 @@ export default function MissionSubJob() {
               }
             >
               <Step
-                text="Create"
+                label="Create"
                 complete={
                   jobId !==
                   null
@@ -1830,15 +1889,16 @@ export default function MissionSubJob() {
               />
 
               <Step
-                text="Register"
+                label="Register"
                 complete={
-                  transactionHashes.register !==
-                  undefined
+                  Boolean(
+                    transactionHashes.register
+                  )
                 }
               />
 
               <Step
-                text="Budget"
+                label="Budget"
                 complete={
                   Boolean(
                     job &&
@@ -1849,7 +1909,7 @@ export default function MissionSubJob() {
               />
 
               <Step
-                text="Approve"
+                label="Approve"
                 complete={
                   Boolean(
                     allowance !==
@@ -1866,7 +1926,7 @@ export default function MissionSubJob() {
               />
 
               <Step
-                text="Fund"
+                label="Fund"
                 complete={
                   job?.status ===
                   1
@@ -2000,6 +2060,13 @@ export default function MissionSubJob() {
               />
 
               <Info
+                label="Client"
+                value={
+                  job.client
+                }
+              />
+
+              <Info
                 label="Provider"
                 value={
                   job.provider
@@ -2012,6 +2079,13 @@ export default function MissionSubJob() {
                   job.budget,
                   tokenDecimals
                 )} ${tokenSymbol}`}
+              />
+
+              <Info
+                label="Evaluator"
+                value={
+                  job.evaluator
+                }
               />
             </div>
 
@@ -2081,10 +2155,12 @@ export default function MissionSubJob() {
             {Object.entries(
               transactionHashes
             ).map(
-              ([
-                label,
-                hash,
-              ]) => (
+              (
+                [
+                  label,
+                  hash,
+                ]
+              ) => (
                 <div
                   key={
                     label
@@ -2134,13 +2210,21 @@ function Info({
         styles.info
       }
     >
-      <span>
+      <span
+        style={
+          styles.infoLabel
+        }
+      >
         {
           label
         }
       </span>
 
-      <strong>
+      <strong
+        style={
+          styles.infoValue
+        }
+      >
         {
           value
         }
@@ -2150,10 +2234,10 @@ function Info({
 }
 
 function Step({
-  text,
+  label,
   complete,
 }: {
-  text: string;
+  label: string;
   complete: boolean;
 }) {
   return (
@@ -2174,7 +2258,7 @@ function Step({
 
       <span>
         {
-          text
+          label
         }
       </span>
     </div>
@@ -2200,26 +2284,6 @@ function getJobStatus(
     map[status] ??
     `Unknown (${status})`
   );
-}
-
-function getWalletStatusStyle(
-  status: WalletStatus
-): React.CSSProperties {
-  if (
-    status ===
-    "Connected"
-  ) {
-    return styles.connected;
-  }
-
-  if (
-    status ===
-    "Connecting"
-  ) {
-    return styles.connecting;
-  }
-
-  return styles.disconnected;
 }
 
 function normalizeChainId(
@@ -2307,15 +2371,13 @@ function capitalize(
   value: string
 ): string {
   return (
-    value.charAt(0).toUpperCase() +
-    value.slice(1)
+    value.charAt(
+      0
+    ).toUpperCase() +
+    value.slice(
+      1
+    )
   );
-}
-
-function createId(): string {
-  return `${Date.now()}-${Math.random()
-    .toString(36)
-    .slice(2, 8)}`;
 }
 
 function loadMissions(): Mission[] {
@@ -2404,8 +2466,10 @@ function loadSavedSubJob():
     return {
       missionId:
         parsed.missionId,
+
       taskId:
         parsed.taskId,
+
       jobId:
         typeof parsed.jobId ===
         "string"
@@ -2424,12 +2488,16 @@ const styles: Record<
   page: {
     minHeight:
       "100vh",
+
     padding:
       "24px 16px 60px",
+
     background:
       "#090b0d",
+
     color:
       "#f1f2ef",
+
     fontFamily:
       "Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
   },
@@ -2437,6 +2505,7 @@ const styles: Record<
   container: {
     maxWidth:
       "860px",
+
     margin:
       "0 auto",
   },
@@ -2444,12 +2513,16 @@ const styles: Record<
   header: {
     display:
       "flex",
+
     justifyContent:
       "space-between",
+
     alignItems:
       "flex-start",
+
     gap:
       "16px",
+
     marginBottom:
       "18px",
   },
@@ -2457,10 +2530,13 @@ const styles: Record<
   eyebrow: {
     fontSize:
       "10px",
+
     fontWeight:
       900,
+
     letterSpacing:
       "0.13em",
+
     color:
       "#7f878e",
   },
@@ -2468,8 +2544,10 @@ const styles: Record<
   title: {
     margin:
       "7px 0",
+
     fontSize:
       "30px",
+
     letterSpacing:
       "-0.03em",
   },
@@ -2477,10 +2555,13 @@ const styles: Record<
   subtitle: {
     margin:
       0,
+
     color:
       "#929aa1",
+
     lineHeight:
       1.6,
+
     fontSize:
       "14px",
   },
@@ -2488,16 +2569,22 @@ const styles: Record<
   badge: {
     padding:
       "8px 10px",
+
     borderRadius:
       "999px",
+
     background:
       "#1b1810",
+
     color:
       "#f0b90b",
+
     fontWeight:
       900,
+
     fontSize:
       "10px",
+
     whiteSpace:
       "nowrap",
   },
@@ -2505,18 +2592,25 @@ const styles: Record<
   notice: {
     marginBottom:
       "14px",
+
     padding:
       "14px",
+
     border:
       "1px solid #463a20",
+
     borderRadius:
       "12px",
+
     background:
       "#171511",
+
     color:
       "#c5b774",
+
     fontSize:
       "12px",
+
     lineHeight:
       1.55,
   },
@@ -2524,23 +2618,41 @@ const styles: Record<
   card: {
     marginBottom:
       "14px",
+
     padding:
       "18px",
+
     border:
       "1px solid #252b30",
+
     borderRadius:
       "14px",
+
     background:
       "#111518",
+  },
+
+  muted: {
+    margin:
+      "5px 0 12px",
+
+    color:
+      "#7f878e",
+
+    fontSize:
+      "12px",
   },
 
   grid: {
     display:
       "grid",
+
     gridTemplateColumns:
       "repeat(auto-fit, minmax(150px, 1fr))",
+
     gap:
       "8px",
+
     marginTop:
       "14px",
   },
@@ -2548,30 +2660,44 @@ const styles: Record<
   info: {
     padding:
       "11px",
+
     border:
       "1px solid #272d32",
+
     borderRadius:
       "9px",
+
     background:
       "#0d1012",
+
     minWidth:
       0,
   },
 
-  infoSpan: {
-    color:
-      "#737c83",
-    fontSize:
-      "10px",
-  },
-
-  infoStrong: {
+  infoLabel: {
     display:
       "block",
+
+    color:
+      "#737c83",
+
+    fontSize:
+      "10px",
+
+    textTransform:
+      "uppercase",
+  },
+
+  infoValue: {
+    display:
+      "block",
+
     marginTop:
       "4px",
+
     fontSize:
       "12px",
+
     wordBreak:
       "break-word",
   },
@@ -2579,22 +2705,31 @@ const styles: Record<
   select: {
     display:
       "block",
+
     width:
       "100%",
+
     boxSizing:
       "border-box",
+
     marginTop:
       "9px",
+
     padding:
       "12px",
+
     border:
       "1px solid #343a3f",
+
     borderRadius:
       "9px",
+
     background:
       "#0c1012",
+
     color:
       "#fff",
+
     outline:
       "none",
   },
@@ -2602,16 +2737,22 @@ const styles: Record<
   description: {
     marginTop:
       "14px",
+
     padding:
       "12px",
+
     borderRadius:
       "9px",
+
     background:
       "#0c1012",
+
     color:
       "#aeb5ba",
+
     fontSize:
       "12px",
+
     lineHeight:
       1.55,
   },
@@ -2619,16 +2760,22 @@ const styles: Record<
   success: {
     marginTop:
       "12px",
+
     padding:
       "12px",
+
     border:
       "1px solid #284737",
+
     borderRadius:
       "10px",
+
     background:
       "#101916",
+
     color:
       "#80d3a5",
+
     fontSize:
       "12px",
   },
@@ -2636,37 +2783,46 @@ const styles: Record<
   row: {
     display:
       "flex",
+
     justifyContent:
       "space-between",
+
     alignItems:
       "center",
+
     gap:
       "10px",
   },
 
-  connected: {
+  walletConnected: {
     color:
       "#7fd3a5",
+
     fontSize:
       "12px",
+
     fontWeight:
       800,
   },
 
-  connecting: {
+  walletConnecting: {
     color:
       "#f0b90b",
+
     fontSize:
       "12px",
+
     fontWeight:
       800,
   },
 
-  disconnected: {
+  walletDisconnected: {
     color:
       "#9ca4aa",
+
     fontSize:
       "12px",
+
     fontWeight:
       800,
   },
@@ -2674,18 +2830,25 @@ const styles: Record<
   balance: {
     display:
       "flex",
+
     justifyContent:
       "space-between",
+
     marginTop:
       "12px",
+
     padding:
       "11px",
+
     borderRadius:
       "9px",
+
     background:
       "#0c1012",
+
     color:
       "#929aa1",
+
     fontSize:
       "12px",
   },
@@ -2693,20 +2856,28 @@ const styles: Record<
   code: {
     display:
       "block",
+
     marginTop:
       "9px",
+
     padding:
       "10px",
+
     borderRadius:
       "8px",
+
     background:
       "#080a0c",
+
     color:
       "#8f979d",
+
     fontSize:
       "11px",
+
     wordBreak:
       "break-all",
+
     whiteSpace:
       "pre-wrap",
   },
@@ -2714,20 +2885,28 @@ const styles: Record<
   primaryButton: {
     width:
       "100%",
+
     marginTop:
       "12px",
+
     padding:
       "13px",
+
     border:
       "none",
+
     borderRadius:
       "10px",
+
     background:
       "#f0b90b",
+
     color:
       "#111",
+
     fontWeight:
       900,
+
     cursor:
       "pointer",
   },
@@ -2735,20 +2914,28 @@ const styles: Record<
   secondaryButton: {
     width:
       "100%",
+
     marginTop:
       "9px",
+
     padding:
       "12px",
+
     border:
       "1px solid #343a3f",
+
     borderRadius:
       "10px",
+
     background:
       "#171b1e",
+
     color:
       "#fff",
+
     fontWeight:
       800,
+
     cursor:
       "pointer",
   },
@@ -2756,18 +2943,25 @@ const styles: Record<
   disabledButton: {
     width:
       "100%",
+
     marginTop:
       "12px",
+
     padding:
       "13px",
+
     border:
       "none",
+
     borderRadius:
       "10px",
+
     background:
       "#292e32",
+
     color:
       "#626a70",
+
     cursor:
       "not-allowed",
   },
@@ -2775,10 +2969,13 @@ const styles: Record<
   steps: {
     display:
       "flex",
+
     flexWrap:
       "wrap",
+
     gap:
       "8px",
+
     marginTop:
       "14px",
   },
@@ -2786,20 +2983,28 @@ const styles: Record<
   step: {
     display:
       "flex",
+
     alignItems:
       "center",
+
     gap:
       "6px",
+
     padding:
       "8px 10px",
+
     border:
       "1px solid #2b3237",
+
     borderRadius:
       "8px",
+
     background:
       "#0d1012",
+
     color:
       "#727b82",
+
     fontSize:
       "11px",
   },
@@ -2807,20 +3012,28 @@ const styles: Record<
   stepComplete: {
     display:
       "flex",
+
     alignItems:
       "center",
+
     gap:
       "6px",
+
     padding:
       "8px 10px",
+
     border:
       "1px solid #284737",
+
     borderRadius:
       "8px",
+
     background:
       "#101916",
+
     color:
       "#7fd3a5",
+
     fontSize:
       "11px",
   },
@@ -2828,16 +3041,22 @@ const styles: Record<
   statusCard: {
     marginBottom:
       "12px",
+
     padding:
       "13px",
+
     border:
       "1px solid #2f363b",
+
     borderRadius:
       "10px",
+
     background:
       "#13181b",
+
     color:
       "#b7bec4",
+
     fontSize:
       "12px",
   },
@@ -2845,14 +3064,19 @@ const styles: Record<
   errorCard: {
     marginBottom:
       "12px",
+
     padding:
       "13px",
+
     border:
       "1px solid #562e2e",
+
     borderRadius:
       "10px",
+
     background:
       "#211414",
+
     color:
       "#ffaaaa",
   },
@@ -2860,10 +3084,13 @@ const styles: Record<
   error: {
     margin:
       "8px 0 0",
+
     whiteSpace:
       "pre-wrap",
+
     overflowWrap:
       "anywhere",
+
     fontSize:
       "11px",
   },
@@ -2871,16 +3098,22 @@ const styles: Record<
   txRow: {
     display:
       "flex",
+
     justifyContent:
       "space-between",
+
     alignItems:
       "center",
+
     gap:
       "10px",
+
     padding:
       "10px 0",
+
     borderBottom:
       "1px solid #252b30",
+
     fontSize:
       "12px",
   },
@@ -2888,75 +3121,14 @@ const styles: Record<
   link: {
     color:
       "#f0b90b",
+
     textDecoration:
       "none",
+
     fontWeight:
       800,
   },
-};  "#f0b90b",
-    color:
-      "#111",
-    fontWeight:
-      900,
-    cursor:
-      "pointer",
-  },
-
-  secondaryButtonFull: {
-    width:
-      "100%",
-    marginTop:
-      "9px",
-    padding:
-      "12px",
-    border:
-      "1px solid #343a3f",
-    borderRadius:
-      "10px",
-    background:
-      "#171b1e",
-    color:
-      "#fff",
-    fontWeight:
-      800,
-    cursor:
-      "pointer",
-  },
-
-  disabledButton: {
-    width:
-      "100%",
-    marginTop:
-      "12px",
-    padding:
-      "12px",
-    border:
-      "none",
-    borderRadius:
-      "10px",
-    background:
-      "#292e32",
-    color:
-      "#626a70",
-    cursor:
-      "not-allowed",
-  },
-
-  stepFlow: {
-    display:
-      "flex",
-    flexWrap:
-      "wrap",
-    gap:
-      "8px",
-    marginTop:
-      "14px",
-  },
-
-  step: {
-    display:
-      "flex",
-    alignItems:
+};    alignItems:
       "center",
     gap:
       "6px",
