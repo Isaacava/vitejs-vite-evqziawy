@@ -3,17 +3,25 @@ import {
   useState,
 } from "react";
 
+type MissionStatus =
+  | "Planning"
+  | "Ready"
+  | "In Progress"
+  | "Completed";
+
+type TaskStatus =
+  | "Planned"
+  | "Ready"
+  | "In Progress"
+  | "Completed";
+
 type MissionTask = {
   id: string;
   title: string;
   role: string;
   description: string;
   budget: number;
-  status:
-    | "Planned"
-    | "Ready"
-    | "In Progress"
-    | "Completed";
+  status: TaskStatus;
 };
 
 type Mission = {
@@ -23,11 +31,7 @@ type Mission = {
   category: string;
   budget: number;
   createdAt: string;
-  status:
-    | "Planning"
-    | "Ready"
-    | "In Progress"
-    | "Completed";
+  status: MissionStatus;
   tasks: MissionTask[];
 };
 
@@ -151,7 +155,7 @@ export default function MissionPlanner() {
 
   /*
    * ========================================================
-   * REGENERATE
+   * REGENERATE TEAM
    * ========================================================
    */
 
@@ -279,7 +283,7 @@ export default function MissionPlanner() {
           tasks.map(
             (
               task
-            ) => ({
+            ): MissionTask => ({
               ...task,
               status:
                 "Planned",
@@ -287,7 +291,7 @@ export default function MissionPlanner() {
           ),
       };
 
-    const updatedMissions = [
+    const updatedMissions: Mission[] = [
       mission,
       ...missions,
     ];
@@ -333,22 +337,18 @@ export default function MissionPlanner() {
    * ========================================================
    * UPDATE TASK STATUS
    * ========================================================
-   *
-   * Development-only control for now.
-   * Later these updates will come from
-   * the actual agent/job system.
    */
 
   function updateTaskStatus(
     missionId: string,
     taskId: string,
-    newStatus: MissionTask["status"]
+    newStatus: TaskStatus
   ) {
-    const updated =
+    const updatedMissions: Mission[] =
       missions.map(
         (
           mission
-        ) => {
+        ): Mission => {
           if (
             mission.id !==
             missionId
@@ -356,11 +356,11 @@ export default function MissionPlanner() {
             return mission;
           }
 
-          const updatedTasks =
+          const updatedTasks: MissionTask[] =
             mission.tasks.map(
               (
                 task
-              ) =>
+              ): MissionTask =>
                 task.id ===
                 taskId
                   ? {
@@ -371,7 +371,9 @@ export default function MissionPlanner() {
                   : task
             );
 
-          const allCompleted =
+          const allCompleted: boolean =
+            updatedTasks.length >
+              0 &&
             updatedTasks.every(
               (
                 task
@@ -380,43 +382,51 @@ export default function MissionPlanner() {
                 "Completed"
             );
 
-          const anyStarted =
+          const anyStarted: boolean =
             updatedTasks.some(
               (
                 task
               ) =>
+                task.status ===
+                  "Ready" ||
                 task.status ===
                   "In Progress" ||
                 task.status ===
                   "Completed"
             );
 
-          return {
-            ...mission,
+          const nextStatus: MissionStatus =
+            allCompleted
+              ? "Completed"
+              : anyStarted
+              ? "In Progress"
+              : "Planning";
 
-            status:
-              allCompleted
-                ? "Completed"
-                : anyStarted
-                ? "In Progress"
-                : "Planning",
+          const updatedMission: Mission =
+            {
+              ...mission,
 
-            tasks:
-              updatedTasks,
-          };
+              status:
+                nextStatus,
+
+              tasks:
+                updatedTasks,
+            };
+
+          return updatedMission;
         }
       );
 
     setMissions(
-      updated
+      updatedMissions
     );
 
     saveMissions(
-      updated
+      updatedMissions
     );
 
-    const refreshed =
-      updated.find(
+    const refreshed: Mission | null =
+      updatedMissions.find(
         (
           mission
         ) =>
@@ -526,9 +536,7 @@ export default function MissionPlanner() {
           </div>
         </div>
 
-        {/* ================================================= */}
         {/* ACTIVE MISSION */}
-        {/* ================================================= */}
 
         {selectedMission && (
           <div
@@ -712,9 +720,7 @@ export default function MissionPlanner() {
           </div>
         )}
 
-        {/* ================================================= */}
-        {/* CREATE */}
-        {/* ================================================= */}
+        {/* CREATE / REVIEW */}
 
         <div
           style={
@@ -786,7 +792,8 @@ export default function MissionPlanner() {
                   event
                 ) =>
                   setGoal(
-                    event.target.value
+                    event.target
+                      .value
                   )
                 }
                 placeholder="Example: Build an SEO-ready educational website for mathematics students with lessons, quizzes, a responsive design, and an easy-to-manage content area."
@@ -1014,7 +1021,10 @@ export default function MissionPlanner() {
                   <span>
                     Budget:{" "}
                     <strong>
-                      {enteredBudget} U
+                      {
+                        enteredBudget
+                      }{" "}
+                      U
                     </strong>
                   </span>
                 </div>
@@ -1162,9 +1172,7 @@ export default function MissionPlanner() {
           )}
         </div>
 
-        {/* ================================================= */}
         {/* MY MISSIONS */}
-        {/* ================================================= */}
 
         <div
           style={
@@ -1335,7 +1343,7 @@ function TaskCard({
   task: MissionTask;
   interactive?: boolean;
   onStatusChange?: (
-    status: MissionTask["status"]
+    status: TaskStatus
   ) => void;
 }) {
   return (
@@ -1421,7 +1429,7 @@ function TaskCard({
               ) =>
                 onStatusChange(
                   event.target
-                    .value as MissionTask["status"]
+                    .value as TaskStatus
                 )
               }
               style={
@@ -1459,7 +1467,7 @@ function TaskCard({
 function MissionStatus({
   status,
 }: {
-  status: Mission["status"];
+  status: MissionStatus;
 }) {
   return (
     <span
@@ -1469,7 +1477,9 @@ function MissionStatus({
         )
       }
     >
-      {status}
+      {
+        status
+      }
     </span>
   );
 }
@@ -1578,9 +1588,6 @@ function generateTasks(
   const normalized =
     goal.toLowerCase();
 
-  /*
-   * WEBSITE / SOFTWARE
-   */
   if (
     category ===
       "Website Development" ||
@@ -1593,7 +1600,7 @@ function generateTasks(
       "web app"
     )
   ) {
-    const websiteTasks =
+    return allocateTasks(
       [
         {
           title:
@@ -1620,7 +1627,7 @@ function generateTasks(
             "Design the interface, layout, responsive behavior, visual hierarchy, and reusable component structure.",
 
           weight:
-            0.20,
+            0.2,
         },
 
         {
@@ -1634,7 +1641,7 @@ function generateTasks(
             "Build the website/application, integrate the planned components, implement functionality, and produce a deployable project.",
 
           weight:
-            0.40,
+            0.4,
         },
 
         {
@@ -1662,20 +1669,14 @@ function generateTasks(
             "Test the final build, inspect responsiveness, links, basic accessibility, functionality, and acceptance criteria before delivery.",
 
           weight:
-            0.10,
+            0.1,
         },
-      ];
-
-    return allocateTasks(
-      websiteTasks,
+      ],
       totalBudget,
       "website"
     );
   }
 
-  /*
-   * MARKETING
-   */
   if (
     category ===
       "Marketing" ||
@@ -1713,7 +1714,7 @@ function generateTasks(
             "Research the market, competitors, audience behavior, trends, and relevant opportunities.",
 
           weight:
-            0.20,
+            0.2,
         },
 
         {
@@ -1727,7 +1728,7 @@ function generateTasks(
             "Create campaign copy, concepts, messaging, and supporting content based on the agreed strategy.",
 
           weight:
-            0.30,
+            0.3,
         },
 
         {
@@ -1755,7 +1756,7 @@ function generateTasks(
             "Review the completed campaign for consistency, accuracy, and alignment with the requested outcome.",
 
           weight:
-            0.10,
+            0.1,
         },
       ],
       totalBudget,
@@ -1763,9 +1764,6 @@ function generateTasks(
     );
   }
 
-  /*
-   * RESEARCH
-   */
   if (
     category ===
       "Research" ||
@@ -1789,7 +1787,7 @@ function generateTasks(
             "Break the research objective into questions, sources, evidence requirements, and a final report structure.",
 
           weight:
-            0.20,
+            0.2,
         },
 
         {
@@ -1831,7 +1829,7 @@ function generateTasks(
             "Transform the findings into a clear final deliverable with sources and supporting evidence.",
 
           weight:
-            0.20,
+            0.2,
         },
       ],
       totalBudget,
@@ -1839,9 +1837,6 @@ function generateTasks(
     );
   }
 
-  /*
-   * DEFAULT
-   */
   return allocateTasks(
     [
       {
@@ -1855,7 +1850,7 @@ function generateTasks(
           "Clarify the objective, define acceptance criteria, coordinate the team, and manage dependencies.",
 
         weight:
-          0.20,
+          0.2,
       },
 
       {
@@ -1869,7 +1864,7 @@ function generateTasks(
           "Perform the main work required to achieve the requested outcome.",
 
         weight:
-          0.50,
+          0.5,
       },
 
       {
@@ -1883,7 +1878,7 @@ function generateTasks(
           "Review the result against the user's requirements and prepare the final verified deliverable.",
 
         weight:
-          0.30,
+          0.3,
       },
     ],
     totalBudget,
@@ -1912,43 +1907,34 @@ function allocateTasks(
       totalBudget
     );
 
-  const rawAmounts =
+  const rounded =
     rawTasks.map(
       (
         task
       ) =>
-        normalizedBudget *
-        task.weight
+        roundAmount(
+          normalizedBudget *
+            task.weight
+        )
     );
 
-  const rounded =
-    rawAmounts.map(
+  const allocated =
+    rounded.reduce(
       (
+        total,
         amount
       ) =>
-        roundAmount(
-          amount
-        )
+        total +
+        amount,
+      0
     );
 
-  let difference =
+  const difference =
     roundAmount(
       normalizedBudget -
-        rounded.reduce(
-          (
-            total,
-            amount
-          ) =>
-            total +
-            amount,
-          0
-        )
+        allocated
     );
 
-  /*
-   * Put rounding remainder into
-   * the largest/primary task.
-   */
   if (
     Math.abs(
       difference
@@ -1966,7 +1952,7 @@ function allocateTasks(
     (
       task,
       index
-    ) => ({
+    ): MissionTask => ({
       id:
         `${prefix}-${index + 1}`,
 
@@ -1990,7 +1976,7 @@ function allocateTasks(
 
 /*
  * ============================================================
- * CATEGORY DETECTION
+ * CATEGORY
  * ============================================================
  */
 
@@ -2243,7 +2229,7 @@ function getCategoryIcon(
 
 /*
  * ============================================================
- * HELPERS
+ * STORAGE
  * ============================================================
  */
 
@@ -2305,11 +2291,17 @@ function loadMissions(): Mission[] {
         raw
       );
 
-    return Array.isArray(
-      parsed
-    )
-      ? parsed
-      : [];
+    if (
+      !Array.isArray(
+        parsed
+      )
+    ) {
+      return [];
+    }
+
+    return parsed.filter(
+      isMission
+    );
   } catch {
     return [];
   }
@@ -2333,8 +2325,52 @@ function saveMissions(
   }
 }
 
+function isMission(
+  value: unknown
+): value is Mission {
+  if (
+    !value ||
+    typeof value !==
+      "object"
+  ) {
+    return false;
+  }
+
+  const mission =
+    value as Record<
+      string,
+      unknown
+    >;
+
+  return (
+    typeof mission.id ===
+      "string" &&
+    typeof mission.title ===
+      "string" &&
+    typeof mission.goal ===
+      "string" &&
+    typeof mission.category ===
+      "string" &&
+    typeof mission.budget ===
+      "number" &&
+    typeof mission.createdAt ===
+      "string" &&
+    typeof mission.status ===
+      "string" &&
+    Array.isArray(
+      mission.tasks
+    )
+  );
+}
+
+/*
+ * ============================================================
+ * STATUS STYLE
+ * ============================================================
+ */
+
 function getStatusStyle(
-  status: Mission["status"]
+  status: MissionStatus
 ): React.CSSProperties {
   if (
     status ===
