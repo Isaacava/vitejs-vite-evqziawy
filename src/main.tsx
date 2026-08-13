@@ -8,6 +8,7 @@ import Erc8183Test from "./Erc8183Test";
 import MissionPlanner from "./MissionPlanner";
 import MissionWorkspace from "./MissionWorkspace";
 import AgentRegistry from "./AgentRegistry";
+import MissionSubJob from "./MissionSubJob";
 import ProviderTest from "./ProviderTest";
 import SettlementTest from "./SettlementTest";
 
@@ -17,6 +18,7 @@ type AppMode =
   | "marketplace"
   | "workspace"
   | "agents"
+  | "subjob"
   | "client"
   | "provider"
   | "settlement";
@@ -106,6 +108,20 @@ function App() {
         <NavButton
           active={
             mode ===
+            "subjob"
+          }
+          onClick={() =>
+            setMode(
+              "subjob"
+            )
+          }
+        >
+          ⛓️ Sub-job
+        </NavButton>
+
+        <NavButton
+          active={
+            mode ===
             "client"
           }
           onClick={() =>
@@ -155,6 +171,9 @@ function App() {
       ) : mode ===
         "agents" ? (
         <AgentRegistry />
+      ) : mode ===
+        "subjob" ? (
+        <MissionSubJob />
       ) : mode ===
         "client" ? (
         <Erc8183Test />
