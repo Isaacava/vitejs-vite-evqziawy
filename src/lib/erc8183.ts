@@ -11,7 +11,7 @@ import { bscTestnet } from "viem/chains";
 
 /*
  * ============================================================
- * OFFICIAL BNB ERC-8183 / APEX CONTRACTS
+ * OFFICIAL BNB AGENTIC COMMERCE CONTRACTS
  * BSC TESTNET
  * ============================================================
  */
@@ -30,8 +30,6 @@ export const ERC8183_ADDRESSES = {
 /*
  * ============================================================
  * AGENTIC COMMERCE ABI
- *
- * These signatures match the current official ABI.
  * ============================================================
  */
 
@@ -72,29 +70,6 @@ export const COMMERCE_ABI = [
 
   {
     type: "function",
-    name: "registerJob",
-    stateMutability: "nonpayable",
-    inputs: [
-      {
-        name: "jobId",
-        type: "uint256",
-      },
-      {
-        name: "policy",
-        type: "address",
-      },
-    ],
-    outputs: [],
-  },
-
-  /*
-   * IMPORTANT:
-   *
-   * Current official ABI:
-   * setBudget(jobId, amount, optParams)
-   */
-  {
-    type: "function",
     name: "setBudget",
     stateMutability: "nonpayable",
     inputs: [
@@ -114,12 +89,6 @@ export const COMMERCE_ABI = [
     outputs: [],
   },
 
-  /*
-   * IMPORTANT:
-   *
-   * Current official ABI:
-   * fund(jobId, expectedBudget, optParams)
-   */
   {
     type: "function",
     name: "fund",
@@ -163,24 +132,6 @@ export const COMMERCE_ABI = [
       {
         name: "",
         type: "uint256",
-      },
-    ],
-  },
-
-  {
-    type: "function",
-    name: "jobHasBudget",
-    stateMutability: "view",
-    inputs: [
-      {
-        name: "jobId",
-        type: "uint256",
-      },
-    ],
-    outputs: [
-      {
-        name: "hasBudget",
-        type: "bool",
       },
     ],
   },
@@ -326,7 +277,7 @@ export const ROUTER_ABI = [
 
 /*
  * ============================================================
- * ERC-20 PAYMENT TOKEN ABI
+ * PAYMENT TOKEN ABI
  * ============================================================
  */
 
@@ -447,10 +398,7 @@ export function getWalletClient(
 ) {
   return createWalletClient({
     account,
-
     chain: bscTestnet,
-
-    transport:
-      custom(provider),
+    transport: custom(provider),
   });
-}
+  }
