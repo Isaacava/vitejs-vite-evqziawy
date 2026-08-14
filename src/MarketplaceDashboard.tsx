@@ -1,15 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
 
 import { parseMarketplaceIntent } from "./lib/intent";
-
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
-
-const fallbackUrl = "https://sfbxpscbevnmoppgkjcr.supabase.co";
-const fallbackKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNmYnhwc2NiZXZub3Bna3JjciIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNzg2MTE0Nzk0LCJleHAiOjIxMDE2OTA3OTR9.ttfR2pNVqlOYrorGdAs7aaGgufxwXIsG-GXvLDd-jZw";
-
-const supabase = createClient(SUPABASE_URL || fallbackUrl, SUPABASE_ANON_KEY || fallbackKey);
+import { supabase } from "./lib/supabase";
 
 type Agent = {
   id?: string;
@@ -98,10 +90,7 @@ function agentFallbackScore(agent: Agent, intent: ReturnType<typeof parseMarketp
 
 async function loadFallbackMatches(goal: string): Promise<MatchResponse> {
   const intent = parseMarketplaceIntent(goal);
-  let query = supabase.from("marketplace_agents").select("*").limit(50);
-  if (intent.category !== "other") query = query.contains("capabilities", [intent.category]);
-
-  const { data, error } = await query;
+  const { data, error } = await supabase.from("marketplace_agents").select("*").limit(50);
   if (error) throw error;
 
   const agents = (data || []).map((row) => ({
@@ -204,8 +193,6 @@ export default function MarketplaceDashboard() {
 
   useEffect(() => {
     void findAgent();
-    // Intentionally run once for the initial demo mission.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -318,7 +305,7 @@ export default function MarketplaceDashboard() {
                     <div key={match.agent.agent_id} style={styles.alternativeRow}>
                       <div style={styles.altInfo}>
                         <strong>{match.agent.name || `Agent #${match.agent.agent_id}`}</strong>
-                        <span>{label(match.agent.category)}</span>
+                        <span style={styles.altCategory}>{label(match.agent.category)}</span>
                       </div>
                       <span style={{ ...styles.altScore, color: scoreColor(match.score) }}>{formatScore(match.score)}</span>
                     </div>
@@ -392,8 +379,7 @@ const styles: Record<string, React.CSSProperties> = {
   alternativeList: { marginTop: 14 },
   alternativeRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "14px 0", borderBottom: "1px solid #20262a" },
   altInfo: { display: "grid", gap: 4 },
-  altInfoStrong: { color: "#fff" },
-  altInfoSpan: { color: "#727980", fontSize: 12 },
+  altCategory: { color: "#727980", fontSize: 12 },
   altScore: { fontWeight: 800 },
   empty: { padding: 28, border: "1px dashed #343a3f", borderRadius: 16, color: "#858b91" },
   footer: { borderTop: "1px solid #202428", paddingTop: 18, display: "flex", gap: 16, flexWrap: "wrap", color: "#656b71", fontSize: 11 },
