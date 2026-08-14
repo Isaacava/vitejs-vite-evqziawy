@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import "./mission-console.css";
 
 // Mission console: marketplace workflow state, evidence, and on-chain preparation.
 type JobView = {
