@@ -1,4 +1,4 @@
-import { createPublicClient, http, type Address } from "viem";
+import { createPublicClient, formatUnits, http, type Address } from "viem";
 import { bscTestnet } from "viem/chains";
 
 export const ERC8183_TESTNET = {
@@ -55,3 +55,28 @@ export const COMMERCE_READ_ABI = [
     outputs: [{ name: "", type: "address" }],
   },
 ] as const;
+
+export async function readPaymentState(wallet: Address) {
+  const token = await bscTestnetClient.readContract({
+    address: ERC8183_TESTNET.commerce,
+    abi: COMMERCE_READ_ABI,
+    functionName: "paymentToken",
+  });
+
+  const [decimals, symbol, balance, allowance] = await Promise.all([
+    bscTestnetClient.readContract({ address: token, abi: ERC20_READ_ABI, functionName: "decimals" }),
+    bscTestnetClient.readContract({ address: token, abi: ERC20_READ_ABI, functionName: "symbol" }),
+    bscTestnetClient.readContract({ address: token, abi: ERC20_READ_ABI, functionName: "balanceOf", args: [wallet] }),
+    bscTestnetClient.readContract({ address: token, abi: ERC20_READ_ABI, functionName: "allowance", args: [wallet, ERC8183_TESTNET.commerce] }),
+  ]);
+
+  return {
+    token,
+    decimals,
+    symbol,
+    balance,
+    allowance,
+    balanceFormatted: formatUnits(balance, decimals),
+    allowanceFormatted: formatUnits(allowance, decimals),
+  };
+}
