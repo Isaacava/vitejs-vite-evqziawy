@@ -17,7 +17,6 @@ export default function MissionConsole() {
   const [jobId] = useState(() => new URLSearchParams(window.location.search).get("job") || "");
   const [data, setData] = useState<JobView | null>(null);
   const [deliverable, setDeliverable] = useState("Completed the requested task and prepared the result for review.");
-  const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -43,7 +42,7 @@ export default function MissionConsole() {
       const response = await fetch("/api/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ job_id: jobId, action: name, deliverable, note }),
+        body: JSON.stringify({ job_id: jobId, action: name, deliverable }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body?.error || "Job action failed");
