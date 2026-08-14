@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { connectWalletAndSignIn, getCurrentUser, signOut, type AuthUser } from "./lib/walletAuth";
+import { connectWalletAndSignIn, signOut, type AuthUser } from "./lib/walletAuth";
 import "./user-dashboard.css";
 
 type Mission = {
