@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { parseMarketplaceIntent } from "./lib/intent";
 import "./marketplace-workspace.css";
 
+// Marketplace workspace: goal → intent → transparent agent match → mission.
 type Agent = {
   agent_id: string;
   name: string | null;
@@ -16,12 +17,7 @@ type Agent = {
 
 type Match = { agent: Agent; score: number; breakdown: Record<string, number> };
 type MatchResponse = { intent: ReturnType<typeof parseMarketplaceIntent>; bestMatch: Match | null; alternatives: Match[] };
-
-type MissionResponse = {
-  mission: { id: string };
-  task: { id: string };
-  job: { id: string; status: string };
-};
+type MissionResponse = { mission: { id: string }; task: { id: string }; job: { id: string; status: string } };
 
 const examples = [
   "Manage my BNB portfolio conservatively",
@@ -133,9 +129,7 @@ export default function MarketplaceWorkspace() {
         <div>
           <div className="workspace-kicker"><span /> LIVE MARKETPLACE</div>
           <h1>Find the agent.<br /><em>Not the profile.</em></h1>
-          <p>
-            Describe the outcome. We compare compatible ERC-8004 agents using visible reliability signals and keep the hiring path inside one mission workspace.
-          </p>
+          <p>Describe the outcome. We compare compatible ERC-8004 agents using visible reliability signals and keep the hiring path inside one mission workspace.</p>
         </div>
         <div className="workspace-stat-block">
           <div><span>Registry</span><strong>ERC-8004</strong></div>
@@ -147,31 +141,17 @@ export default function MarketplaceWorkspace() {
       <section className="mission-composer">
         <div className="composer-copy">
           <span className="small-label">YOUR MISSION</span>
-          <div className="composer-intent">
-            <span>{categoryLabel(intent.category)}</span>
-            <span>{intent.risk} risk</span>
-          </div>
+          <div className="composer-intent"><span>{categoryLabel(intent.category)}</span><span>{intent.risk} risk</span></div>
         </div>
         <textarea value={goal} onChange={(event) => setGoal(event.target.value)} aria-label="Mission goal" />
         <div className="composer-footer">
-          <div className="composer-examples">
-            {examples.map((example) => (
-              <button key={example} type="button" onClick={() => setGoal(example)}>{example}</button>
-            ))}
-          </div>
-          <button type="button" className="brass-button" onClick={() => void findAgent()} disabled={loading}>
-            {loading ? "Matching…" : "Find best agent →"}
-          </button>
+          <div className="composer-examples">{examples.map((example) => <button key={example} type="button" onClick={() => setGoal(example)}>{example}</button>)}</div>
+          <button type="button" className="brass-button" onClick={() => void findAgent()} disabled={loading}>{loading ? "Matching…" : "Find best agent →"}</button>
         </div>
       </section>
 
       {error && <div className="workspace-alert workspace-alert-error">{error}</div>}
-      {mission && (
-        <div className="workspace-alert workspace-alert-success">
-          <div><strong>Mission created.</strong> Job {mission.job.id.slice(0, 8)}… is open.</div>
-          <a href={`/?job=${encodeURIComponent(mission.job.id)}`}>Open mission console →</a>
-        </div>
-      )}
+      {mission && <div className="workspace-alert workspace-alert-success"><div><strong>Mission created.</strong> Job {mission.job.id.slice(0, 8)}… is open.</div><a href={`/?job=${encodeURIComponent(mission.job.id)}`}>Open mission console →</a></div>}
 
       <section className="results-layout">
         <div className="results-main">
@@ -187,33 +167,12 @@ export default function MarketplaceWorkspace() {
                 </div>
                 <div className={`score-chip ${scoreColor(result.bestMatch.score)}`}><b>{Math.round(result.bestMatch.score)}</b><span>/100</span></div>
               </div>
-
-              <div className="agent-meta-row">
-                <span>{categoryLabel(result.bestMatch.agent.category)}</span>
-                <span>{result.bestMatch.agent.status || "unknown endpoint"}</span>
-                <span>{result.bestMatch.agent.source || "indexed"}</span>
-                {result.bestMatch.agent.is_first_party && <span>first-party</span>}
-              </div>
-
+              <div className="agent-meta-row"><span>{categoryLabel(result.bestMatch.agent.category)}</span><span>{result.bestMatch.agent.status || "unknown endpoint"}</span><span>{result.bestMatch.agent.source || "indexed"}</span>{result.bestMatch.agent.is_first_party && <span>first-party</span>}</div>
               <div className="why-block">
                 <div className="why-head"><span>WHY THIS AGENT</span><strong>Transparent score</strong></div>
-                <div className="metric-list">
-                  {Object.entries(result.bestMatch.breakdown).map(([key, value]) => (
-                    <div className="metric-row" key={key}>
-                      <span>{key.replace(/([A-Z])/g, " $1")}</span>
-                      <div className="metric-track"><i style={{ width: `${Math.max(0, Math.min(100, value))}%` }} /></div>
-                      <b>{Math.round(value)}</b>
-                    </div>
-                  ))}
-                </div>
+                <div className="metric-list">{Object.entries(result.bestMatch.breakdown).map(([key, value]) => <div className="metric-row" key={key}><span>{key.replace(/([A-Z])/g, " $1")}</span><div className="metric-track"><i style={{ width: `${Math.max(0, Math.min(100, value))}%` }} /></div><b>{Math.round(value)}</b></div>)}</div>
               </div>
-
-              <div className="best-agent-actions">
-                <button type="button" className="dark-button" onClick={hire} disabled={loading || !!mission}>
-                  {mission ? "Mission created" : "Hire this agent"}
-                </button>
-                <button type="button" className="outline-button" onClick={() => setSelected(result.bestMatch)}>Inspect agent</button>
-              </div>
+              <div className="best-agent-actions"><button type="button" className="dark-button" onClick={hire} disabled={loading || !!mission}>{mission ? "Mission created" : "Hire this agent"}</button><button type="button" className="outline-button" onClick={() => setSelected(result.bestMatch)}>Inspect agent</button></div>
             </article>
           )}
         </div>
@@ -222,56 +181,17 @@ export default function MarketplaceWorkspace() {
           <div className="section-marker"><span>02</span> ALTERNATIVES</div>
           <div className="alternatives-list">
             {candidates.length === 0 && !loading && <p className="empty-state">No additional compatible agents returned yet.</p>}
-            {candidates.map((match) => (
-              <button type="button" className="alternative-row" key={match.agent.agent_id} onClick={() => setSelected(match)}>
-                <span className="alternative-index">{match.agent.agent_id.slice(-3)}</span>
-                <span className="alternative-info"><strong>{match.agent.name || `Agent #${match.agent.agent_id}`}</strong><small>{categoryLabel(match.agent.category)}</small></span>
-                <strong className={`alternative-score ${scoreColor(match.score)}`}>{Math.round(match.score)}</strong>
-              </button>
-            ))}
+            {candidates.map((match) => <button type="button" className="alternative-row" key={match.agent.agent_id} onClick={() => setSelected(match)}><span className="alternative-index">{match.agent.agent_id.slice(-3)}</span><span className="alternative-info"><strong>{match.agent.name || `Agent #${match.agent.agent_id}`}</strong><small>{categoryLabel(match.agent.category)}</small></span><strong className={`alternative-score ${scoreColor(match.score)}`}>{Math.round(match.score)}</strong></button>)}
           </div>
         </aside>
       </section>
 
       <section className="registry-note">
-        <div>
-          <span className="small-label">REGISTRY CONTEXT</span>
-          <h3>Indexed first. Verified separately.</h3>
-          <p>AgentMarket treats ERC-8004 registration, endpoint liveness and reputation as separate signals. New agents are still matchable before they have a long job history.</p>
-        </div>
-        <div className="registry-path">
-          <span>CHAIN</span><b>ERC-8004</b><i>→</i><span>REGISTRY</span><b>AgentMarket</b><i>→</i><span>MATCH</span>
-        </div>
+        <div><span className="small-label">REGISTRY CONTEXT</span><h3>Indexed first. Verified separately.</h3><p>AgentMarket treats ERC-8004 registration, endpoint liveness and reputation as separate signals. New agents are still matchable before they have a long job history.</p></div>
+        <div className="registry-path"><span>CHAIN</span><b>ERC-8004</b><i>→</i><span>REGISTRY</span><b>AgentMarket</b><i>→</i><span>MATCH</span></div>
       </section>
 
-      {selected && (
-        <div className="agent-drawer-backdrop" onClick={() => setSelected(null)}>
-          <aside className="agent-drawer" onClick={(event) => event.stopPropagation()}>
-            <button className="drawer-close" type="button" onClick={() => setSelected(null)} aria-label="Close agent details">×</button>
-            <span className="small-label">AGENT PROFILE</span>
-            <div className="drawer-score"><b>{Math.round(selected.score)}</b><span>/100 match</span></div>
-            <h2>{selected.agent.name || `Agent #${selected.agent.agent_id}`}</h2>
-            <p>{selected.agent.description || "No description was published in the registration file yet."}</p>
-            <div className="drawer-facts">
-              <div><span>agentId</span><b>{selected.agent.agent_id}</b></div>
-              <div><span>Owner</span><b>{compactAddress(selected.agent.owner)}</b></div>
-              <div><span>Category</span><b>{categoryLabel(selected.agent.category)}</b></div>
-              <div><span>Identity</span><b>{selected.agent.verification_status || "indexed"}</b></div>
-              <div><span>Endpoint</span><b>{selected.agent.status || "unknown"}</b></div>
-            </div>
-            <div className="drawer-breakdown">
-              {Object.entries(selected.breakdown).map(([key, value]) => (
-                <div className="metric-row" key={key}>
-                  <span>{key.replace(/([A-Z])/g, " $1")}</span>
-                  <div className="metric-track"><i style={{ width: `${Math.max(0, Math.min(100, value))}%` }} /></div>
-                  <b>{Math.round(value)}</b>
-                </div>
-              ))}
-            </div>
-            <button className="dark-button" type="button" onClick={hire} disabled={loading || !!mission}>Hire this agent</button>
-          </aside>
-        </div>
-      )}
+      {selected && <div className="agent-drawer-backdrop" onClick={() => setSelected(null)}><aside className="agent-drawer" onClick={(event) => event.stopPropagation()}><button className="drawer-close" type="button" onClick={() => setSelected(null)} aria-label="Close agent details">×</button><span className="small-label">AGENT PROFILE</span><div className="drawer-score"><b>{Math.round(selected.score)}</b><span>/100 match</span></div><h2>{selected.agent.name || `Agent #${selected.agent.agent_id}`}</h2><p>{selected.agent.description || "No description was published in the registration file yet."}</p><div className="drawer-facts"><div><span>agentId</span><b>{selected.agent.agent_id}</b></div><div><span>Owner</span><b>{compactAddress(selected.agent.owner)}</b></div><div><span>Category</span><b>{categoryLabel(selected.agent.category)}</b></div><div><span>Identity</span><b>{selected.agent.verification_status || "indexed"}</b></div><div><span>Endpoint</span><b>{selected.agent.status || "unknown"}</b></div></div><div className="drawer-breakdown">{Object.entries(selected.breakdown).map(([key, value]) => <div className="metric-row" key={key}><span>{key.replace(/([A-Z])/g, " $1")}</span><div className="metric-track"><i style={{ width: `${Math.max(0, Math.min(100, value))}%` }} /></div><b>{Math.round(value)}</b></div>)}</div><button className="dark-button" type="button" onClick={hire} disabled={loading || !!mission}>Hire this agent</button></aside></div>}
     </main>
   );
 }
