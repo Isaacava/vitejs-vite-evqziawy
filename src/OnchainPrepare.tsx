@@ -15,10 +15,12 @@ type Preparation = {
 };
 
 const compact = (value?: string | null) => value ? `${value.slice(0, 8)}…${value.slice(-6)}` : "—";
+const addressPattern = /^0x[a-fA-F0-9]{40}$/;
 
 export default function OnchainPrepare() {
   const missionId = new URLSearchParams(window.location.search).get("mission") || "";
   const [budget, setBudget] = useState("1");
+  const [walletAddress, setWalletAddress] = useState("");
   const [data, setData] = useState<Preparation | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -26,6 +28,11 @@ export default function OnchainPrepare() {
   async function prepare() {
     if (!missionId) {
       setError("No mission selected.");
+      return;
+    }
+
+    if (!addressPattern.test(walletAddress.trim())) {
+      setError("Connect a wallet or enter the client wallet address before preparing the on-chain plan.");
       return;
     }
 
@@ -37,7 +44,7 @@ export default function OnchainPrepare() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           mission_id: missionId,
-          client_address: "0x0000000000000000000000000000000000000001",
+          client_address: walletAddress.trim(),
           budget,
         }),
       });
@@ -52,7 +59,7 @@ export default function OnchainPrepare() {
   }
 
   useEffect(() => {
-    if (missionId) void prepare();
+    setData(null);
   }, [missionId]);
 
   if (!missionId) {
@@ -78,7 +85,7 @@ export default function OnchainPrepare() {
         <header className="console-nav">
           <a href="/" className="console-brand">AgentMarket</a>
           <span>MISSION / ON-CHAIN PREPARATION</span>
-          <a href={`/`}>Back →</a>
+          <a href="/app">Back to marketplace →</a>
         </header>
 
         {error && <div className="console-alert console-alert-error">{error}</div>}
@@ -87,9 +94,9 @@ export default function OnchainPrepare() {
           <div>
             <span className="console-kicker">ERC-8183 / PREPARE</span>
             <h1>Review the job before the wallet signs.</h1>
-            <p>We prepare the on-chain call sequence from the selected mission. The user wallet remains the signer, and no funds are moved by this screen.</p>
+            <p>We prepare the on-chain call sequence from the selected mission. The client wallet remains the signer, and this screen never signs or moves funds.</p>
           </div>
-          <div className="console-state"><small>NETWORK</small><strong>{data?.network || "BSC"}</strong><span>Wallet confirmation required for every state-changing transaction.</span></div>
+          <div className="console-state"><small>NETWORK</small><strong>{data?.network || "BSC"}</strong><span>Preparation only. State-changing transactions still require an explicit wallet confirmation.</span></div>
         </section>
 
         <div className="console-grid">
@@ -100,9 +107,11 @@ export default function OnchainPrepare() {
             <div className="console-stat"><span>Identity</span><strong>{data?.agent?.verification_status || "indexed"}</strong></div>
             <div className="console-stat"><span>Endpoint</span><strong>{data?.agent?.status || "unknown"}</strong></div>
             <div className="console-stat"><span>Payment asset</span><strong>{data?.payment?.symbol || "—"}</strong></div>
-            <label className="console-field-label">MISSION BUDGET</label>
-            <input className="console-input" value={budget} onChange={(event) => setBudget(event.target.value)} inputMode="decimal" aria-label="Mission budget" />
-            <button className="console-brass-button" disabled={loading} onClick={() => void prepare()}>{loading ? "Preparing…" : "Refresh transaction plan →"}</button>
+            <label className="console-field-label" htmlFor="client-wallet">CLIENT WALLET</label>
+            <input id="client-wallet" className="console-input" value={walletAddress} onChange={(event) => setWalletAddress(event.target.value)} placeholder="0x…" autoComplete="off" spellCheck={false} />
+            <label className="console-field-label" htmlFor="mission-budget">MISSION BUDGET</label>
+            <input id="mission-budget" className="console-input" value={budget} onChange={(event) => setBudget(event.target.value)} inputMode="decimal" />
+            <button className="console-brass-button" disabled={loading || !walletAddress.trim()} onClick={() => void prepare()}>{loading ? "Preparing…" : "Build transaction plan →"}</button>
           </section>
 
           <aside className="console-card">
@@ -118,7 +127,7 @@ export default function OnchainPrepare() {
         <section className="console-card console-plan-card">
           <div className="console-section-head"><span>03 / TRANSACTION PLAN</span><b>{data ? "INSPECTABLE" : "NOT LOADED"}</b></div>
           {!data ? (
-            <p className="console-evidence">Prepare the mission to load the live payment asset, provider, evaluator and encoded transaction details.</p>
+            <p className="console-evidence">Enter the client wallet address and build the plan to load the live payment asset, provider, evaluator and encoded transaction details.</p>
           ) : (
             <div className="console-plan-list">
               {Object.entries(data.transactions).map(([name, tx]) => (
