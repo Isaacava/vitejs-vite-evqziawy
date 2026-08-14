@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { parseMarketplaceIntent } from "./lib/intent";
 import "./marketplace-workspace.css";
 
-// Marketplace workspace: goal → intent → transparent agent match → mission.
 type Agent = {
   agent_id: string;
   name: string | null;
@@ -85,8 +84,15 @@ export default function MarketplaceWorkspace() {
     setLoading(true);
     setError("");
     try {
+      const authResponse = await fetch("/api/auth/me", { credentials: "include" });
+      if (!authResponse.ok) {
+        window.location.href = `/dashboard?return=${encodeURIComponent("/app")}`;
+        return;
+      }
+
       const response = await fetch("/api/missions", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ goal, agent_id: selected.agent.agent_id, budget: 0 }),
       });
@@ -122,7 +128,10 @@ export default function MarketplaceWorkspace() {
           <span>AgentMarket</span>
         </a>
         <div className="workspace-breadcrumb">DISCOVER / MATCH</div>
-        <a href="/" className="workspace-exit">Exit →</a>
+        <div className="workspace-nav-links">
+          <a href="/dashboard">Dashboard</a>
+          <a href="/">Exit →</a>
+        </div>
       </header>
 
       <section className="workspace-hero">
