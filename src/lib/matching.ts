@@ -1,0 +1,102 @@
+export type MarketplaceAgent = {
+  id: string;
+  name: string;
+  role: string;
+  capabilities: string[];
+  status: "online" | "busy" | "offline" | "pending";
+  isFirstParty: boolean;
+  reputation?: number;
+  completionRate?: number;
+  endpointHealthy?: boolean;
+};
+
+export type AgentMatch = MarketplaceAgent & {
+  score: number;
+  reasons: string[];
+  breakdown: {
+    capability: number;
+    availability: number;
+    verification: number;
+    reputation: number;
+    completion: number;
+    liveness: number;
+  };
+};
+
+const WEIGHTS = {
+  capability: 35,
+  availability: 15,
+  verification: 15,
+  reputation: 15,
+  completion: 10,
+  liveness: 10,
+} as const;
+
+function normalize(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function intentTerms(goal: string) {
+  const normalized = normalize(goal);
+  const aliases: Record<string, string[]> = {
+    rebalance: ["rebalance", "rebalancing", "portfolio", "allocation"],
+    yield: ["yield", "earn", "apy", "lending", "liquidity"],
+    grid: ["grid", "trading", "range", "orders"],
+    risk: ["risk", "health", "liquidation", "safety", "guardian"],
+  };
+
+  return Object.entries(aliases)
+    .filter(([, terms]) => terms.some((term) => normalized.includes(term)))
+    .map(([key]) => key);
+}
+
+export function matchAgents(goal: string, agents: MarketplaceAgent[]): AgentMatch[] {
+  const terms = intentTerms(goal);
+
+  return agents
+    .map((agent) => {
+      const capabilityText = normalize(
+        [agent.name, agent.role, ...agent.capabilities].join(" ")
+      );
+      const matchedTerms = terms.filter((term) => {
+        const aliases: Record<string, string[]> = {
+          rebalance: ["rebalance", "rebalancing", "portfolio", "allocation"],
+          yield: ["yield", "earn", "apy", "lending", "liquidity"],
+          grid: ["grid", "trading", "range", "orders"],
+          risk: ["risk", "health", "liquidation", "safety", "guardian"],
+        };
+        return aliases[term].some((value) => capabilityText.includes(value));
+      });
+
+      const capability = terms.length
+        ? Math.round((matchedTerms.length / terms.length) * WEIGHTS.capability)
+        : Math.round(WEIGHTS.capability * 0.5);
+      const availability = agent.status === "online"
+        ? WEIGHTS.availability
+        : agent.status === "busy"
+          ? Math.round(WEIGHTS.availability * 0.65)
+          : Math.round(WEIGHTS.availability * 0.2);
+      const verification = agent.isFirstParty ? WEIGHTS.verification : Math.round(WEIGHTS.verification * 0.65);
+      const reputation = Math.round((Math.max(0, Math.min(100, agent.reputation ?? 50)) / 100) * WEIGHTS.reputation);
+      const completion = Math.round((Math.max(0, Math.min(100, agent.completionRate ?? 50)) / 100) * WEIGHTS.completion);
+      const liveness = agent.endpointHealthy === false ? 0 : WEIGHTS.liveness;
+
+      const score = capability + availability + verification + reputation + completion + liveness;
+      const reasons: string[] = [];
+
+      if (matchedTerms.length) reasons.push(`Matches ${matchedTerms.join(", ")} intent`);
+      if (agent.status === "online") reasons.push("Agent is online");
+      if (agent.isFirstParty) reasons.push("Verified first-party agent");
+      if ((agent.reputation ?? 0) >= 80) reasons.push("Strong reputation");
+      if ((agent.completionRate ?? 0) >= 90) reasons.push("High completion rate");
+      if (agent.endpointHealthy !== false) reasons.push("Endpoint is healthy");
+
+      return {
+        ...agent,
+        score,
+        reasons: reasons.slice(0, 4),
+        breakdown: { capability, availability, verification, reputation, completion, liveness },
+      };
+    })
+    .sort((a, b) => b.score - a.score);
+}
