@@ -6,7 +6,6 @@ import ReactDOM from "react-dom/client";
 
 import Erc8183Test from "./Erc8183Test";
 import MissionPlanner from "./MissionPlanner";
-import MissionWorkspace from "./MissionWorkspace";
 import AgentWorkspace from "./AgentWorkspace";
 import AgentRegistry from "./AgentRegistry";
 import MissionSubJob from "./MissionSubJob";
