@@ -1,26 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { createClient } from "@supabase/supabase-js";
+import { getAuthenticatedUser, serverClient } from "./_auth.js";
 
 const ACTIONS = new Set(["accept", "start", "submit", "approve", "reject", "cancel"]);
-
-type JobRow = {
-  id: string;
-  mission_task_id: string | null;
-  provider_agent_id: string | null;
-  client_wallet: string | null;
-  status: string;
-  description: string;
-  budget: number;
-  chain_job_id: number | null;
-  deliverable: string | null;
-};
-
-function serverClient() {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error("Supabase server configuration is missing");
-  return createClient(url, key, { auth: { persistSession: false } });
-}
 
 function transition(status: string, action: string) {
   const map: Record<string, Record<string, string>> = {
@@ -37,6 +18,9 @@ function transition(status: string, action: string) {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const supabase = serverClient();
+    const auth = await getAuthenticatedUser(req);
+
+    if (!auth) return res.status(401).json({ error: "Authenticated AgentMarket session required" });
 
     if (req.method === "GET") {
       const id = typeof req.query.id === "string" ? req.query.id : "";
@@ -47,27 +31,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .select("id,mission_task_id,provider_agent_id,client_wallet,status,description,budget,chain_job_id,deliverable,created_at,funded_at,accepted_at,submitted_at,terminal_at,updated_at")
         .eq("id", id)
         .maybeSingle();
-
       if (jobError) return res.status(500).json({ error: jobError.message });
       if (!job) return res.status(404).json({ error: "Job not found" });
 
-      const taskQuery = job.mission_task_id
-        ? supabase.from("mission_tasks").select("id,mission_id,agent_id,title,role,description,budget,status,chain_job_id").eq("id", job.mission_task_id).maybeSingle()
-        : Promise.resolve({ data: null, error: null });
-      const evaluationQuery = supabase.from("evaluations").select("id,job_id,verdict,evaluator_address,evidence,notes,created_at,updated_at").eq("job_id", id).order("created_at", { ascending: false }).limit(1).maybeSingle();
-      const paymentQuery = supabase.from("payments").select("id,job_id,mission_id,token_address,token_symbol,amount,status,tx_hash,created_at,updated_at").eq("job_id", id).maybeSingle();
+      const taskResult = job.mission_task_id
+        ? await supabase.from("mission_tasks").select("id,mission_id,agent_id,title,role,description,budget,status,chain_job_id").eq("id", job.mission_task_id).maybeSingle()
+        : { data: null, error: null };
+      if (taskResult.error) return res.status(500).json({ error: taskResult.error.message });
+      const missionId = taskResult.data?.mission_id ?? null;
+      if (!missionId) return res.status(403).json({ error: "Job is not attached to a user mission" });
 
-      const [taskResult, evaluationResult, paymentResult] = await Promise.all([taskQuery, evaluationQuery, paymentQuery]);
+      const { data: mission, error: missionError } = await supabase
+        .from("missions")
+        .select("id,title,goal,category,budget,status,client_wallet,user_id,created_at,updated_at")
+        .eq("id", missionId)
+        .maybeSingle();
+      if (missionError) return res.status(500).json({ error: missionError.message });
+      if (!mission || mission.user_id !== auth.user.id) return res.status(403).json({ error: "You do not own this mission" });
 
-      const missionId = taskResult.data?.mission_id;
-      const mission = missionId
-        ? (await supabase.from("missions").select("id,title,goal,category,budget,status,client_wallet,created_at,updated_at").eq("id", missionId).maybeSingle()).data
-        : null;
+      const [evaluationResult, paymentResult] = await Promise.all([
+        supabase.from("evaluations").select("id,job_id,verdict,evaluator_address,evidence,notes,created_at,updated_at").eq("job_id", id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+        supabase.from("payments").select("id,job_id,mission_id,token_address,token_symbol,amount,status,tx_hash,created_at,updated_at").eq("job_id", id).maybeSingle(),
+      ]);
+
+      const safeMission = { ...mission };
+      delete (safeMission as { user_id?: string }).user_id;
 
       return res.status(200).json({
         job,
         task: taskResult.data,
-        mission,
+        mission: safeMission,
         evaluation: evaluationResult.data,
         payment: paymentResult.data,
       });
@@ -86,23 +79,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!id) return res.status(400).json({ error: "job_id is required" });
     if (!ACTIONS.has(action)) return res.status(400).json({ error: "Unsupported job action" });
 
-    // Evaluation/settlement is deliberately not simulated by the marketplace API.
-    // These actions require the real ERC-8183/evaluator flow and must not mutate
-    // payment state without an actual chain confirmation.
     if (action === "approve" || action === "reject") {
       return res.status(409).json({
         error: "On-chain evaluation and settlement are not yet wired here. No payment or terminal state was changed.",
-        protocol: {
-          action,
-          onChainRequired: true,
-          chainJobRequired: true,
-        },
+        protocol: { action, onChainRequired: true, chainJobRequired: true },
       });
     }
 
     const { data: job, error: jobError } = await supabase.from("jobs").select("*").eq("id", id).maybeSingle();
     if (jobError) return res.status(500).json({ error: jobError.message });
     if (!job) return res.status(404).json({ error: "Job not found" });
+
+    const task = job.mission_task_id
+      ? (await supabase.from("mission_tasks").select("id,mission_id,agent_id").eq("id", job.mission_task_id).maybeSingle()).data
+      : null;
+    if (!task?.mission_id) return res.status(403).json({ error: "Job is not attached to a user mission" });
+
+    const { data: mission, error: missionError } = await supabase.from("missions").select("id,user_id,client_wallet").eq("id", task.mission_id).maybeSingle();
+    if (missionError) return res.status(500).json({ error: missionError.message });
+    if (!mission || mission.user_id !== auth.user.id) return res.status(403).json({ error: "You do not own this mission" });
 
     const nextStatus = transition(job.status, action);
     if (!nextStatus) return res.status(409).json({ error: `Cannot ${action} a job in ${job.status} state` });
@@ -121,25 +116,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (updateError) return res.status(500).json({ error: updateError.message });
 
     if (job.mission_task_id) {
-      const taskStatus: Record<string, string> = {
-        accepted: "accepted",
-        in_progress: "in_progress",
-        submitted: "submitted",
-        cancelled: "cancelled",
-      };
+      const taskStatus: Record<string, string> = { accepted: "accepted", in_progress: "in_progress", submitted: "submitted", cancelled: "cancelled" };
       const nextTaskStatus = taskStatus[nextStatus];
-      if (nextTaskStatus) {
-        await supabase.from("mission_tasks").update({ status: nextTaskStatus, updated_at: now }).eq("id", job.mission_task_id);
-      }
+      if (nextTaskStatus) await supabase.from("mission_tasks").update({ status: nextTaskStatus, updated_at: now }).eq("id", job.mission_task_id);
     }
 
-    if (job.mission_task_id) {
-      const { data: task } = await supabase.from("mission_tasks").select("mission_id").eq("id", job.mission_task_id).maybeSingle();
-      if (task?.mission_id) {
-        const missionStatus = nextStatus === "in_progress" ? "in_progress" : nextStatus === "submitted" ? "awaiting_review" : nextStatus === "cancelled" ? "cancelled" : null;
-        if (missionStatus) await supabase.from("missions").update({ status: missionStatus, updated_at: now }).eq("id", task.mission_id);
-      }
-    }
+    const missionStatus = nextStatus === "in_progress" ? "in_progress" : nextStatus === "submitted" ? "awaiting_review" : nextStatus === "cancelled" ? "cancelled" : null;
+    if (missionStatus) await supabase.from("missions").update({ status: missionStatus, updated_at: now }).eq("id", task.mission_id).eq("user_id", auth.user.id);
 
     if (action === "submit") {
       await supabase.from("evaluations").upsert({
@@ -151,13 +134,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }, { onConflict: "job_id" });
     }
 
-    await supabase.from("notifications").insert({
-      mission_id: job.mission_task_id ? (await supabase.from("mission_tasks").select("mission_id").eq("id", job.mission_task_id).maybeSingle()).data?.mission_id ?? null : null,
-      task_id: job.mission_task_id,
-      recipient: job.provider_agent_id,
-      kind: `job_${action}`,
+    await supabase.from("user_activity").insert({
+      user_id: auth.user.id,
+      mission_id: task.mission_id,
+      job_id: id,
+      type: `job_${action}`,
       title: `Job ${action}`,
-      body: note || `Job transitioned from ${job.status} to ${nextStatus}.`,
+      description: note || `Job transitioned from ${job.status} to ${nextStatus}.`,
     });
 
     return res.status(200).json({
@@ -166,7 +149,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       protocol: {
         action,
         onChainRequired: ["accept", "start", "submit"].includes(action),
-        note: "This endpoint records marketplace/provider workflow state. On-chain ERC-8183 writes are tracked separately by chain_job_id and transaction records.",
+        note: "Marketplace workflow state is recorded separately from ERC-8183 chain state. Payment is never marked released here.",
       },
     });
   } catch (error) {
