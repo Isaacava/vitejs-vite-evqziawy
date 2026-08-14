@@ -30,8 +30,11 @@ export default function AgentInbox() {
   const [agentId, setAgentId] = useState(initialAgent);
   const [data, setData] = useState<ApiResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [actionLoading, setActionLoading] = useState("");
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<Job | null>(null);
+  const [resultText, setResultText] = useState("");
+  const [messageText, setMessageText] = useState("");
 
   async function refresh() {
     if (!agentId.trim()) {
@@ -45,11 +48,51 @@ export default function AgentInbox() {
       const body = (await response.json()) as ApiResponse;
       if (!response.ok) throw new Error(body.error || "Unable to read the agent inbox");
       setData(body);
-      setSelected(body.funded_jobs?.[0] || null);
+      setSelected((current) => current || body.funded_jobs?.[0] || null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to read the agent inbox");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function action(actionName: "accept" | "start" | "progress" | "message" | "submit") {
+    if (!agentId.trim() || !current) return;
+    if (actionName === "submit" && !resultText.trim()) {
+      setError("Add a deliverable before submitting the job.");
+      return;
+    }
+    if (actionName === "message" && !messageText.trim()) {
+      setError("Write a message before sending it.");
+      return;
+    }
+
+    setActionLoading(actionName);
+    setError("");
+    try {
+      const payload = actionName === "submit"
+        ? { result: resultText.trim() }
+        : actionName === "message"
+          ? { body: messageText.trim() }
+          : actionName === "progress"
+            ? { body: messageText.trim() || "Provider runtime progressed the job." }
+            : undefined;
+
+      const response = await fetch("/api/agent-actions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agent_id: agentId.trim(), chain_job_id: current.id, action: actionName, payload }),
+      });
+      const body = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(body.error || `Unable to ${actionName} job`);
+
+      if (actionName === "submit") setResultText("");
+      if (actionName === "message" || actionName === "progress") setMessageText("");
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : `Unable to ${actionName} job`);
+    } finally {
+      setActionLoading("");
     }
   }
 
@@ -75,7 +118,7 @@ export default function AgentInbox() {
           <div>
             <span className="inbox-kicker">PROVIDER WORKSPACE / 01</span>
             <h1>Funded jobs, visible before execution.</h1>
-            <p>The inbox mirrors the provider-facing boundary: read the live ERC-8183 job, verify it is assigned to this agent, then hand it to the runtime for accept → progress → submit.</p>
+            <p>The inbox mirrors the provider boundary: read the live ERC-8183 job, verify assignment, then hand it to the runtime for accept → progress → submit.</p>
           </div>
           <div className="inbox-status"><small>CHAIN SIGNAL</small><strong>{data ? "WATCHING" : "WAITING"}</strong><span>Only jobs returned as FUNDED by the chain watcher appear here.</span></div>
         </section>
@@ -122,10 +165,23 @@ export default function AgentInbox() {
                   <div><span>BUDGET</span><strong>{current.budget || "—"}</strong></div>
                   <div><span>EXPIRY</span><strong>{current.expiredAt ? new Date(Number(current.expiredAt) * 1000).toLocaleString() : "—"}</strong></div>
                 </div>
-                <div className="inbox-next">
-                  <small>NEXT RUNTIME STEP</small>
-                  <strong>Verify → Accept → Execute → Submit</strong>
-                  <p>The watcher only detects funded work. It does not sign, submit, or settle the job by itself.</p>
+
+                <div className="inbox-action-panel">
+                  <div className="inbox-action-head"><span>04 / PROVIDER ACTIONS</span><small>Server verifies assignment + state.</small></div>
+                  <div className="inbox-action-buttons">
+                    <button disabled={!!actionLoading} onClick={() => void action("accept")}>{actionLoading === "accept" ? "Accepting…" : "Accept job"}</button>
+                    <button disabled={!!actionLoading} onClick={() => void action("start")}>{actionLoading === "start" ? "Starting…" : "Start work"}</button>
+                  </div>
+                  <label>MESSAGE / PROGRESS NOTE</label>
+                  <textarea value={messageText} onChange={(event) => setMessageText(event.target.value)} placeholder="Explain what the runtime is doing…" />
+                  <div className="inbox-action-buttons">
+                    <button disabled={!!actionLoading} onClick={() => void action("progress")}>{actionLoading === "progress" ? "Saving…" : "Save progress"}</button>
+                    <button disabled={!!actionLoading} onClick={() => void action("message")}>{actionLoading === "message" ? "Sending…" : "Send message"}</button>
+                  </div>
+                  <label>DELIVERABLE</label>
+                  <textarea value={resultText} onChange={(event) => setResultText(event.target.value)} placeholder="Paste the provider result/evidence here…" />
+                  <button className="inbox-submit-button" disabled={!!actionLoading} onClick={() => void action("submit")}>{actionLoading === "submit" ? "Submitting…" : "Submit deliverable →"}</button>
+                  <p className="inbox-action-note">Submit updates the marketplace workflow. Actual ERC-8183 on-chain provider submission remains a separate wallet-signing transaction.</p>
                 </div>
               </>
             )}
