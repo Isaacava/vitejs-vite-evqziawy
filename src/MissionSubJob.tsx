@@ -394,6 +394,70 @@ export default function MissionSubJob() {
 
   /*
    * ------------------------------------------------------------
+   * SYNC JOB FROM CHAIN
+   * ------------------------------------------------------------
+   * Whenever the selected job id changes (new selection, refresh,
+   * or a freshly created job), always re-read the job directly
+   * from the contract rather than trusting any cached/local state.
+   * This is what keeps the UI from showing a stale job id (e.g.
+   * continuing to show job 516 after job 519 was created).
+   */
+
+  useEffect(() => {
+    if (
+      jobId === null
+    ) {
+      setJob(
+        null
+      );
+
+      return;
+    }
+
+    let cancelled =
+      false;
+
+    (async () => {
+      try {
+        const result =
+          await loadJob(
+            jobId
+          );
+
+        if (
+          !cancelled
+        ) {
+          void result;
+        }
+      } catch (
+        error
+      ) {
+        if (
+          !cancelled
+        ) {
+          console.error(
+            error
+          );
+
+          setErrorMessage(
+            formatError(
+              error
+            )
+          );
+        }
+      }
+    })();
+
+    return () => {
+      cancelled =
+        true;
+    };
+  }, [
+    jobId,
+  ]);
+
+  /*
+   * ------------------------------------------------------------
    * MANUAL MISSION REFRESH
    * ------------------------------------------------------------
    */
@@ -437,6 +501,18 @@ export default function MissionSubJob() {
         setSelectedTaskId(
           currentTask.id
         );
+
+        setJob(
+          null
+        );
+
+        setJobId(
+          currentTask.chainJobId
+            ? BigInt(
+                currentTask.chainJobId
+              )
+            : null
+        );
       } else {
         const firstAssigned =
           currentMission.tasks.find(
@@ -449,6 +525,18 @@ export default function MissionSubJob() {
         setSelectedTaskId(
           firstAssigned?.id ??
             ""
+        );
+
+        setJob(
+          null
+        );
+
+        setJobId(
+          firstAssigned?.chainJobId
+            ? BigInt(
+                firstAssigned.chainJobId
+              )
+            : null
         );
       }
     } else if (
@@ -474,6 +562,18 @@ export default function MissionSubJob() {
         firstAssigned?.id ??
           ""
       );
+
+      setJob(
+        null
+      );
+
+      setJobId(
+        firstAssigned?.chainJobId
+          ? BigInt(
+              firstAssigned.chainJobId
+            )
+          : null
+      );
     } else {
       setSelectedMissionId(
         ""
@@ -481,6 +581,14 @@ export default function MissionSubJob() {
 
       setSelectedTaskId(
         ""
+      );
+
+      setJob(
+        null
+      );
+
+      setJobId(
+        null
       );
     }
 
