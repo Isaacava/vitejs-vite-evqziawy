@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, type CSSProperties } from "react";
 import "./landing.css";
 
 const examples = [
@@ -16,40 +16,10 @@ const signals = [
 ];
 
 export default function LandingPage() {
-  const [goal] = useState(examples[0]);
-  const [typed, setTyped] = useState("");
-  const [index] = useState(0);
-  const [ready, setReady] = useState(false);
-
-  useEffect(() => {
-    let cursor = 0;
-    let deleting = false;
-    let phraseIndex = 0;
-
-    const timer = window.setInterval(() => {
-      const phrase = examples[phraseIndex];
-      if (!deleting) {
-        cursor += 1;
-        setTyped(phrase.slice(0, cursor));
-        if (cursor === phrase.length) {
-          deleting = true;
-          window.setTimeout(() => setReady(true), 280);
-        }
-      } else {
-        cursor -= 1;
-        setTyped(phrase.slice(0, Math.max(0, cursor)));
-        if (cursor <= 0) {
-          deleting = false;
-          phraseIndex = (phraseIndex + 1) % examples.length;
-          setReady(false);
-        }
-      }
-    }, 42);
-
-    return () => window.clearInterval(timer);
-  }, []);
-
-  const displayGoal = useMemo(() => goal || typed || examples[index], [goal, typed, index]);
+  const goal = examples[0];
+  const typed = useTypewriter(examples);
+  const displayGoal = useMemo(() => typed || goal, [goal, typed]);
+  const ready = typed.length >= goal.length;
 
   return (
     <main className="landing">
@@ -101,7 +71,7 @@ export default function LandingPage() {
             </div>
             <div className="goal-field">
               <small>USER GOAL</small>
-              <div className="goal-value">{typed || displayGoal}<span className="caret" /></div>
+              <div className="goal-value">{displayGoal}<span className="caret" /></div>
             </div>
             <div className="match-highlight">
               <div>
@@ -218,4 +188,36 @@ export default function LandingPage() {
       </footer>
     </main>
   );
+}
+
+function useTypewriter(phrases: string[]) {
+  const [typed, setTyped] = useState("");
+  const [phraseIndex, setPhraseIndex] = useState(0);
+  const [cursor, setCursor] = useState(0);
+  const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => {
+    const phrase = phrases[phraseIndex];
+    const delay = !deleting && cursor === phrase.length ? 900 : deleting && cursor === 0 ? 350 : deleting ? 24 : 42;
+    const timer = window.setTimeout(() => {
+      if (!deleting) {
+        const next = cursor + 1;
+        setCursor(next);
+        setTyped(phrase.slice(0, next));
+        if (next === phrase.length) setDeleting(true);
+      } else {
+        const next = cursor - 1;
+        setCursor(next);
+        setTyped(phrase.slice(0, Math.max(0, next)));
+        if (next === 0) {
+          setDeleting(false);
+          setPhraseIndex((value) => (value + 1) % phrases.length);
+        }
+      }
+    }, delay);
+
+    return () => window.clearTimeout(timer);
+  }, [cursor, deleting, phraseIndex, phrases]);
+
+  return typed;
 }
