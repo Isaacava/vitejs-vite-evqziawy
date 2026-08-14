@@ -190,9 +190,7 @@ export default function AgentWorkspace() {
             jobs.push({
               jobId:
                 task.chainJobId,
-
               mission,
-
               task,
             });
           }
@@ -559,27 +557,25 @@ export default function AgentWorkspace() {
         "Simulating submit()..."
       );
 
-      await publicClient.simulateContract(
-        {
-          address:
-            ERC8183_ADDRESSES.commerce,
+      await publicClient.simulateContract({
+        address:
+          ERC8183_ADDRESSES.commerce,
 
-          abi:
-            COMMERCE_ABI,
+        abi:
+          COMMERCE_ABI,
 
-          functionName:
-            "submit",
+        functionName:
+          "submit",
 
-          args: [
-            job.id,
-            deliverableHash,
-            "0x",
-          ],
+        args: [
+          job.id,
+          deliverableHash,
+          "0x",
+        ],
 
-          account:
-            address,
-        }
-      );
+        account:
+          address,
+      });
 
       setMessage(
         "Confirm submit() in your wallet..."
@@ -1529,16 +1525,12 @@ const styles: Record<
   page: {
     minHeight:
       "100vh",
-
     padding:
       "24px 16px 60px",
-
     background:
       "#090b0d",
-
     color:
       "#f1f2ef",
-
     fontFamily:
       "Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
   },
@@ -1546,7 +1538,6 @@ const styles: Record<
   container: {
     maxWidth:
       "980px",
-
     margin:
       "0 auto",
   },
@@ -1554,16 +1545,12 @@ const styles: Record<
   header: {
     display:
       "flex",
-
     justifyContent:
       "space-between",
-
     alignItems:
       "flex-start",
-
     gap:
       "16px",
-
     marginBottom:
       "16px",
   },
@@ -1571,13 +1558,10 @@ const styles: Record<
   eyebrow: {
     fontSize:
       "10px",
-
     fontWeight:
       900,
-
     letterSpacing:
       "0.13em",
-
     color:
       "#7f878e",
   },
@@ -1585,10 +1569,8 @@ const styles: Record<
   title: {
     margin:
       "7px 0",
-
     fontSize:
       "30px",
-
     letterSpacing:
       "-0.03em",
   },
@@ -1596,13 +1578,10 @@ const styles: Record<
   subtitle: {
     margin:
       0,
-
     color:
       "#929aa1",
-
     lineHeight:
       1.6,
-
     fontSize:
       "14px",
   },
@@ -1610,16 +1589,12 @@ const styles: Record<
   card: {
     marginBottom:
       "14px",
-
     padding:
       "18px",
-
     border:
       "1px solid #252b30",
-
     borderRadius:
       "14px",
-
     background:
       "#111518",
   },
@@ -1627,13 +1602,10 @@ const styles: Record<
   sectionHeader: {
     display:
       "flex",
-
     justifyContent:
       "space-between",
-
     alignItems:
       "flex-start",
-
     gap:
       "12px",
   },
@@ -1641,7 +1613,6 @@ const styles: Record<
   sectionTitle: {
     margin:
       "5px 0",
-
     fontSize:
       "19px",
   },
@@ -1649,13 +1620,10 @@ const styles: Record<
   muted: {
     margin:
       "4px 0 10px",
-
     color:
       "#7d868d",
-
     fontSize:
       "12px",
-
     lineHeight:
       1.5,
   },
@@ -1663,10 +1631,8 @@ const styles: Record<
   mutedStatus: {
     color:
       "#838c92",
-
     fontSize:
       "12px",
-
     fontWeight:
       800,
   },
@@ -1674,10 +1640,8 @@ const styles: Record<
   goodStatus: {
     color:
       "#7fd3a5",
-
     fontSize:
       "12px",
-
     fontWeight:
       800,
   },
@@ -1685,28 +1649,20 @@ const styles: Record<
   primaryButton: {
     width:
       "100%",
-
     marginTop:
       "12px",
-
     padding:
       "13px",
-
     border:
       "none",
-
     borderRadius:
       "10px",
-
     background:
       "#f0b90b",
-
     color:
       "#111",
-
     fontWeight:
       900,
-
     cursor:
       "pointer",
   },
@@ -1714,22 +1670,16 @@ const styles: Record<
   secondaryButton: {
     padding:
       "9px 12px",
-
     border:
       "1px solid #343a3f",
-
     borderRadius:
       "9px",
-
     background:
       "#171b1e",
-
     color:
       "#fff",
-
     fontWeight:
       800,
-
     cursor:
       "pointer",
   },
@@ -1737,22 +1687,16 @@ const styles: Record<
   walletBox: {
     marginTop:
       "12px",
-
     padding:
       "12px",
-
     border:
       "1px solid #284737",
-
     borderRadius:
       "10px",
-
     background:
       "#101916",
-
     color:
       "#7fd3a5",
-
     fontSize:
       "12px",
   },
@@ -1760,25 +1704,18 @@ const styles: Record<
   code: {
     display:
       "block",
-
     marginTop:
       "7px",
-
     padding:
       "9px",
-
     borderRadius:
       "8px",
-
     background:
       "#080a0c",
-
     color:
       "#a6adb2",
-
     fontSize:
       "11px",
-
     wordBreak:
       "break-all",
   },
@@ -1786,25 +1723,18 @@ const styles: Record<
   countBadge: {
     minWidth:
       "28px",
-
     padding:
       "5px 8px",
-
     borderRadius:
       "999px",
-
     textAlign:
       "center",
-
     background:
       "#1b1810",
-
     color:
       "#f0b90b",
-
     fontSize:
       "11px",
-
     fontWeight:
       900,
   },
@@ -1812,13 +1742,10 @@ const styles: Record<
   jobList: {
     display:
       "grid",
-
     gridTemplateColumns:
       "repeat(auto-fit, minmax(230px, 1fr))",
-
     gap:
       "9px",
-
     marginTop:
       "12px",
   },
@@ -1826,25 +1753,18 @@ const styles: Record<
   jobCard: {
     width:
       "100%",
-
     padding:
       "13px",
-
     border:
       "1px solid #2a3034",
-
     borderRadius:
       "11px",
-
     background:
       "#0d1012",
-
     color:
       "#fff",
-
     textAlign:
       "left",
-
     cursor:
       "pointer",
   },
@@ -1852,7 +1772,6 @@ const styles: Record<
   jobCardActive: {
     border:
       "1px solid #f0b90b",
-
     background:
       "#161511",
   },
@@ -1860,10 +1779,8 @@ const styles: Record<
   jobTop: {
     display:
       "flex",
-
     justifyContent:
       "space-between",
-
     gap:
       "8px",
   },
@@ -1871,10 +1788,8 @@ const styles: Record<
   jobStatus: {
     color:
       "#7fd3a5",
-
     fontSize:
       "10px",
-
     fontWeight:
       900,
   },
@@ -1882,10 +1797,8 @@ const styles: Record<
   jobMission: {
     marginTop:
       "10px",
-
     fontSize:
       "13px",
-
     fontWeight:
       800,
   },
@@ -1893,10 +1806,8 @@ const styles: Record<
   jobTask: {
     marginTop:
       "4px",
-
     color:
       "#c2c8cc",
-
     fontSize:
       "12px",
   },
@@ -1904,10 +1815,8 @@ const styles: Record<
   jobMeta: {
     marginTop:
       "8px",
-
     color:
       "#7e878e",
-
     fontSize:
       "10px",
   },
@@ -1915,13 +1824,10 @@ const styles: Record<
   assignmentBox: {
     display:
       "grid",
-
     gridTemplateColumns:
       "repeat(auto-fit, minmax(170px, 1fr))",
-
     gap:
       "8px",
-
     marginTop:
       "14px",
   },
@@ -1929,13 +1835,10 @@ const styles: Record<
   chainGrid: {
     display:
       "grid",
-
     gridTemplateColumns:
       "repeat(auto-fit, minmax(170px, 1fr))",
-
     gap:
       "8px",
-
     marginTop:
       "8px",
   },
@@ -1943,13 +1846,10 @@ const styles: Record<
   info: {
     padding:
       "11px",
-
     border:
       "1px solid #272d32",
-
     borderRadius:
       "9px",
-
     background:
       "#0d1012",
   },
@@ -1957,16 +1857,12 @@ const styles: Record<
   label: {
     display:
       "block",
-
     color:
       "#737c83",
-
     fontSize:
       "10px",
-
     textTransform:
       "uppercase",
-
     letterSpacing:
       "0.05em",
   },
@@ -1974,13 +1870,10 @@ const styles: Record<
   infoValue: {
     display:
       "block",
-
     marginTop:
       "4px",
-
     fontSize:
       "12px",
-
     wordBreak:
       "break-word",
   },
@@ -1993,28 +1886,20 @@ const styles: Record<
   description: {
     margin:
       "6px 0 0",
-
     padding:
       "12px",
-
     border:
       "1px solid #252b30",
-
     borderRadius:
       "9px",
-
     background:
       "#0c1012",
-
     color:
       "#adb5bb",
-
     fontSize:
       "12px",
-
     lineHeight:
       1.6,
-
     whiteSpace:
       "pre-wrap",
   },
@@ -2022,43 +1907,30 @@ const styles: Record<
   textarea: {
     width:
       "100%",
-
     minHeight:
       "170px",
-
     boxSizing:
       "border-box",
-
     resize:
       "vertical",
-
     marginTop:
       "10px",
-
     padding:
       "12px",
-
     border:
       "1px solid #343a3f",
-
     borderRadius:
       "10px",
-
     background:
       "#0b0f11",
-
     color:
       "#fff",
-
     outline:
       "none",
-
     fontFamily:
       "inherit",
-
     fontSize:
       "13px",
-
     lineHeight:
       1.55,
   },
@@ -2066,28 +1938,20 @@ const styles: Record<
   hashPreview: {
     display:
       "grid",
-
     gap:
       "6px",
-
     marginTop:
       "10px",
-
     padding:
       "11px",
-
     borderRadius:
       "9px",
-
     background:
       "#0d1012",
-
     border:
       "1px solid #272d32",
-
     color:
       "#7d868d",
-
     fontSize:
       "10px",
   },
@@ -2095,28 +1959,20 @@ const styles: Record<
   hashBox: {
     display:
       "grid",
-
     gap:
       "6px",
-
     marginTop:
       "12px",
-
     padding:
       "11px",
-
     borderRadius:
       "9px",
-
     background:
       "#0d1012",
-
     border:
       "1px solid #272d32",
-
     color:
       "#7d868d",
-
     fontSize:
       "10px",
   },
@@ -2124,13 +1980,10 @@ const styles: Record<
   submissionBox: {
     display:
       "grid",
-
     gridTemplateColumns:
       "repeat(auto-fit, minmax(170px, 1fr))",
-
     gap:
       "8px",
-
     marginTop:
       "12px",
   },
@@ -2138,19 +1991,14 @@ const styles: Record<
   link: {
     display:
       "inline-block",
-
     marginTop:
       "12px",
-
     color:
       "#f0b90b",
-
     textDecoration:
       "none",
-
     fontWeight:
       800,
-
     fontSize:
       "12px",
   },
@@ -2158,28 +2006,20 @@ const styles: Record<
   empty: {
     display:
       "grid",
-
     gap:
       "5px",
-
     marginTop:
       "12px",
-
     padding:
       "14px",
-
     border:
       "1px solid #43361f",
-
     borderRadius:
       "10px",
-
     background:
       "#171511",
-
     color:
       "#c8b76f",
-
     fontSize:
       "12px",
   },
@@ -2187,19 +2027,14 @@ const styles: Record<
   infoBanner: {
     padding:
       "12px",
-
     border:
       "1px solid #43361f",
-
     borderRadius:
       "10px",
-
     background:
       "#171511",
-
     color:
       "#c8b76f",
-
     fontSize:
       "12px",
   },
@@ -2207,22 +2042,16 @@ const styles: Record<
   statusCard: {
     marginBottom:
       "12px",
-
     padding:
       "13px",
-
     border:
       "1px solid #2f363b",
-
     borderRadius:
       "10px",
-
     background:
       "#13181b",
-
     color:
       "#b7bec4",
-
     fontSize:
       "12px",
   },
@@ -2230,15 +2059,29 @@ const styles: Record<
   errorCard: {
     marginBottom:
       "12px",
-
     padding:
       "13px",
-
     border:
       "1px solid #562e2e",
-
     borderRadius:
       "10px",
+    background:
+      "#211414",
+    color:
+      "#ffaaaa",
+  },
+
+  error: {
+    margin:
+      "8px 0 0",
+    whiteSpace:
+      "pre-wrap",
+    overflowWrap:
+      "anywhere",
+    fontSize:
+      "11px",
+  },
+};x",
 
     background:
       "#211414",
