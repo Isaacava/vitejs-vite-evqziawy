@@ -5,6 +5,8 @@ type Agent = { agent_id: string; name: string | null; description: string | null
 type Match = { agent: Agent; score: number; breakdown: Record<string, number> };
 type MatchResponse = { intent: ReturnType<typeof parseMarketplaceIntent>; bestMatch: Match | null; alternatives: Match[] };
 
+type MissionResponse = { mission: { id: string }; task: { id: string }; job: { id: string; status: string } };
+
 const examples = [
   "Manage my BNB portfolio conservatively",
   "Find a safe yield strategy for my idle assets",
@@ -22,10 +24,11 @@ export default function MarketplaceDashboardV4() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [missionId, setMissionId] = useState("");
+  const [jobId, setJobId] = useState("");
   const intent = useMemo(() => parseMarketplaceIntent(goal), [goal]);
 
   async function findAgent() {
-    setLoading(true); setError(""); setMissionId("");
+    setLoading(true); setError(""); setMissionId(""); setJobId("");
     try {
       const r = await fetch("/api/match", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal }) });
       const data = await r.json();
@@ -44,7 +47,9 @@ export default function MarketplaceDashboardV4() {
       const r = await fetch("/api/missions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal, agent_id: result.bestMatch.agent.agent_id, budget: 0 }) });
       const data = await r.json();
       if (!r.ok) throw new Error(data?.error || "Mission creation failed");
-      setMissionId(data.mission.id);
+      const mission = data as MissionResponse;
+      setMissionId(mission.mission.id);
+      setJobId(mission.job.id);
     } catch (e) { setError(e instanceof Error ? e.message : "Mission creation failed"); }
     finally { setLoading(false); }
   }
@@ -74,7 +79,7 @@ export default function MarketplaceDashboardV4() {
         </section>
 
         {error && <div style={ui.error}>{error}</div>}
-        {missionId && <div style={ui.success}><b>Mission created:</b> {missionId.slice(0, 8)}… · job is open.</div>}
+        {missionId && <div style={ui.success}><b>Mission created:</b> {missionId.slice(0, 8)}… · job is open. <a style={ui.consoleLink} href={`/?job=${encodeURIComponent(jobId)}`}>Open mission console →</a></div>}
 
         <section>
           <div style={ui.resultHeader}><div><div style={ui.kicker}>MATCH RESULTS</div><h2 style={ui.h2}>Best agent for this mission</h2></div></div>
@@ -95,5 +100,5 @@ export default function MarketplaceDashboardV4() {
 }
 
 const ui: Record<string, React.CSSProperties> = {
-  page:{minHeight:"100vh",background:"#0a0d0f",color:"#f5f5f0",fontFamily:"Inter,system-ui,sans-serif"},shell:{width:"min(1180px,calc(100% - 32px))",margin:"0 auto",paddingBottom:64},header:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"24px 0",borderBottom:"1px solid #202428"},brand:{fontSize:23,fontWeight:900},muted:{color:"#7f878f",fontSize:12},hero:{padding:"72px 0 48px",textAlign:"center"},kicker:{fontSize:11,fontWeight:900,letterSpacing:".16em",color:"#f0b90b"},h1:{fontSize:"clamp(44px,7vw,80px)",lineHeight:.98,letterSpacing:"-.06em",margin:"16px 0 20px"},copy:{maxWidth:760,margin:"0 auto 34px",color:"#9ba3a9",lineHeight:1.7},prompt:{textAlign:"left",background:"#121619",border:"1px solid #2b3136",borderRadius:20,padding:18},textarea:{width:"100%",boxSizing:"border-box",background:"transparent",border:0,outline:0,color:"#fff",font:"inherit",fontSize:18,resize:"vertical"},promptFooter:{display:"flex",justifyContent:"space-between",alignItems:"center",gap:16,flexWrap:"wrap",paddingTop:14,borderTop:"1px solid #242a2e"},intent:{display:"flex",gap:8,alignItems:"center",color:"#7d858c",fontSize:12},primary:{border:0,borderRadius:12,padding:"12px 18px",background:"#f0b90b",fontWeight:900,cursor:"pointer"},examples:{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap",marginTop:16},example:{border:"1px solid #262c31",background:"transparent",color:"#7e868d",borderRadius:999,padding:"7px 10px",fontSize:11},error:{marginBottom:24,border:"1px solid #63322d",background:"#241514",color:"#ffb4aa",borderRadius:14,padding:14},success:{marginBottom:24,border:"1px solid #24583b",background:"#101a14",color:"#8cf0b5",borderRadius:14,padding:14},resultHeader:{marginBottom:18},h2:{margin:"6px 0 0",fontSize:28},loading:{border:"1px solid #242a2e",borderRadius:16,padding:24,color:"#8e969d"},grid:{display:"grid",gridTemplateColumns:"minmax(0,1.6fr) minmax(260px,.9fr)",gap:16},card:{background:"#121619",border:"1px solid #2b3136",borderRadius:18,padding:22},cardTop:{display:"flex",justifyContent:"space-between",gap:20},badge:{display:"inline-flex",padding:"5px 8px",borderRadius:999,background:"#35d07f",color:"#0b120d",fontWeight:900,fontSize:10},h3:{margin:"12px 0 8px",fontSize:30},desc:{margin:0,color:"#959da4",lineHeight:1.55},score:{fontSize:38},tags:{display:"flex",gap:8,flexWrap:"wrap",margin:"18px 0"},tag:{padding:"6px 9px",borderRadius:999,background:"#1b2024",border:"1px solid #292f34",fontSize:11},breakdown:{display:"grid",gap:11,borderTop:"1px solid #252b2f",paddingTop:18},metric:{display:"grid",gridTemplateColumns:"130px 1fr 34px",gap:10,alignItems:"center"},metricName:{color:"#a3aab0",fontSize:12,textTransform:"capitalize"},bar:{height:6,background:"#22282c",borderRadius:999,overflow:"hidden"},fill:{height:"100%",background:"#f0b90b"},hire:{width:"100%",marginTop:22,border:0,borderRadius:12,padding:"13px 16px",background:"#f0b90b",fontWeight:900},altRow:{display:"flex",justifyContent:"space-between",gap:12,padding:"15px 0",borderBottom:"1px solid #20262a"}
+  page:{minHeight:"100vh",background:"#0a0d0f",color:"#f5f5f0",fontFamily:"Inter,system-ui,sans-serif"},shell:{width:"min(1180px,calc(100% - 32px))",margin:"0 auto",paddingBottom:64},header:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"24px 0",borderBottom:"1px solid #202428"},brand:{fontSize:23,fontWeight:900},muted:{color:"#7f878f",fontSize:12},hero:{padding:"72px 0 48px",textAlign:"center"},kicker:{fontSize:11,fontWeight:900,letterSpacing:".16em",color:"#f0b90b"},h1:{fontSize:"clamp(44px,7vw,80px)",lineHeight:.98,letterSpacing:"-.06em",margin:"16px 0 20px"},copy:{maxWidth:760,margin:"0 auto 34px",color:"#9ba3a9",lineHeight:1.7},prompt:{textAlign:"left",background:"#121619",border:"1px solid #2b3136",borderRadius:20,padding:18},textarea:{width:"100%",boxSizing:"border-box",background:"transparent",border:0,outline:0,color:"#fff",font:"inherit",fontSize:18,resize:"vertical"},promptFooter:{display:"flex",justifyContent:"space-between",alignItems:"center",gap:16,flexWrap:"wrap",paddingTop:14,borderTop:"1px solid #242a2e"},intent:{display:"flex",gap:8,alignItems:"center",color:"#7d858c",fontSize:12},primary:{border:0,borderRadius:12,padding:"12px 18px",background:"#f0b90b",fontWeight:900,cursor:"pointer"},examples:{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap",marginTop:16},example:{border:"1px solid #262c31",background:"transparent",color:"#7e868d",borderRadius:999,padding:"7px 10px",fontSize:11},error:{marginBottom:24,border:"1px solid #63322d",background:"#241514",color:"#ffb4aa",borderRadius:14,padding:14},success:{marginBottom:24,border:"1px solid #24583b",background:"#101a14",color:"#8cf0b5",borderRadius:14,padding:14},consoleLink:{color:"#f0b90b",marginLeft:12,textDecoration:"none",fontWeight:800},resultHeader:{marginBottom:18},h2:{margin:"6px 0 0",fontSize:28},loading:{border:"1px solid #242a2e",borderRadius:16,padding:24,color:"#8e969d"},grid:{display:"grid",gridTemplateColumns:"minmax(0,1.6fr) minmax(260px,.9fr)",gap:16},card:{background:"#121619",border:"1px solid #2b3136",borderRadius:18,padding:22},cardTop:{display:"flex",justifyContent:"space-between",gap:20},badge:{display:"inline-flex",padding:"5px 8px",borderRadius:999,background:"#35d07f",color:"#0b120d",fontWeight:900,fontSize:10},h3:{margin:"12px 0 8px",fontSize:30},desc:{margin:0,color:"#959da4",lineHeight:1.55},score:{fontSize:38},tags:{display:"flex",gap:8,flexWrap:"wrap",margin:"18px 0"},tag:{padding:"6px 9px",borderRadius:999,background:"#1b2024",border:"1px solid #292f34",fontSize:11},breakdown:{display:"grid",gap:11,borderTop:"1px solid #252b2f",paddingTop:18},metric:{display:"grid",gridTemplateColumns:"130px 1fr 34px",gap:10,alignItems:"center"},metricName:{color:"#a3aab0",fontSize:12,textTransform:"capitalize"},bar:{height:6,background:"#22282c",borderRadius:999,overflow:"hidden"},fill:{height:"100%",background:"#f0b90b"},hire:{width:"100%",marginTop:22,border:0,borderRadius:12,padding:"13px 16px",background:"#f0b90b",fontWeight:900},altRow:{display:"flex",justifyContent:"space-between",gap:12,padding:"15px 0",borderBottom:"1px solid #20262a"}
 };
