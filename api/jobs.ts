@@ -28,8 +28,8 @@ function transition(status: string, action: string) {
     funded: { accept: "accepted", cancel: "cancelled" },
     accepted: { start: "in_progress", cancel: "cancelled" },
     in_progress: { submit: "submitted", cancel: "cancelled" },
-    submitted: { approve: "terminal", reject: "disputed" },
-    disputed: { approve: "terminal", reject: "cancelled" },
+    submitted: {},
+    disputed: {},
   };
   return map[status]?.[action] ?? null;
 }
@@ -86,6 +86,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!id) return res.status(400).json({ error: "job_id is required" });
     if (!ACTIONS.has(action)) return res.status(400).json({ error: "Unsupported job action" });
 
+    // Evaluation/settlement is deliberately not simulated by the marketplace API.
+    // These actions require the real ERC-8183/evaluator flow and must not mutate
+    // payment state without an actual chain confirmation.
+    if (action === "approve" || action === "reject") {
+      return res.status(409).json({
+        error: "On-chain evaluation and settlement are not yet wired here. No payment or terminal state was changed.",
+        protocol: {
+          action,
+          onChainRequired: true,
+          chainJobRequired: true,
+        },
+      });
+    }
+
     const { data: job, error: jobError } = await supabase.from("jobs").select("*").eq("id", id).maybeSingle();
     if (jobError) return res.status(500).json({ error: jobError.message });
     if (!job) return res.status(404).json({ error: "Job not found" });
@@ -101,7 +115,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       jobPatch.submitted_at = now;
       jobPatch.deliverable = deliverable;
     }
-    if (action === "approve" || action === "reject" || action === "cancel") jobPatch.terminal_at = now;
+    if (action === "cancel") jobPatch.terminal_at = now;
 
     const { data: updatedJob, error: updateError } = await supabase.from("jobs").update(jobPatch).eq("id", id).select("*").single();
     if (updateError) return res.status(500).json({ error: updateError.message });
@@ -111,8 +125,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         accepted: "accepted",
         in_progress: "in_progress",
         submitted: "submitted",
-        terminal: "completed",
-        disputed: "rejected",
         cancelled: "cancelled",
       };
       const nextTaskStatus = taskStatus[nextStatus];
@@ -124,7 +136,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (job.mission_task_id) {
       const { data: task } = await supabase.from("mission_tasks").select("mission_id").eq("id", job.mission_task_id).maybeSingle();
       if (task?.mission_id) {
-        const missionStatus = nextStatus === "terminal" ? "completed" : nextStatus === "in_progress" ? "in_progress" : nextStatus === "submitted" ? "awaiting_review" : nextStatus === "cancelled" ? "cancelled" : null;
+        const missionStatus = nextStatus === "in_progress" ? "in_progress" : nextStatus === "submitted" ? "awaiting_review" : nextStatus === "cancelled" ? "cancelled" : null;
         if (missionStatus) await supabase.from("missions").update({ status: missionStatus, updated_at: now }).eq("id", task.mission_id);
       }
     }
@@ -137,26 +149,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         notes: note || null,
         updated_at: now,
       }, { onConflict: "job_id" });
-    }
-
-    if (action === "approve" || action === "reject") {
-      await supabase.from("evaluations").upsert({
-        job_id: id,
-        verdict: action === "approve" ? "approve" : "reject",
-        evidence: { source: "marketplace_operator", recorded_at: now },
-        notes: note || null,
-        updated_at: now,
-      }, { onConflict: "job_id" });
-
-      if (action === "approve") {
-        await supabase.from("payments").upsert({
-          job_id: id,
-          mission_id: job.mission_task_id ? (await supabase.from("mission_tasks").select("mission_id").eq("id", job.mission_task_id).maybeSingle()).data?.mission_id ?? null : null,
-          amount: job.budget,
-          status: "released",
-          updated_at: now,
-        }, { onConflict: "job_id" });
-      }
     }
 
     await supabase.from("notifications").insert({
@@ -173,8 +165,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       state: nextStatus,
       protocol: {
         action,
-        onChainRequired: ["accept", "start", "submit", "approve", "reject"].includes(action),
-        note: "This endpoint records the marketplace workflow state. On-chain ERC-8183 writes are tracked separately by chain_job_id and transaction records.",
+        onChainRequired: ["accept", "start", "submit"].includes(action),
+        note: "This endpoint records marketplace/provider workflow state. On-chain ERC-8183 writes are tracked separately by chain_job_id and transaction records.",
       },
     });
   } catch (error) {
