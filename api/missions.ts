@@ -21,21 +21,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) {
-    return res.status(500).json({ error: "Supabase server configuration is missing" });
-  }
+  if (!url || !key) return res.status(500).json({ error: "Supabase server configuration is missing" });
 
   const supabase = createClient(url, key, { auth: { persistSession: false } });
   const intent = parseMarketplaceIntent(goal);
 
   const { data: agent, error: agentError } = await supabase
-    .from("marketplace_agents")
-    .select("id,name,role,status,is_first_party")
+    .from("agents")
+    .select("id,agent_id,name,description,category,status,source,verification_status,is_first_party,metadata")
     .eq("agent_id", agentId)
     .maybeSingle();
 
   if (agentError) return res.status(500).json({ error: agentError.message });
   if (!agent) return res.status(404).json({ error: "Agent is not available for missions" });
+  if (agent.status === "offline" || agent.verification_status === "revoked") {
+    return res.status(409).json({ error: "Selected agent is not currently available for missions" });
+  }
+
+  const role = typeof agent.metadata?.role === "string"
+    ? agent.metadata.role
+    : agent.category || "DeFi specialist";
 
   const { data: mission, error: missionError } = await supabase
     .from("missions")
@@ -58,7 +63,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       mission_id: mission.id,
       agent_id: agent.id,
       title: agent.name || "DeFi agent task",
-      role: agent.role || "DeFi specialist",
+      role,
       description: goal,
       budget,
       status: "assigned",
@@ -66,7 +71,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     .select("id,mission_id,agent_id,title,role,status")
     .single();
 
-  if (taskError) return res.status(500).json({ error: taskError.message });
+  if (taskError) {
+    await supabase.from("missions").delete().eq("id", mission.id);
+    return res.status(500).json({ error: taskError.message });
+  }
 
   const { data: job, error: jobError } = await supabase
     .from("jobs")
@@ -75,13 +83,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       provider_agent_id: agent.id,
       client_wallet: clientWallet,
       status: "open",
+      chain_status: "not_created",
       description: goal,
       budget,
     })
-    .select("id,status,budget,created_at")
+    .select("id,status,chain_status,budget,created_at")
     .single();
 
-  if (jobError) return res.status(500).json({ error: jobError.message });
+  if (jobError) {
+    await supabase.from("mission_tasks").delete().eq("id", task.id);
+    await supabase.from("missions").delete().eq("id", mission.id);
+    return res.status(500).json({ error: jobError.message });
+  }
 
   await supabase.from("notifications").insert({
     mission_id: mission.id,
@@ -92,5 +105,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     body: goal,
   });
 
-  return res.status(201).json({ mission, task, job, agent, intent });
+  return res.status(201).json({
+    mission,
+    task,
+    job,
+    agent: {
+      id: agent.id,
+      agent_id: agent.agent_id,
+      name: agent.name,
+      category: agent.category,
+      status: agent.status,
+      verification_status: agent.verification_status,
+      source: agent.source,
+    },
+    intent,
+    protocol: {
+      chainJobCreated: false,
+      chainStatus: "not_created",
+      nextStep: "create_and_fund_erc8183_job",
+    },
+  });
 }
