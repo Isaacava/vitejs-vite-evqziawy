@@ -1603,70 +1603,16 @@ function loadSavedSubJob(): SavedSubJob | null {
 }
 
 function loadMissionsWithSavedSubJob(): Mission[] {
-  const missions =
-    loadMissions();
-
-  const saved =
-    loadSavedSubJob();
-
-  if (
-    !saved?.jobId
-  ) {
-    return missions;
-  }
-
-  let changed = false;
-
-  const merged =
-    missions.map(
-      (mission) => {
-        if (
-          mission.id !== saved.missionId
-        ) {
-          return mission;
-        }
-
-        return {
-          ...mission,
-          tasks:
-            mission.tasks.map(
-              (task) => {
-                if (
-                  task.id !== saved.taskId ||
-                  task.chainJobId === saved.jobId
-                ) {
-                  return task;
-                }
-
-                changed = true;
-
-                return {
-                  ...task,
-                  chainJobId:
-                    saved.jobId,
-                };
-              }
-            ),
-        };
-      }
-    );
-
-  if (
-    changed
-  ) {
-    try {
-      window.localStorage.setItem(
-        MISSION_STORAGE_KEY,
-        JSON.stringify(
-          merged
-        )
-      );
-    } catch {
-      // Ignore storage errors.
-    }
-  }
-
-  return merged;
+  /*
+   * `missions` (MISSION_STORAGE_KEY) is the single source of truth
+   * for each task's chainJobId — it's updated directly whenever a
+   * new job is created. The separate SUBJOB_STORAGE_KEY only
+   * remembers which mission/task was last viewed in the Sub-job
+   * screen; it must never overwrite chainJobId with an older value,
+   * or a stale saved.jobId can silently resurrect a superseded job
+   * (e.g. showing job #516 again after #519 was created).
+   */
+  return loadMissions();
 }
 
 function loadMissions(): Mission[] {
