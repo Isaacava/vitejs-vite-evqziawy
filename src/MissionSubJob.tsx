@@ -1762,32 +1762,67 @@ export default function MissionSubJob() {
     taskId: string =
       selectedTaskId
   ) {
+    const newJobId =
+      id.toString();
+
+    const mission =
+      missions.find(
+        (item) =>
+          item.id ===
+          missionId
+      );
+
+    const task =
+      mission?.tasks.find(
+        (item) =>
+          item.id ===
+          taskId
+      );
+
+    if (
+      !mission ||
+      !task
+    ) {
+      return;
+    }
+
+    if (
+      task.chainJobId ===
+        newJobId &&
+      task.chainJobStatus ===
+        0
+    ) {
+      return;
+    }
+
     const updated =
       missions.map(
-        (mission): Mission => {
+        (current): Mission => {
           if (
-            mission.id !==
+            current.id !==
             missionId
           ) {
-            return mission;
+            return current;
           }
 
           return {
-            ...mission,
+            ...current,
 
             tasks:
-              mission.tasks.map(
-                (task): MissionTask =>
-                  task.id ===
+              current.tasks.map(
+                (currentTask): MissionTask =>
+                  currentTask.id ===
                   taskId
                     ? {
-                        ...task,
+                        ...currentTask,
+
                         chainJobId:
-                          id.toString(),
+                          newJobId,
+
                         chainJobStatus:
                           0,
                       }
-                    : task
+                    : currentTask
               ),
           };
         }
@@ -1817,11 +1852,34 @@ export default function MissionSubJob() {
       return;
     }
 
+    const currentTask =
+      selectedMission.tasks.find(
+        (task) =>
+          task.id ===
+          selectedTaskId
+      );
+
+    if (
+      !currentTask
+    ) {
+      return;
+    }
+
+    const newJobId =
+      onChainJob.id.toString();
+
+    if (
+      currentTask.chainJobId ===
+        newJobId &&
+      currentTask.chainJobStatus ===
+        onChainJob.status
+    ) {
+      return;
+    }
+
     const updated =
       missions.map(
-        (
-          mission
-        ): Mission => {
+        (mission): Mission => {
           if (
             mission.id !==
             selectedMission.id
@@ -1834,16 +1892,14 @@ export default function MissionSubJob() {
 
             tasks:
               mission.tasks.map(
-                (
-                  task
-                ): MissionTask =>
+                (task): MissionTask =>
                   task.id ===
                   selectedTaskId
                     ? {
                         ...task,
 
                         chainJobId:
-                          onChainJob.id.toString(),
+                          newJobId,
 
                         chainJobStatus:
                           onChainJob.status,
@@ -3617,86 +3673,6 @@ const styles: Record<
       800,
   },
 };
-orderRadius:
-      "9px",
-
-    background:
-      "#0c1012",
-
-    color:
-      "#929aa1",
-
-    fontSize:
-      "12px",
-  },
-
-  code: {
-    display:
-      "block",
-
-    marginTop:
-      "7px",
-
-    padding:
-      "10px",
-
-    borderRadius:
-      "8px",
-
-    background:
-      "#080a0c",
-
-    color:
-      "#8f979d",
-
-    fontSize:
-      "11px",
-
-    wordBreak:
-      "break-all",
-
-    whiteSpace:
-      "pre-wrap",
-  },
-
-  primaryButton: {
-    width:
-      "100%",
-
-    marginTop:
-      "12px",
-
-    padding:
-      "13px",
-
-    border:
-      "none",
-
-    borderRadius:
-      "10px",
-
-    background:
-      "#f0b90b",
-
-    color:
-      "#111",
-
-    fontWeight:
-      900,
-
-    cursor:
-      "pointer",
-  },
-
-  secondaryButton: {
-    width:
-      "100%",
-
-    marginTop:
-      "9px",
-
-    padding:
-      "12px",
 
     border:
       "1px solid #343a3f",
