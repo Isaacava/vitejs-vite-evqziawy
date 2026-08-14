@@ -2,6 +2,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  type CSSProperties,
 } from "react";
 
 import {
@@ -23,6 +24,8 @@ const MISSION_STORAGE_KEY =
 
 const WORKSPACE_SUBMISSIONS_KEY =
   "bnb_agent_workspace_submissions";
+
+const BSC_TESTNET_CHAIN_ID = 97;
 
 type MissionTask = {
   id: string;
@@ -73,8 +76,8 @@ type SavedSubmission = {
   jobId: string;
   deliverableText: string;
   deliverableHash: `0x${string}`;
-  submittedAt?: string;
-  transactionHash?: `0x${string}`;
+  submittedAt: string;
+  transactionHash: `0x${string}`;
 };
 
 type WalletStatus =
@@ -82,11 +85,19 @@ type WalletStatus =
   | "Connecting"
   | "Connected";
 
+type BrowserProvider =
+  EIP1193Provider & {
+    request(args: {
+      method: string;
+      params?: unknown[] | object;
+    }): Promise<unknown>;
+  };
+
 export default function AgentWorkspace() {
   const [
     provider,
     setProvider,
-  ] = useState<EIP1193Provider | null>(
+  ] = useState<BrowserProvider | null>(
     null
   );
 
@@ -159,20 +170,13 @@ export default function AgentWorkspace() {
     null
   );
 
-  const [
-    transactionHash,
-    setTransactionHash,
-  ] = useState<
-    `0x${string}` | null
-  >(null);
-
   const availableJobs =
     useMemo(() => {
-      const jobs: {
+      const jobs: Array<{
         jobId: string;
         mission: Mission;
         task: MissionTask;
-      }[] = [];
+      }> = [];
 
       for (
         const mission of missions
@@ -186,7 +190,9 @@ export default function AgentWorkspace() {
             jobs.push({
               jobId:
                 task.chainJobId,
+
               mission,
+
               task,
             });
           }
@@ -198,7 +204,9 @@ export default function AgentWorkspace() {
 
   const selectedAssignment =
     availableJobs.find(
-      (item) =>
+      (
+        item
+      ) =>
         item.jobId ===
         selectedJobId
     ) ?? null;
@@ -208,23 +216,29 @@ export default function AgentWorkspace() {
       availableJobs.length ===
       0
     ) {
+      setSelectedJobId(
+        ""
+      );
+
       return;
     }
 
-    if (
-      selectedJobId &&
+    const exists =
       availableJobs.some(
-        (item) =>
+        (
+          item
+        ) =>
           item.jobId ===
           selectedJobId
-      )
-    ) {
-      return;
-    }
+      );
 
-    setSelectedJobId(
-      availableJobs[0].jobId
-    );
+    if (
+      !exists
+    ) {
+      setSelectedJobId(
+        availableJobs[0].jobId
+      );
+    }
   }, [
     availableJobs,
     selectedJobId,
@@ -232,39 +246,12 @@ export default function AgentWorkspace() {
 
   useEffect(() => {
     if (
-      selectedJobId
+      !selectedJobId
     ) {
-      void loadSelectedJob(
-        selectedJobId
-      );
-    }
-  }, [
-    selectedJobId,
-  ]);
-
-  useEffect(() => {
-    if (
-      selectedJobId
-    ) {
-      const saved =
-        loadSubmission(
-          selectedJobId
-        );
-
-      setSubmission(
-        saved
+      setJob(
+        null
       );
 
-      setDeliverable(
-        saved?.deliverableText ??
-          ""
-      );
-
-      setTransactionHash(
-        saved?.transactionHash ??
-          null
-      );
-    } else {
       setSubmission(
         null
       );
@@ -273,10 +260,26 @@ export default function AgentWorkspace() {
         ""
       );
 
-      setTransactionHash(
-        null
-      );
+      return;
     }
+
+    const saved =
+      loadSubmission(
+        selectedJobId
+      );
+
+    setSubmission(
+      saved
+    );
+
+    setDeliverable(
+      saved?.deliverableText ??
+        ""
+    );
+
+    void loadSelectedJob(
+      selectedJobId
+    );
   }, [
     selectedJobId,
   ]);
@@ -312,10 +315,11 @@ export default function AgentWorkspace() {
         "Connecting provider wallet..."
       );
 
-      const ethereum =
-        window.ethereum as
-          | EIP1193Provider
-          | undefined;
+      const ethereum = (
+        window as Window & {
+          ethereum?: BrowserProvider;
+        }
+      ).ethereum;
 
       if (
         !ethereum
@@ -347,9 +351,11 @@ export default function AgentWorkspace() {
         })) as string;
 
       const numericChainId =
-        chainId.startsWith(
-          "0x"
-        )
+        chainId
+          .toLowerCase()
+          .startsWith(
+            "0x"
+          )
           ? parseInt(
               chainId,
               16
@@ -360,7 +366,7 @@ export default function AgentWorkspace() {
 
       if (
         numericChainId !==
-        97
+        BSC_TESTNET_CHAIN_ID
       ) {
         throw new Error(
           `Wrong network. Connected chain ID ${numericChainId}. Use BSC Testnet (97).`
@@ -599,10 +605,6 @@ export default function AgentWorkspace() {
           }
         );
 
-      setTransactionHash(
-        hash
-      );
-
       setMessage(
         "Waiting for submission confirmation..."
       );
@@ -738,15 +740,13 @@ export default function AgentWorkspace() {
               styles.sectionHeader
             }
           >
-            <div>
-              <h2
-                style={
-                  styles.sectionTitle
-                }
-              >
-                Provider wallet
-              </h2>
-            </div>
+            <h2
+              style={
+                styles.sectionTitle
+              }
+            >
+              Provider wallet
+            </h2>
 
             <span
               style={
@@ -829,8 +829,7 @@ export default function AgentWorkspace() {
                   styles.muted
                 }
               >
-                Funded ERC-8183 jobs connected to your marketplace
-                tasks.
+                Jobs created from marketplace tasks.
               </p>
             </div>
 
@@ -857,8 +856,7 @@ export default function AgentWorkspace() {
               </strong>
 
               <span>
-                Create and fund an ERC-8183 sub-job from the
-                Sub-job page first.
+                Create and fund an ERC-8183 sub-job first.
               </span>
             </div>
           ) : (
@@ -873,18 +871,12 @@ export default function AgentWorkspace() {
                 ) => (
                   <button
                     type="button"
-                    key={
-                      `${item.mission.id}-${item.task.id}-${item.jobId}`
-                    }
-                    onClick={() => {
+                    key={`${item.mission.id}-${item.task.id}-${item.jobId}`}
+                    onClick={() =>
                       setSelectedJobId(
                         item.jobId
-                      );
-
-                      setMessage(
-                        `Loading Job #${item.jobId}...`
-                      );
-                    }}
+                      )
+                    }
                     style={
                       selectedJobId ===
                       item.jobId
@@ -1040,74 +1032,73 @@ export default function AgentWorkspace() {
             )}
 
             {job && (
-              <div
-                style={
-                  styles.chainGrid
-                }
-              >
-                <Info
-                  label="Status"
-                  value={
-                    getJobStatus(
-                      job.status
-                    )
-                  }
-                />
-
-                <Info
-                  label="Provider"
-                  value={
-                    job.provider
-                  }
-                />
-
-                <Info
-                  label="Evaluator"
-                  value={
-                    job.evaluator
-                  }
-                />
-
-                <Info
-                  label="Budget"
-                  value={
-                    job.budget.toString()
-                  }
-                />
-              </div>
-            )}
-
-            {job && (
-              <div
-                style={
-                  styles.taskBox
-                }
-              >
+              <>
                 <div
                   style={
-                    styles.label
+                    styles.chainGrid
                   }
                 >
-                  On-chain task description
+                  <Info
+                    label="Status"
+                    value={
+                      getJobStatus(
+                        job.status
+                      )
+                    }
+                  />
+
+                  <Info
+                    label="Provider"
+                    value={
+                      job.provider
+                    }
+                  />
+
+                  <Info
+                    label="Evaluator"
+                    value={
+                      job.evaluator
+                    }
+                  />
+
+                  <Info
+                    label="Budget"
+                    value={
+                      job.budget.toString()
+                    }
+                  />
                 </div>
 
-                <p
+                <div
                   style={
-                    styles.description
+                    styles.taskBox
                   }
                 >
-                  {
-                    job.description
-                  }
-                </p>
-              </div>
+                  <div
+                    style={
+                      styles.label
+                    }
+                  >
+                    On-chain task description
+                  </div>
+
+                  <p
+                    style={
+                      styles.description
+                    }
+                  >
+                    {
+                      job.description
+                    }
+                  </p>
+                </div>
+              </>
             )}
           </section>
         )}
 
-        {job &&
-          job.status ===
-            1 && (
+        {job?.status ===
+          1 && (
           <section
             style={
               styles.card
@@ -1134,9 +1125,9 @@ export default function AgentWorkspace() {
                 styles.muted
               }
             >
-              Paste the final result, repository URL, deployment
-              URL, or delivery reference. The platform stores
-              the text locally and commits its hash on-chain.
+              Submit a repository URL, live URL, delivery
+              reference, or final result. Its hash is committed
+              on-chain.
             </p>
 
             <textarea
@@ -1150,7 +1141,7 @@ export default function AgentWorkspace() {
                   event.target.value
                 )
               }
-              placeholder="Example: https://github.com/... or a project delivery summary..."
+              placeholder="Paste the final deliverable or project URL..."
               rows={
                 8
               }
@@ -1223,12 +1214,8 @@ export default function AgentWorkspace() {
               }
 
               {job.status ===
-                2 && (
-                <span>
-                  {" "}
-                  The deliverable has already been submitted.
-                </span>
-              )}
+                2 &&
+                " — deliverable already submitted."}
             </div>
           </section>
         )}
@@ -1270,8 +1257,7 @@ export default function AgentWorkspace() {
               <Info
                 label="Submitted"
                 value={
-                  submission.submittedAt ??
-                  "Pending"
+                  submission.submittedAt
                 }
               />
             </div>
@@ -1292,18 +1278,16 @@ export default function AgentWorkspace() {
               </code>
             </div>
 
-            {submission.transactionHash && (
-              <a
-                href={`https://testnet.bscscan.com/tx/${submission.transactionHash}`}
-                target="_blank"
-                rel="noreferrer"
-                style={
-                  styles.link
-                }
-              >
-                View submission transaction ↗
-              </a>
-            )}
+            <a
+              href={`https://testnet.bscscan.com/tx/${submission.transactionHash}`}
+              target="_blank"
+              rel="noreferrer"
+              style={
+                styles.link
+              }
+            >
+              View submission transaction ↗
+            </a>
           </section>
         )}
 
@@ -1458,7 +1442,7 @@ function loadMissions(): Mission[] {
       return [];
     }
 
-    const parsed =
+    const parsed: unknown =
       JSON.parse(
         raw
       );
@@ -1504,7 +1488,7 @@ function loadSubmission(
 }
 
 function saveSubmission(
-  submission: SavedSubmission
+  saved: SavedSubmission
 ) {
   try {
     const raw =
@@ -1523,9 +1507,9 @@ function saveSubmission(
         : {};
 
     current[
-      submission.jobId
+      saved.jobId
     ] =
-      submission;
+      saved;
 
     window.localStorage.setItem(
       WORKSPACE_SUBMISSIONS_KEY,
@@ -1534,23 +1518,27 @@ function saveSubmission(
       )
     );
   } catch {
-    // Ignore local storage errors.
+    // Ignore storage errors.
   }
 }
 
 const styles: Record<
   string,
-  React.CSSProperties
+  CSSProperties
 > = {
   page: {
     minHeight:
       "100vh",
+
     padding:
       "24px 16px 60px",
+
     background:
       "#090b0d",
+
     color:
       "#f1f2ef",
+
     fontFamily:
       "Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
   },
@@ -1558,6 +1546,7 @@ const styles: Record<
   container: {
     maxWidth:
       "980px",
+
     margin:
       "0 auto",
   },
@@ -1565,12 +1554,16 @@ const styles: Record<
   header: {
     display:
       "flex",
+
     justifyContent:
       "space-between",
+
     alignItems:
       "flex-start",
+
     gap:
       "16px",
+
     marginBottom:
       "16px",
   },
@@ -1578,10 +1571,13 @@ const styles: Record<
   eyebrow: {
     fontSize:
       "10px",
+
     fontWeight:
       900,
+
     letterSpacing:
       "0.13em",
+
     color:
       "#7f878e",
   },
@@ -1589,8 +1585,10 @@ const styles: Record<
   title: {
     margin:
       "7px 0",
+
     fontSize:
       "30px",
+
     letterSpacing:
       "-0.03em",
   },
@@ -1598,12 +1596,13 @@ const styles: Record<
   subtitle: {
     margin:
       0,
-    maxWidth:
-      "720px",
+
     color:
       "#929aa1",
+
     lineHeight:
       1.6,
+
     fontSize:
       "14px",
   },
@@ -1611,12 +1610,16 @@ const styles: Record<
   card: {
     marginBottom:
       "14px",
+
     padding:
       "18px",
+
     border:
       "1px solid #252b30",
+
     borderRadius:
       "14px",
+
     background:
       "#111518",
   },
@@ -1624,10 +1627,13 @@ const styles: Record<
   sectionHeader: {
     display:
       "flex",
+
     justifyContent:
       "space-between",
+
     alignItems:
       "flex-start",
+
     gap:
       "12px",
   },
@@ -1635,6 +1641,7 @@ const styles: Record<
   sectionTitle: {
     margin:
       "5px 0",
+
     fontSize:
       "19px",
   },
@@ -1642,10 +1649,13 @@ const styles: Record<
   muted: {
     margin:
       "4px 0 10px",
+
     color:
       "#7d868d",
+
     fontSize:
       "12px",
+
     lineHeight:
       1.5,
   },
@@ -1653,8 +1663,10 @@ const styles: Record<
   mutedStatus: {
     color:
       "#838c92",
+
     fontSize:
       "12px",
+
     fontWeight:
       800,
   },
@@ -1662,8 +1674,10 @@ const styles: Record<
   goodStatus: {
     color:
       "#7fd3a5",
+
     fontSize:
       "12px",
+
     fontWeight:
       800,
   },
@@ -1671,20 +1685,28 @@ const styles: Record<
   primaryButton: {
     width:
       "100%",
+
     marginTop:
       "12px",
+
     padding:
       "13px",
+
     border:
       "none",
+
     borderRadius:
       "10px",
+
     background:
       "#f0b90b",
+
     color:
       "#111",
+
     fontWeight:
       900,
+
     cursor:
       "pointer",
   },
@@ -1692,16 +1714,22 @@ const styles: Record<
   secondaryButton: {
     padding:
       "9px 12px",
+
     border:
       "1px solid #343a3f",
+
     borderRadius:
       "9px",
+
     background:
       "#171b1e",
+
     color:
       "#fff",
+
     fontWeight:
       800,
+
     cursor:
       "pointer",
   },
@@ -1709,16 +1737,22 @@ const styles: Record<
   walletBox: {
     marginTop:
       "12px",
+
     padding:
       "12px",
+
     border:
       "1px solid #284737",
+
     borderRadius:
       "10px",
+
     background:
       "#101916",
+
     color:
       "#7fd3a5",
+
     fontSize:
       "12px",
   },
@@ -1726,18 +1760,25 @@ const styles: Record<
   code: {
     display:
       "block",
+
     marginTop:
       "7px",
+
     padding:
       "9px",
+
     borderRadius:
       "8px",
+
     background:
       "#080a0c",
+
     color:
       "#a6adb2",
+
     fontSize:
       "11px",
+
     wordBreak:
       "break-all",
   },
@@ -1745,18 +1786,25 @@ const styles: Record<
   countBadge: {
     minWidth:
       "28px",
+
     padding:
       "5px 8px",
+
     borderRadius:
       "999px",
+
     textAlign:
       "center",
+
     background:
       "#1b1810",
+
     color:
       "#f0b90b",
+
     fontSize:
       "11px",
+
     fontWeight:
       900,
   },
@@ -1764,10 +1812,13 @@ const styles: Record<
   jobList: {
     display:
       "grid",
+
     gridTemplateColumns:
       "repeat(auto-fit, minmax(230px, 1fr))",
+
     gap:
       "9px",
+
     marginTop:
       "12px",
   },
@@ -1775,18 +1826,25 @@ const styles: Record<
   jobCard: {
     width:
       "100%",
+
     padding:
       "13px",
+
     border:
       "1px solid #2a3034",
+
     borderRadius:
       "11px",
+
     background:
       "#0d1012",
+
     color:
       "#fff",
+
     textAlign:
       "left",
+
     cursor:
       "pointer",
   },
@@ -1794,6 +1852,7 @@ const styles: Record<
   jobCardActive: {
     border:
       "1px solid #f0b90b",
+
     background:
       "#161511",
   },
@@ -1801,8 +1860,10 @@ const styles: Record<
   jobTop: {
     display:
       "flex",
+
     justifyContent:
       "space-between",
+
     gap:
       "8px",
   },
@@ -1810,8 +1871,10 @@ const styles: Record<
   jobStatus: {
     color:
       "#7fd3a5",
+
     fontSize:
       "10px",
+
     fontWeight:
       900,
   },
@@ -1819,8 +1882,10 @@ const styles: Record<
   jobMission: {
     marginTop:
       "10px",
+
     fontSize:
       "13px",
+
     fontWeight:
       800,
   },
@@ -1828,8 +1893,10 @@ const styles: Record<
   jobTask: {
     marginTop:
       "4px",
+
     color:
       "#c2c8cc",
+
     fontSize:
       "12px",
   },
@@ -1837,8 +1904,10 @@ const styles: Record<
   jobMeta: {
     marginTop:
       "8px",
+
     color:
       "#7e878e",
+
     fontSize:
       "10px",
   },
@@ -1846,10 +1915,13 @@ const styles: Record<
   assignmentBox: {
     display:
       "grid",
+
     gridTemplateColumns:
       "repeat(auto-fit, minmax(170px, 1fr))",
+
     gap:
       "8px",
+
     marginTop:
       "14px",
   },
@@ -1857,10 +1929,13 @@ const styles: Record<
   chainGrid: {
     display:
       "grid",
+
     gridTemplateColumns:
       "repeat(auto-fit, minmax(170px, 1fr))",
+
     gap:
       "8px",
+
     marginTop:
       "8px",
   },
@@ -1868,10 +1943,13 @@ const styles: Record<
   info: {
     padding:
       "11px",
+
     border:
       "1px solid #272d32",
+
     borderRadius:
       "9px",
+
     background:
       "#0d1012",
   },
@@ -1879,12 +1957,16 @@ const styles: Record<
   label: {
     display:
       "block",
+
     color:
       "#737c83",
+
     fontSize:
       "10px",
+
     textTransform:
       "uppercase",
+
     letterSpacing:
       "0.05em",
   },
@@ -1892,10 +1974,13 @@ const styles: Record<
   infoValue: {
     display:
       "block",
+
     marginTop:
       "4px",
+
     fontSize:
       "12px",
+
     wordBreak:
       "break-word",
   },
@@ -1908,20 +1993,28 @@ const styles: Record<
   description: {
     margin:
       "6px 0 0",
+
     padding:
       "12px",
+
     border:
       "1px solid #252b30",
+
     borderRadius:
       "9px",
+
     background:
       "#0c1012",
+
     color:
       "#adb5bb",
+
     fontSize:
       "12px",
+
     lineHeight:
       1.6,
+
     whiteSpace:
       "pre-wrap",
   },
@@ -1929,30 +2022,43 @@ const styles: Record<
   textarea: {
     width:
       "100%",
+
     minHeight:
       "170px",
+
     boxSizing:
       "border-box",
+
     resize:
       "vertical",
+
     marginTop:
       "10px",
+
     padding:
       "12px",
+
     border:
       "1px solid #343a3f",
+
     borderRadius:
       "10px",
+
     background:
       "#0b0f11",
+
     color:
       "#fff",
+
     outline:
       "none",
+
     fontFamily:
       "inherit",
+
     fontSize:
       "13px",
+
     lineHeight:
       1.55,
   },
@@ -1960,20 +2066,28 @@ const styles: Record<
   hashPreview: {
     display:
       "grid",
+
     gap:
       "6px",
+
     marginTop:
       "10px",
+
     padding:
       "11px",
+
     borderRadius:
       "9px",
+
     background:
       "#0d1012",
+
     border:
       "1px solid #272d32",
+
     color:
       "#7d868d",
+
     fontSize:
       "10px",
   },
@@ -1981,20 +2095,28 @@ const styles: Record<
   hashBox: {
     display:
       "grid",
+
     gap:
       "6px",
+
     marginTop:
       "12px",
+
     padding:
       "11px",
+
     borderRadius:
       "9px",
+
     background:
       "#0d1012",
+
     border:
       "1px solid #272d32",
+
     color:
       "#7d868d",
+
     fontSize:
       "10px",
   },
@@ -2002,10 +2124,13 @@ const styles: Record<
   submissionBox: {
     display:
       "grid",
+
     gridTemplateColumns:
       "repeat(auto-fit, minmax(170px, 1fr))",
+
     gap:
       "8px",
+
     marginTop:
       "12px",
   },
@@ -2013,14 +2138,19 @@ const styles: Record<
   link: {
     display:
       "inline-block",
+
     marginTop:
       "12px",
+
     color:
       "#f0b90b",
+
     textDecoration:
       "none",
+
     fontWeight:
       800,
+
     fontSize:
       "12px",
   },
@@ -2028,20 +2158,28 @@ const styles: Record<
   empty: {
     display:
       "grid",
+
     gap:
       "5px",
+
     marginTop:
       "12px",
+
     padding:
       "14px",
+
     border:
       "1px solid #43361f",
+
     borderRadius:
       "10px",
+
     background:
       "#171511",
+
     color:
       "#c8b76f",
+
     fontSize:
       "12px",
   },
@@ -2049,14 +2187,19 @@ const styles: Record<
   infoBanner: {
     padding:
       "12px",
+
     border:
       "1px solid #43361f",
+
     borderRadius:
       "10px",
+
     background:
       "#171511",
+
     color:
       "#c8b76f",
+
     fontSize:
       "12px",
   },
@@ -2064,22 +2207,60 @@ const styles: Record<
   statusCard: {
     marginBottom:
       "12px",
+
     padding:
       "13px",
+
     border:
       "1px solid #2f363b",
+
     borderRadius:
       "10px",
+
     background:
       "#13181b",
+
     color:
       "#b7bec4",
+
     fontSize:
       "12px",
   },
 
   errorCard: {
     marginBottom:
+      "12px",
+
+    padding:
+      "13px",
+
+    border:
+      "1px solid #562e2e",
+
+    borderRadius:
+      "10px",
+
+    background:
+      "#211414",
+
+    color:
+      "#ffaaaa",
+  },
+
+  error: {
+    margin:
+      "8px 0 0",
+
+    whiteSpace:
+      "pre-wrap",
+
+    overflowWrap:
+      "anywhere",
+
+    fontSize:
+      "11px",
+  },
+};   marginBottom:
       "12px",
     padding:
       "13px",
