@@ -565,13 +565,59 @@ export default function AgentWorkspace() {
       return;
     }
 
+    /*
+     * Re-fetch the job directly from the contract right before
+     * submitting. The `job` in React state may be stale (loaded
+     * earlier in the session) — validating preconditions against
+     * stale state is what produces a submit() revert with no
+     * clear cause, since simulateContract still runs against
+     * *current* chain state regardless of what the UI last saw.
+     */
+    let freshJob: Job;
+
+    try {
+      setMessage(
+        "Verifying current job state..."
+      );
+
+      freshJob =
+        (await publicClient.readContract(
+          {
+            address:
+              ERC8183_ADDRESSES.commerce,
+
+            abi:
+              COMMERCE_ABI,
+
+            functionName:
+              "getJob",
+
+            args: [
+              job.id,
+            ],
+          }
+        )) as Job;
+
+      setJob(
+        freshJob
+      );
+    } catch (err) {
+      setError(
+        `Could not confirm current job state: ${formatError(
+          err
+        )}`
+      );
+
+      return;
+    }
+
     if (
-      job.status !==
+      freshJob.status !==
       1
     ) {
       setError(
-        `Job #${job.id.toString()} is ${getJobStatus(
-          job.status
+        `Job #${freshJob.id.toString()} is ${getJobStatus(
+          freshJob.status
         )}. Only funded jobs can be submitted.`
       );
 
@@ -583,17 +629,17 @@ export default function AgentWorkspace() {
     );
 
     if (
-      job.expiredAt <= now
+      freshJob.expiredAt <= now
     ) {
       setError(
-        `Job #${job.id.toString()} has expired. Create a new job with a later expiry before submitting.`
+        `Job #${freshJob.id.toString()} has expired. Create a new job with a later expiry before submitting.`
       );
 
       return;
     }
 
     if (
-      job.provider.toLowerCase() !==
+      freshJob.provider.toLowerCase() !==
       address.toLowerCase()
     ) {
       setError(
@@ -658,7 +704,7 @@ export default function AgentWorkspace() {
             "submit",
 
           args: [
-            job.id,
+            freshJob.id,
             deliverableHash,
             "0x",
           ],
@@ -685,7 +731,7 @@ export default function AgentWorkspace() {
               "submit",
 
             args: [
-              job.id,
+              freshJob.id,
               deliverableHash,
               "0x",
             ],
