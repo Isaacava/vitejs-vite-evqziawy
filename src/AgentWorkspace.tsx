@@ -2089,36 +2089,4 @@ const styles: Record<
     fontSize:
       "11px",
   },
-};,
-
-    overflowWrap:
-      "anywhere",
-
-    fontSize:
-      "11px",
-  },
-};   marginBottom:
-      "12px",
-    padding:
-      "13px",
-    border:
-      "1px solid #562e2e",
-    borderRadius:
-      "10px",
-    background:
-      "#211414",
-    color:
-      "#ffaaaa",
-  },
-
-  error: {
-    margin:
-      "8px 0 0",
-    whiteSpace:
-      "pre-wrap",
-    overflowWrap:
-      "anywhere",
-    fontSize:
-      "11px",
-  },
 };
