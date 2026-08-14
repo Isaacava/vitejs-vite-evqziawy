@@ -261,90 +261,61 @@ export default function MissionSubJob() {
     const saved =
       loadSavedSubJob();
 
-    if (
+    const savedMission =
       saved
-    ) {
-      const savedMission =
-        missions.find(
-          (mission) =>
-            mission.id ===
-            saved.missionId
-        );
+        ? missions.find(
+            (mission) =>
+              mission.id ===
+              saved.missionId
+          ) ?? null
+        : null;
 
-      if (
-        savedMission
-      ) {
-        setSelectedMissionId(
-          savedMission.id
-        );
+    const mission =
+      savedMission ??
+      missions[0] ??
+      null;
 
-        const savedTask =
-          savedMission.tasks.find(
+    if (!mission) {
+      return;
+    }
+
+    const savedTask =
+      savedMission && saved
+        ? savedMission.tasks.find(
             (task) =>
               task.id ===
               saved.taskId
-          );
+          ) ?? null
+        : null;
 
-        if (
-          savedTask
-        ) {
-          setSelectedTaskId(
-            savedTask.id
-          );
-        } else {
-          const firstAssigned =
-            savedMission.tasks.find(
-              (task) =>
-                Boolean(
-                  task.assignedAgentId
-                )
-            );
+    const task =
+      savedTask ??
+      mission.tasks.find(
+        (item) =>
+          Boolean(
+            item.assignedAgentId
+          )
+      ) ??
+      null;
 
-          setSelectedTaskId(
-            firstAssigned?.id ??
-              ""
-          );
-        }
+    setSelectedMissionId(
+      mission.id
+    );
 
-        if (
-          saved.jobId
-        ) {
-          setJobId(
-            BigInt(
-              saved.jobId
-            )
-          );
-        }
-
-        return;
-      }
-    }
+    setSelectedTaskId(
+      task?.id ??
+        ""
+    );
 
     if (
-      missions.length >
-      0
+      task
     ) {
-      const firstMission =
-        missions[0];
-
-      setSelectedMissionId(
-        firstMission.id
-      );
-
-      const firstAssigned =
-        firstMission.tasks.find(
-          (task) =>
-            Boolean(
-              task.assignedAgentId
-            )
-        );
-
-      setSelectedTaskId(
-        firstAssigned?.id ??
-          ""
+      void syncLatestJobForTask(
+        mission,
+        task
       );
     }
-  }, []);
+  }, [missions]);
 
   /*
    * ------------------------------------------------------------
@@ -394,70 +365,6 @@ export default function MissionSubJob() {
 
   /*
    * ------------------------------------------------------------
-   * SYNC JOB FROM CHAIN
-   * ------------------------------------------------------------
-   * Whenever the selected job id changes (new selection, refresh,
-   * or a freshly created job), always re-read the job directly
-   * from the contract rather than trusting any cached/local state.
-   * This is what keeps the UI from showing a stale job id (e.g.
-   * continuing to show job 516 after job 519 was created).
-   */
-
-  useEffect(() => {
-    if (
-      jobId === null
-    ) {
-      setJob(
-        null
-      );
-
-      return;
-    }
-
-    let cancelled =
-      false;
-
-    (async () => {
-      try {
-        const result =
-          await loadJob(
-            jobId
-          );
-
-        if (
-          !cancelled
-        ) {
-          void result;
-        }
-      } catch (
-        error
-      ) {
-        if (
-          !cancelled
-        ) {
-          console.error(
-            error
-          );
-
-          setErrorMessage(
-            formatError(
-              error
-            )
-          );
-        }
-      }
-    })();
-
-    return () => {
-      cancelled =
-        true;
-    };
-  }, [
-    jobId,
-  ]);
-
-  /*
-   * ------------------------------------------------------------
    * MANUAL MISSION REFRESH
    * ------------------------------------------------------------
    */
@@ -501,18 +408,6 @@ export default function MissionSubJob() {
         setSelectedTaskId(
           currentTask.id
         );
-
-        setJob(
-          null
-        );
-
-        setJobId(
-          currentTask.chainJobId
-            ? BigInt(
-                currentTask.chainJobId
-              )
-            : null
-        );
       } else {
         const firstAssigned =
           currentMission.tasks.find(
@@ -525,18 +420,6 @@ export default function MissionSubJob() {
         setSelectedTaskId(
           firstAssigned?.id ??
             ""
-        );
-
-        setJob(
-          null
-        );
-
-        setJobId(
-          firstAssigned?.chainJobId
-            ? BigInt(
-                firstAssigned.chainJobId
-              )
-            : null
         );
       }
     } else if (
@@ -562,18 +445,6 @@ export default function MissionSubJob() {
         firstAssigned?.id ??
           ""
       );
-
-      setJob(
-        null
-      );
-
-      setJobId(
-        firstAssigned?.chainJobId
-          ? BigInt(
-              firstAssigned.chainJobId
-            )
-          : null
-      );
     } else {
       setSelectedMissionId(
         ""
@@ -581,14 +452,6 @@ export default function MissionSubJob() {
 
       setSelectedTaskId(
         ""
-      );
-
-      setJob(
-        null
-      );
-
-      setJobId(
-        null
       );
     }
 
@@ -642,12 +505,18 @@ export default function MissionSubJob() {
     );
 
     setJobId(
-      firstAssigned?.chainJobId
-        ? BigInt(
-            firstAssigned.chainJobId
-          )
-        : null
+      null
     );
+
+    if (
+      mission &&
+      firstAssigned
+    ) {
+      void syncLatestJobForTask(
+        mission,
+        firstAssigned
+      );
+    }
 
     setTransactionHashes(
       {}
@@ -691,12 +560,18 @@ export default function MissionSubJob() {
     );
 
     setJobId(
-      task?.chainJobId
-        ? BigInt(
-            task.chainJobId
-          )
-        : null
+      null
     );
+
+    if (
+      selectedMission &&
+      task
+    ) {
+      void syncLatestJobForTask(
+        selectedMission,
+        task
+      );
+    }
 
     setTransactionHashes(
       {}
@@ -1736,6 +1611,106 @@ export default function MissionSubJob() {
     }
   }
 
+  async function syncLatestJobForTask(
+    mission: Mission,
+    task: MissionTask
+  ) {
+    try {
+      const counter =
+        (await publicClient.readContract(
+          {
+            address:
+              ERC8183_ADDRESSES.commerce,
+
+            abi:
+              COMMERCE_ABI,
+
+            functionName:
+              "jobCounter",
+          }
+        )) as bigint;
+
+      const expectedMission =
+        `Mission ID: ${mission.id}`;
+
+      const expectedTask =
+        `Task ID: ${task.id}`;
+
+      for (
+        let id = counter;
+        id > 0n;
+        id -= 1n
+      ) {
+        const candidate =
+          (await publicClient.readContract(
+            {
+              address:
+                ERC8183_ADDRESSES.commerce,
+
+              abi:
+                COMMERCE_ABI,
+
+              functionName:
+                "getJob",
+
+              args: [
+                id,
+              ],
+            }
+          )) as OnChainJob;
+
+        if (
+          candidate.description.includes(
+            expectedMission
+          ) &&
+          candidate.description.includes(
+            expectedTask
+          )
+        ) {
+          setJobId(
+            id
+          );
+
+          updateTaskChainJob(
+            id,
+            mission.id,
+            task.id
+          );
+
+          await loadJob(
+            id
+          );
+
+          saveSubJob({
+            missionId:
+              mission.id,
+            taskId:
+              task.id,
+            jobId:
+              id.toString(),
+          });
+
+          setStatusMessage(
+            `✅ Latest ERC-8183 Job #${id.toString()} linked to this task.`
+          );
+
+          return;
+        }
+      }
+
+      setJobId(
+        null
+      );
+    } catch (
+      error
+    ) {
+      console.error(
+        "Latest job lookup failed:",
+        error
+      );
+    }
+  }
+
   /*
    * ------------------------------------------------------------
    * ON-CHAIN JOB READ
@@ -1781,22 +1756,18 @@ export default function MissionSubJob() {
    */
 
   function updateTaskChainJob(
-    id: bigint
+    id: bigint,
+    missionId: string =
+      selectedMissionId,
+    taskId: string =
+      selectedTaskId
   ) {
-    if (
-      !selectedMission
-    ) {
-      return;
-    }
-
     const updated =
       missions.map(
-        (
-          mission
-        ): Mission => {
+        (mission): Mission => {
           if (
             mission.id !==
-            selectedMission.id
+            missionId
           ) {
             return mission;
           }
@@ -1806,17 +1777,13 @@ export default function MissionSubJob() {
 
             tasks:
               mission.tasks.map(
-                (
-                  task
-                ): MissionTask =>
+                (task): MissionTask =>
                   task.id ===
-                  selectedTaskId
+                  taskId
                     ? {
                         ...task,
-
                         chainJobId:
                           id.toString(),
-
                         chainJobStatus:
                           0,
                       }
@@ -3646,6 +3613,295 @@ const styles: Record<
       "#f0b90b",
     textDecoration:
       "none",
+    fontWeight:
+      800,
+  },
+};
+orderRadius:
+      "9px",
+
+    background:
+      "#0c1012",
+
+    color:
+      "#929aa1",
+
+    fontSize:
+      "12px",
+  },
+
+  code: {
+    display:
+      "block",
+
+    marginTop:
+      "7px",
+
+    padding:
+      "10px",
+
+    borderRadius:
+      "8px",
+
+    background:
+      "#080a0c",
+
+    color:
+      "#8f979d",
+
+    fontSize:
+      "11px",
+
+    wordBreak:
+      "break-all",
+
+    whiteSpace:
+      "pre-wrap",
+  },
+
+  primaryButton: {
+    width:
+      "100%",
+
+    marginTop:
+      "12px",
+
+    padding:
+      "13px",
+
+    border:
+      "none",
+
+    borderRadius:
+      "10px",
+
+    background:
+      "#f0b90b",
+
+    color:
+      "#111",
+
+    fontWeight:
+      900,
+
+    cursor:
+      "pointer",
+  },
+
+  secondaryButton: {
+    width:
+      "100%",
+
+    marginTop:
+      "9px",
+
+    padding:
+      "12px",
+
+    border:
+      "1px solid #343a3f",
+
+    borderRadius:
+      "10px",
+
+    background:
+      "#171b1e",
+
+    color:
+      "#fff",
+
+    fontWeight:
+      800,
+
+    cursor:
+      "pointer",
+  },
+
+  disabledButton: {
+    width:
+      "100%",
+
+    marginTop:
+      "12px",
+
+    padding:
+      "13px",
+
+    border:
+      "none",
+
+    borderRadius:
+      "10px",
+
+    background:
+      "#292e32",
+
+    color:
+      "#626a70",
+
+    cursor:
+      "not-allowed",
+  },
+
+  steps: {
+    display:
+      "flex",
+
+    flexWrap:
+      "wrap",
+
+    gap:
+      "8px",
+
+    marginTop:
+      "14px",
+  },
+
+  step: {
+    display:
+      "flex",
+
+    alignItems:
+      "center",
+
+    gap:
+      "6px",
+
+    padding:
+      "8px 10px",
+
+    border:
+      "1px solid #2b3237",
+
+    borderRadius:
+      "8px",
+
+    background:
+      "#0d1012",
+
+    color:
+      "#727b82",
+
+    fontSize:
+      "11px",
+  },
+
+  stepComplete: {
+    display:
+      "flex",
+
+    alignItems:
+      "center",
+
+    gap:
+      "6px",
+
+    padding:
+      "8px 10px",
+
+    border:
+      "1px solid #284737",
+
+    borderRadius:
+      "8px",
+
+    background:
+      "#101916",
+
+    color:
+      "#7fd3a5",
+
+    fontSize:
+      "11px",
+  },
+
+  statusCard: {
+    marginBottom:
+      "12px",
+
+    padding:
+      "13px",
+
+    border:
+      "1px solid #2f363b",
+
+    borderRadius:
+      "10px",
+
+    background:
+      "#13181b",
+
+    color:
+      "#b7bec4",
+
+    fontSize:
+      "12px",
+  },
+
+  errorCard: {
+    marginBottom:
+      "12px",
+
+    padding:
+      "13px",
+
+    border:
+      "1px solid #562e2e",
+
+    borderRadius:
+      "10px",
+
+    background:
+      "#211414",
+
+    color:
+      "#ffaaaa",
+  },
+
+  error: {
+    margin:
+      "8px 0 0",
+
+    whiteSpace:
+      "pre-wrap",
+
+    overflowWrap:
+      "anywhere",
+
+    fontSize:
+      "11px",
+  },
+
+  txRow: {
+    display:
+      "flex",
+
+    justifyContent:
+      "space-between",
+
+    alignItems:
+      "center",
+
+    gap:
+      "10px",
+
+    padding:
+      "10px 0",
+
+    borderBottom:
+      "1px solid #252b30",
+
+    fontSize:
+      "12px",
+  },
+
+  link: {
+    color:
+      "#f0b90b",
+
+    textDecoration:
+      "none",
+
     fontWeight:
       800,
   },

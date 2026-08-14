@@ -305,20 +305,9 @@ export default function AgentWorkspace() {
       const latest =
         loadMissionsWithSavedSubJob();
 
-      const saved =
-        loadSavedSubJob();
-
       setMissions(
         latest
       );
-
-      if (
-        saved?.jobId
-      ) {
-        setSelectedJobId(
-          saved.jobId
-        );
-      }
     };
 
     window.addEventListener(
@@ -352,25 +341,12 @@ export default function AgentWorkspace() {
       latest
     );
 
-    const saved =
-      loadSavedSubJob();
-
-    if (
-      saved?.jobId
-    ) {
-      setSelectedJobId(
-        saved.jobId
-      );
-    }
-
     setError(
       null
     );
 
     setMessage(
-      saved?.jobId
-        ? `✅ Workspace refreshed. Job #${saved.jobId} is synced.`
-        : "✅ Workspace refreshed."
+      "✅ Workspace refreshed. Latest task jobs will be used."
     );
   }
 
@@ -565,59 +541,13 @@ export default function AgentWorkspace() {
       return;
     }
 
-    /*
-     * Re-fetch the job directly from the contract right before
-     * submitting. The `job` in React state may be stale (loaded
-     * earlier in the session) — validating preconditions against
-     * stale state is what produces a submit() revert with no
-     * clear cause, since simulateContract still runs against
-     * *current* chain state regardless of what the UI last saw.
-     */
-    let freshJob: Job;
-
-    try {
-      setMessage(
-        "Verifying current job state..."
-      );
-
-      freshJob =
-        (await publicClient.readContract(
-          {
-            address:
-              ERC8183_ADDRESSES.commerce,
-
-            abi:
-              COMMERCE_ABI,
-
-            functionName:
-              "getJob",
-
-            args: [
-              job.id,
-            ],
-          }
-        )) as Job;
-
-      setJob(
-        freshJob
-      );
-    } catch (err) {
-      setError(
-        `Could not confirm current job state: ${formatError(
-          err
-        )}`
-      );
-
-      return;
-    }
-
     if (
-      freshJob.status !==
+      job.status !==
       1
     ) {
       setError(
-        `Job #${freshJob.id.toString()} is ${getJobStatus(
-          freshJob.status
+        `Job #${job.id.toString()} is ${getJobStatus(
+          job.status
         )}. Only funded jobs can be submitted.`
       );
 
@@ -629,17 +559,17 @@ export default function AgentWorkspace() {
     );
 
     if (
-      freshJob.expiredAt <= now
+      job.expiredAt <= now
     ) {
       setError(
-        `Job #${freshJob.id.toString()} has expired. Create a new job with a later expiry before submitting.`
+        `Job #${job.id.toString()} has expired. Create a new job with a later expiry before submitting.`
       );
 
       return;
     }
 
     if (
-      freshJob.provider.toLowerCase() !==
+      job.provider.toLowerCase() !==
       address.toLowerCase()
     ) {
       setError(
@@ -704,7 +634,7 @@ export default function AgentWorkspace() {
             "submit",
 
           args: [
-            freshJob.id,
+            job.id,
             deliverableHash,
             "0x",
           ],
@@ -731,7 +661,7 @@ export default function AgentWorkspace() {
               "submit",
 
             args: [
-              freshJob.id,
+              job.id,
               deliverableHash,
               "0x",
             ],
@@ -1603,15 +1533,6 @@ function loadSavedSubJob(): SavedSubJob | null {
 }
 
 function loadMissionsWithSavedSubJob(): Mission[] {
-  /*
-   * `missions` (MISSION_STORAGE_KEY) is the single source of truth
-   * for each task's chainJobId — it's updated directly whenever a
-   * new job is created. The separate SUBJOB_STORAGE_KEY only
-   * remembers which mission/task was last viewed in the Sub-job
-   * screen; it must never overwrite chainJobId with an older value,
-   * or a stale saved.jobId can silently resurrect a superseded job
-   * (e.g. showing job #516 again after #519 was created).
-   */
   return loadMissions();
 }
 
@@ -2169,6 +2090,107 @@ const styles: Record<
     display:
       "grid",
     gridTemplateColumns:
+      "repeat(auto-fit, minmax(170px, 1fr))",
+    gap:
+      "8px",
+    marginTop:
+      "12px",
+  },
+
+  link: {
+    display:
+      "inline-block",
+    marginTop:
+      "12px",
+    color:
+      "#f0b90b",
+    textDecoration:
+      "none",
+    fontWeight:
+      800,
+    fontSize:
+      "12px",
+  },
+
+  empty: {
+    display:
+      "grid",
+    gap:
+      "5px",
+    marginTop:
+      "12px",
+    padding:
+      "14px",
+    border:
+      "1px solid #43361f",
+    borderRadius:
+      "10px",
+    background:
+      "#171511",
+    color:
+      "#c8b76f",
+    fontSize:
+      "12px",
+  },
+
+  infoBanner: {
+    padding:
+      "12px",
+    border:
+      "1px solid #43361f",
+    borderRadius:
+      "10px",
+    background:
+      "#171511",
+    color:
+      "#c8b76f",
+    fontSize:
+      "12px",
+  },
+
+  statusCard: {
+    marginBottom:
+      "12px",
+    padding:
+      "13px",
+    border:
+      "1px solid #2f363b",
+    borderRadius:
+      "10px",
+    background:
+      "#13181b",
+    color:
+      "#b7bec4",
+    fontSize:
+      "12px",
+  },
+
+  errorCard: {
+    marginBottom:
+      "12px",
+    padding:
+      "13px",
+    border:
+      "1px solid #562e2e",
+    borderRadius:
+      "10px",
+    background:
+      "#211414",
+    color:
+      "#ffaaaa",
+  },
+
+  error: {
+    margin:
+      "8px 0 0",
+    whiteSpace:
+      "pre-wrap",
+    overflowWrap:
+      "anywhere",
+    fontSize:
+      "11px",
+  },
+}; gridTemplateColumns:
       "repeat(auto-fit, minmax(170px, 1fr))",
     gap:
       "8px",
