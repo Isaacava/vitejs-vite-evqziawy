@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
-import { parseMarketplaceIntent } from "../src/lib/intent";
+import { parseMarketplaceIntent } from "../src/lib/intent.js";
 
 type AgentRow = {
   agent_id: string;
