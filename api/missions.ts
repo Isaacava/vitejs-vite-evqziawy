@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { createClient } from "@supabase/supabase-js";
 import { parseMarketplaceIntent } from "../src/lib/intent.js";
+import { getAuthenticatedUser, serverClient } from "./_auth.js";
+import { recordUserActivity } from "./_activity.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
@@ -8,22 +9,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
+  const auth = await getAuthenticatedUser(req);
+  if (!auth) return res.status(401).json({ error: "Connect and sign in with a wallet before hiring an agent" });
+
   const goal = typeof req.body?.goal === "string" ? req.body.goal.trim() : "";
   const agentId = typeof req.body?.agent_id === "string" ? req.body.agent_id.trim() : "";
-  const clientWallet = typeof req.body?.client_wallet === "string" ? req.body.client_wallet.trim() : null;
+  const suppliedWallet = typeof req.body?.client_wallet === "string" ? req.body.client_wallet.trim() : "";
   const budget = Number(req.body?.budget ?? 0);
 
   if (!goal) return res.status(400).json({ error: "goal is required" });
   if (!agentId) return res.status(400).json({ error: "agent_id is required" });
-  if (!Number.isFinite(budget) || budget < 0) {
-    return res.status(400).json({ error: "budget must be a non-negative number" });
+  if (!Number.isFinite(budget) || budget < 0) return res.status(400).json({ error: "budget must be a non-negative number" });
+  if (suppliedWallet && suppliedWallet.toLowerCase() !== auth.user.wallet_address.toLowerCase()) {
+    return res.status(403).json({ error: "Mission wallet must match the authenticated wallet" });
   }
 
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) return res.status(500).json({ error: "Supabase server configuration is missing" });
-
-  const supabase = createClient(url, key, { auth: { persistSession: false } });
+  const supabase = serverClient();
   const intent = parseMarketplaceIntent(goal);
 
   const { data: agent, error: agentError } = await supabase
@@ -38,13 +39,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(409).json({ error: "Selected agent is not currently available for missions" });
   }
 
-  const role = typeof agent.metadata?.role === "string"
-    ? agent.metadata.role
-    : agent.category || "DeFi specialist";
+  const role = typeof agent.metadata?.role === "string" ? agent.metadata.role : agent.category || "DeFi specialist";
+  const clientWallet = auth.user.wallet_address;
 
   const { data: mission, error: missionError } = await supabase
     .from("missions")
     .insert({
+      user_id: auth.user.id,
       client_wallet: clientWallet,
       title: `${agent.name || "Agent"} mission`,
       goal,
@@ -54,7 +55,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
     .select("id,title,goal,category,budget,status,created_at")
     .single();
-
   if (missionError) return res.status(500).json({ error: missionError.message });
 
   const { data: task, error: taskError } = await supabase
@@ -99,10 +99,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   await supabase.from("notifications").insert({
     mission_id: mission.id,
     task_id: task.id,
+    user_id: auth.user.id,
     recipient: agentId,
     kind: "new_job",
     title: "New mission available",
     body: goal,
+  });
+
+  await recordUserActivity(supabase, {
+    userId: auth.user.id,
+    missionId: mission.id,
+    jobId: job.id,
+    type: "mission_created",
+    title: `Hired ${agent.name || "an agent"}`,
+    description: goal,
+    metadata: { agent_id: agent.agent_id, category: intent.category, budget },
   });
 
   return res.status(201).json({
