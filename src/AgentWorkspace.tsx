@@ -25,6 +25,12 @@ const MISSION_STORAGE_KEY =
 const WORKSPACE_SUBMISSIONS_KEY =
   "bnb_agent_workspace_submissions";
 
+const SUBJOB_STORAGE_KEY =
+  "bnb_agent_marketplace_subjob";
+
+const SUBJOB_UPDATED_EVENT =
+  "agent-marketplace-subjob-updated";
+
 const BSC_TESTNET_CHAIN_ID = 97;
 
 type MissionTask = {
@@ -99,6 +105,12 @@ type AvailableJob = {
   task: MissionTask;
 };
 
+type SavedSubJob = {
+  missionId: string;
+  taskId: string;
+  jobId?: string;
+};
+
 export default function AgentWorkspace() {
   const [
     provider,
@@ -125,7 +137,7 @@ export default function AgentWorkspace() {
     missions,
     setMissions,
   ] = useState<Mission[]>(
-    loadMissions()
+    loadMissionsWithSavedSubJob()
   );
 
   const [
@@ -288,20 +300,77 @@ export default function AgentWorkspace() {
     selectedJobId,
   ]);
 
+  useEffect(() => {
+    const syncSavedSubJob = () => {
+      const latest =
+        loadMissionsWithSavedSubJob();
+
+      const saved =
+        loadSavedSubJob();
+
+      setMissions(
+        latest
+      );
+
+      if (
+        saved?.jobId
+      ) {
+        setSelectedJobId(
+          saved.jobId
+        );
+      }
+    };
+
+    window.addEventListener(
+      SUBJOB_UPDATED_EVENT,
+      syncSavedSubJob
+    );
+
+    window.addEventListener(
+      "focus",
+      syncSavedSubJob
+    );
+
+    return () => {
+      window.removeEventListener(
+        SUBJOB_UPDATED_EVENT,
+        syncSavedSubJob
+      );
+
+      window.removeEventListener(
+        "focus",
+        syncSavedSubJob
+      );
+    };
+  }, []);
+
   function refreshWorkspace() {
     const latest =
-      loadMissions();
+      loadMissionsWithSavedSubJob();
 
     setMissions(
       latest
     );
+
+    const saved =
+      loadSavedSubJob();
+
+    if (
+      saved?.jobId
+    ) {
+      setSelectedJobId(
+        saved.jobId
+      );
+    }
 
     setError(
       null
     );
 
     setMessage(
-      "✅ Workspace refreshed."
+      saved?.jobId
+        ? `✅ Workspace refreshed. Job #${saved.jobId} is synced.`
+        : "✅ Workspace refreshed."
     );
   }
 
@@ -504,6 +573,20 @@ export default function AgentWorkspace() {
         `Job #${job.id.toString()} is ${getJobStatus(
           job.status
         )}. Only funded jobs can be submitted.`
+      );
+
+      return;
+    }
+
+    const now = BigInt(
+      Math.floor(Date.now() / 1000)
+    );
+
+    if (
+      job.expiredAt <= now
+    ) {
+      setError(
+        `Job #${job.id.toString()} has expired. Create a new job with a later expiry before submitting.`
       );
 
       return;
@@ -1433,6 +1516,111 @@ function formatError(
   return String(
     error
   );
+}
+
+function loadSavedSubJob(): SavedSubJob | null {
+  try {
+    const raw =
+      window.localStorage.getItem(
+        SUBJOB_STORAGE_KEY
+      );
+
+    if (!raw) {
+      return null;
+    }
+
+    const parsed =
+      JSON.parse(
+        raw
+      ) as Partial<SavedSubJob>;
+
+    if (
+      typeof parsed.missionId !== "string" ||
+      typeof parsed.taskId !== "string"
+    ) {
+      return null;
+    }
+
+    return {
+      missionId:
+        parsed.missionId,
+      taskId:
+        parsed.taskId,
+      jobId:
+        typeof parsed.jobId === "string"
+          ? parsed.jobId
+          : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function loadMissionsWithSavedSubJob(): Mission[] {
+  const missions =
+    loadMissions();
+
+  const saved =
+    loadSavedSubJob();
+
+  if (
+    !saved?.jobId
+  ) {
+    return missions;
+  }
+
+  let changed = false;
+
+  const merged =
+    missions.map(
+      (mission) => {
+        if (
+          mission.id !== saved.missionId
+        ) {
+          return mission;
+        }
+
+        return {
+          ...mission,
+          tasks:
+            mission.tasks.map(
+              (task) => {
+                if (
+                  task.id !== saved.taskId ||
+                  task.chainJobId === saved.jobId
+                ) {
+                  return task;
+                }
+
+                changed = true;
+
+                return {
+                  ...task,
+                  chainJobId:
+                    saved.jobId,
+                };
+              }
+            ),
+        };
+      }
+    );
+
+  if (
+    changed
+  ) {
+    try {
+      window.localStorage.setItem(
+        MISSION_STORAGE_KEY,
+        JSON.stringify(
+          merged
+        )
+      );
+    } catch {
+      // Ignore storage errors.
+    }
+  }
+
+  return merged;
 }
 
 function loadMissions(): Mission[] {
