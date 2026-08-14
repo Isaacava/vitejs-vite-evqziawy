@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import "./mission-console.css";
 
-// Mission console: marketplace workflow state, evidence, and on-chain preparation.
 type JobView = {
   job: { id: string; status: string; description: string; budget: number; chain_job_id: number | null; deliverable: string | null };
   task: { id: string; status: string; title: string; role: string } | null;
   mission: { id: string; title: string; goal: string; status: string; category: string } | null;
-  evaluation: { verdict: string; notes: string | null } | null;
+  evaluation: { verdict: string; notes: string | null; evidence?: { source?: string; decision?: string; reasons?: string[] } | null } | null;
   payment: { amount: number; status: string; tx_hash: string | null; token_symbol: string | null } | null;
 };
 
@@ -63,6 +62,7 @@ export default function MissionConsole() {
 
   const statusIndex = data ? STEPS.indexOf(data.job.status) : -1;
   const canPrepare = !!data && (data.job.status === "open" || data.job.status === "funded") && !data.job.chain_job_id;
+  const riskEvidence = data?.evaluation?.evidence;
 
   return (
     <main className="console-page">
@@ -106,14 +106,14 @@ export default function MissionConsole() {
               {canPrepare && (
                 <div className="console-chain-callout">
                   <div><small>ERC-8183</small><strong>Turn this mission into a wallet-ready job.</strong><span>Create → policy → budget → approve → fund.</span></div>
-                  <a href={`/?mission=${encodeURIComponent(data.mission?.id || "")}`} className="console-brass-button">Prepare on-chain →</a>
+                  <a href={`/prepare?mission=${encodeURIComponent(data.mission?.id || "")}`} className="console-brass-button">Prepare on-chain →</a>
                 </div>
               )}
               {data.job.status === "open" ? <button className="console-dark-button" disabled={busy} onClick={() => void action("accept")}>Accept job</button> : null}
               {data.job.status === "accepted" ? <button className="console-dark-button" disabled={busy} onClick={() => void action("start")}>Start execution</button> : null}
               {data.job.status === "in_progress" ? <><textarea value={deliverable} onChange={(event) => setDeliverable(event.target.value)} rows={6} className="console-textarea" /><button className="console-dark-button" disabled={busy || !deliverable.trim()} onClick={() => void action("submit")}>Submit deliverable</button></> : null}
-              {data.job.status === "submitted" ? <><textarea value={note} onChange={(event) => setNote(event.target.value)} rows={4} placeholder="Evaluation note" className="console-textarea" /><div className="console-actions"><button className="console-dark-button" disabled={busy} onClick={() => void action("approve")}>Approve & settle</button><button className="console-outline-button" disabled={busy} onClick={() => void action("reject")}>Reject / dispute</button></div></> : null}
-              {data.job.status === "terminal" ? <div className="console-complete">The marketplace workflow is terminal. Review the evidence and transaction record before treating the mission as fully complete.</div> : null}
+              {data.job.status === "submitted" ? <div className="console-review-wait"><small>EVALUATION / SETTLEMENT</small><strong>Waiting for the real evaluator and ERC-8183 settlement flow.</strong><p>The marketplace will not mark payment released or terminal merely because a UI button was pressed.</p></div> : null}
+              {data.job.status === "terminal" ? <div className="console-complete">The job is terminal. Review the evidence and real transaction record before treating the mission as fully complete.</div> : null}
             </section>
 
             <aside className="console-card">
@@ -122,6 +122,13 @@ export default function MissionConsole() {
               <div className="console-stat"><span>Chain job</span><strong>{data.job.chain_job_id ?? "Pending"}</strong></div>
               <div className="console-stat"><span>Evaluation</span><strong>{data.evaluation?.verdict || "Pending"}</strong></div>
               <div className="console-stat"><span>Payment TX</span><strong>{compact(data.payment?.tx_hash)}</strong></div>
+              {riskEvidence?.source === "risk_guardian_runtime" && (
+                <div className="console-evidence">
+                  <small>RISK GUARDIAN</small>
+                  <strong>{human(riskEvidence.decision || "pending")}</strong>
+                  <p>{riskEvidence.reasons?.join(" ") || "Decision recorded without additional reasons."}</p>
+                </div>
+              )}
               <div className="console-evidence"><small>SOURCE OF TRUTH</small><p>Supabase stores marketplace workflow records. A blockchain job ID and transaction hash are shown only when real chain records exist.</p></div>
             </aside>
           </div>
