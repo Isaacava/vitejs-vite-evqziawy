@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import "./landing.css";
 
 const examples = [
@@ -16,9 +16,9 @@ const signals = [
 ];
 
 export default function LandingPage() {
-  const [goal, setGoal] = useState(examples[0]);
+  const [goal] = useState(examples[0]);
   const [typed, setTyped] = useState("");
-  const [index, setIndex] = useState(0);
+  const [index] = useState(0);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -113,7 +113,7 @@ export default function LandingPage() {
             </div>
             <div className="signal-list">
               {signals.map(([name, value], i) => (
-                <div className="signal" key={name} style={{ "--signal-delay": `${i * 90}ms` } as React.CSSProperties}>
+                <div className="signal" key={name} style={{ "--signal-delay": `${i * 90}ms` } as CSSProperties}>
                   <span>{name}</span><b>{value}</b><i><u style={{ width: `${[96, 100, 88, 91, 89][i]}%` }} /></i>
                 </div>
               ))}
