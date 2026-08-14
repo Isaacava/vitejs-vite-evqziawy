@@ -1,8 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
-import { createWalletClient, custom, parseEther, type Address, type EIP1193Provider } from "viem";
-import { bsc } from "viem/chains";
+import { type Address, type EIP1193Provider } from "viem";
 import { EthereumProvider } from "@walletconnect/ethereum-provider";
+import {
+  COMMERCE_ABI,
+  ERC20_ABI,
+  ERC8004_REGISTRY_ADDRESS,
+  ERC8183_ADDRESSES,
+  ROUTER_ABI,
+  getWalletClient,
+  publicClient,
+} from "./lib/erc8183";
 
 const WALLETCONNECT_PROJECT_ID = "1dbe8fd5e4974ae7c80d074c4082b5a0";
 
@@ -25,7 +33,6 @@ type Agent = {
 };
 
 type Status = "loading" | "ready" | "error";
-type ActivateState = "idle" | "confirming" | "awaiting_signature" | "pending" | "done" | "error";
 
 const SUPABASE_URL = "https://sfbxpscbevnmoppgkjcr.supabase.co";
 const SUPABASE_ANON_KEY =
@@ -355,53 +362,182 @@ function AgentDetail({
   wallet: WalletState;
   onConnectWallet: () => void;
 }) {
-  const [activateState, setActivateState] = useState<ActivateState>("idle");
-  const [txHash, setTxHash] = useState<string | null>(null);
-  const [txError, setTxError] = useState<string | null>(null);
+  type HireStep =
+    | "idle"
+    | "confirming"
+    | "reading_token"
+    | "creating"
+    | "registering"
+    | "budgeting"
+    | "approving"
+    | "funding"
+    | "done"
+    | "error";
+
+  const [hireStep, setHireStep] = useState<HireStep>("idle");
+  const [hireError, setHireError] = useState<string | null>(null);
+  const [txLinks, setTxLinks] = useState<{ label: string; hash: string }[]>([]);
+  const [jobId, setJobId] = useState<bigint | null>(null);
+  const [tokenInfo, setTokenInfo] = useState<{ symbol: string; decimals: number } | null>(null);
 
   const isValidOwner = /^0x[a-fA-F0-9]{40}$/.test(agent.owner);
 
+  function addTx(label: string, hash: string) {
+    setTxLinks((prev) => [...prev, { label, hash }]);
+  }
+
   function handleActivate() {
-    setActivateState("confirming");
-    setTxError(null);
+    setHireStep("confirming");
+    setHireError(null);
+    setTxLinks([]);
+    setJobId(null);
   }
 
   async function confirmActivate() {
     if (!wallet.address || !wallet.provider) return;
     if (!isValidOwner) {
-      setTxError("This agent's owner address isn't valid — can't send payment.");
-      setActivateState("error");
+      setHireError("This agent's owner address isn't valid — can't create a job for it.");
+      setHireStep("error");
       return;
     }
 
-    setActivateState("awaiting_signature");
     try {
-      const walletClient = createWalletClient({
-        chain: bsc,
-        transport: custom(wallet.provider),
+      const walletClient = getWalletClient(wallet.provider, wallet.address);
+
+      // 1. Read the payment token + decimals from the Commerce kernel.
+      // The token address is immutable on-chain and not configurable client-side.
+      setHireStep("reading_token");
+      const tokenAddress = await publicClient.readContract({
+        address: ERC8183_ADDRESSES.commerce,
+        abi: COMMERCE_ABI,
+        functionName: "paymentToken",
       });
+      const [decimals, symbol] = await Promise.all([
+        publicClient.readContract({
+          address: tokenAddress,
+          abi: ERC20_ABI,
+          functionName: "decimals",
+        }),
+        publicClient.readContract({
+          address: tokenAddress,
+          abi: ERC20_ABI,
+          functionName: "symbol",
+        }),
+      ]);
+      setTokenInfo({ symbol, decimals });
 
-      // Real onchain transaction: a small activation payment sent directly
-      // to the agent owner's wallet, on BNB Smart Chain mainnet. The user
-      // signs and pays real gas in their own wallet.
-      const hash = await walletClient.sendTransaction({
-        account: wallet.address,
-        to: agent.owner as Address,
-        value: parseEther("0.0005"),
+      // Default budget: 1 unit of the payment token — matches the SDK's
+      // default ERC8183_SERVICE_PRICE. We don't yet have a per-agent price
+      // (most indexed agents only have an ERC-8004 identity, not a live
+      // ERC-8183 provider server with a published price), so this is a
+      // fixed demo budget, not a real negotiated price.
+      const budget = 10n ** BigInt(decimals);
+
+      // 2. Create the job. The EvaluatorRouter also serves as job.evaluator
+      // and job.hook per the ERC-8183 stack's design.
+      setHireStep("creating");
+      const expiredAt = BigInt(Math.floor(Date.now() / 1000) + 24 * 60 * 60); // 24h window
+      const createHash = await walletClient.writeContract({
+        address: ERC8183_ADDRESSES.commerce,
+        abi: COMMERCE_ABI,
+        functionName: "createJob",
+        args: [
+          agent.owner as Address,
+          ERC8183_ADDRESSES.router,
+          expiredAt,
+          `Hire: ${agent.name || `Agent #${agent.agent_id}`}`,
+          ERC8183_ADDRESSES.router,
+        ],
       });
+      addTx("Create job", createHash);
+      await publicClient.waitForTransactionReceipt({ hash: createHash });
 
-      setTxHash(hash);
-      setActivateState("pending");
+      // The kernel assigns sequential job IDs. We don't decode the
+      // JobCreated event here (ABI only covers the calls we use), so we
+      // read the counter right after our own confirmed create — safe for
+      // a single in-flight hire, but a production indexer should decode
+      // the event directly instead of relying on this assumption.
+      const newJobId = await publicClient.readContract({
+        address: ERC8183_ADDRESSES.commerce,
+        abi: COMMERCE_ABI,
+        functionName: "jobCounter",
+      });
+      setJobId(newJobId);
 
-      // We don't wait for confirmation here since public RPC polling from
-      // the browser can be slow/rate-limited — the tx hash itself is
-      // immediate, verifiable proof, and BscScan will confirm status.
-      setTimeout(() => setActivateState("done"), 2500);
+      // 3. Register the job against the default OptimisticPolicy.
+      setHireStep("registering");
+      const registerHash = await walletClient.writeContract({
+        address: ERC8183_ADDRESSES.router,
+        abi: ROUTER_ABI,
+        functionName: "registerJob",
+        args: [newJobId, ERC8183_ADDRESSES.policy],
+      });
+      addTx("Register job", registerHash);
+      await publicClient.waitForTransactionReceipt({ hash: registerHash });
+
+      // 4. Set the budget.
+      setHireStep("budgeting");
+      const budgetHash = await walletClient.writeContract({
+        address: ERC8183_ADDRESSES.commerce,
+        abi: COMMERCE_ABI,
+        functionName: "setBudget",
+        args: [newJobId, budget, "0x"],
+      });
+      addTx("Set budget", budgetHash);
+      await publicClient.waitForTransactionReceipt({ hash: budgetHash });
+
+      // 5. Approve the commerce kernel to pull the budget, if needed.
+      const allowance = await publicClient.readContract({
+        address: tokenAddress,
+        abi: ERC20_ABI,
+        functionName: "allowance",
+        args: [wallet.address, ERC8183_ADDRESSES.commerce],
+      });
+      if (allowance < budget) {
+        setHireStep("approving");
+        const approveHash = await walletClient.writeContract({
+          address: tokenAddress,
+          abi: ERC20_ABI,
+          functionName: "approve",
+          args: [ERC8183_ADDRESSES.commerce, budget],
+        });
+        addTx("Approve token", approveHash);
+        await publicClient.waitForTransactionReceipt({ hash: approveHash });
+      }
+
+      // 6. Fund the job — this is the moment the provider's own runtime
+      // (if it's listening) picks up the job as FUNDED and can start work.
+      setHireStep("funding");
+      const fundHash = await walletClient.writeContract({
+        address: ERC8183_ADDRESSES.commerce,
+        abi: COMMERCE_ABI,
+        functionName: "fund",
+        args: [newJobId, budget, "0x"],
+      });
+      addTx("Fund job", fundHash);
+      await publicClient.waitForTransactionReceipt({ hash: fundHash });
+
+      setHireStep("done");
     } catch (e) {
-      setTxError(e instanceof Error ? e.message : "Transaction was rejected or failed.");
-      setActivateState("error");
+      setHireError(e instanceof Error ? e.message : "Transaction was rejected or failed.");
+      setHireStep("error");
     }
   }
+
+  const stepLabel: Record<HireStep, string> = {
+    idle: "",
+    confirming: "",
+    reading_token: "Reading payment token…",
+    creating: "Creating job on-chain…",
+    registering: "Registering job with evaluator…",
+    budgeting: "Setting budget…",
+    approving: "Approving token spend…",
+    funding: "Funding job (escrow)…",
+    done: "",
+    error: "",
+  };
+
+  const inFlight = !["idle", "confirming", "done", "error"].includes(hireStep);
 
   return (
     <div style={styles.page}>
@@ -455,7 +591,7 @@ function AgentDetail({
               <div style={styles.infoLabel}>Registry</div>
               <a
                 style={styles.infoLink}
-                href="https://bscscan.com/address/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"
+                href={`https://bscscan.com/address/${ERC8004_REGISTRY_ADDRESS}`}
                 target="_blank"
                 rel="noreferrer"
               >
@@ -474,88 +610,97 @@ function AgentDetail({
             {!wallet.address && (
               <>
                 <button style={styles.activateBtn} onClick={onConnectWallet} disabled={wallet.connecting}>
-                  {wallet.connecting ? "Opening wallet connect…" : "Connect Wallet to Activate"}
+                  {wallet.connecting ? "Opening wallet connect…" : "Connect Wallet to Hire"}
                 </button>
                 {wallet.error && <p style={styles.errorText}>{wallet.error}</p>}
               </>
             )}
 
-            {wallet.address && activateState === "idle" && (
+            {wallet.address && hireStep === "idle" && (
               <>
                 <div style={styles.walletRow}>
                   <span style={styles.walletDot} />
                   Connected: {shortAddr(wallet.address)}
                 </div>
                 <button style={styles.activateBtn} onClick={handleActivate}>
-                  Activate Agent
+                  Hire Agent (ERC-8183)
                 </button>
               </>
             )}
 
-            {activateState === "confirming" && (
+            {hireStep === "confirming" && (
               <div style={styles.confirmBox}>
-                <div style={styles.confirmTitle}>Confirm activation payment</div>
+                <div style={styles.confirmTitle}>Confirm ERC-8183 job</div>
                 <p style={styles.confirmText}>
-                  This sends <strong>0.0005 BNB</strong> from your wallet directly to{" "}
-                  <strong>{agent.name || `Agent #${agent.agent_id}`}</strong>'s owner address on BNB
-                  Smart Chain — a real onchain transaction, recorded and verifiable on BscScan.
+                  This creates and funds a real escrowed job on BNB Smart Chain — Create → Register →
+                  Set Budget → Approve → Fund — with{" "}
+                  <strong>{agent.name || `Agent #${agent.agent_id}`}</strong>'s owner address as the
+                  provider. You'll sign multiple transactions in your wallet. The default budget is 1
+                  unit of the Commerce kernel's payment token.
                 </p>
                 <div style={styles.confirmActions}>
                   <button style={styles.confirmBtn} onClick={confirmActivate}>
                     Confirm in Wallet
                   </button>
-                  <button style={styles.cancelBtn} onClick={() => setActivateState("idle")}>
+                  <button style={styles.cancelBtn} onClick={() => setHireStep("idle")}>
                     Cancel
                   </button>
                 </div>
               </div>
             )}
 
-            {activateState === "awaiting_signature" && (
+            {inFlight && (
               <div style={styles.activatingBox}>
                 <span style={styles.spinner} />
-                Waiting for signature in your wallet…
+                {stepLabel[hireStep]}
               </div>
             )}
 
-            {activateState === "pending" && txHash && (
-              <div style={styles.activatingBox}>
-                <span style={styles.spinner} />
-                Transaction submitted — confirming onchain…
+            {txLinks.length > 0 && hireStep !== "confirming" && hireStep !== "idle" && (
+              <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+                {txLinks.map((tx, i) => (
+                  <a
+                    key={i}
+                    style={styles.txLink}
+                    href={`https://bscscan.com/tx/${tx.hash}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {tx.label} ↗
+                  </a>
+                ))}
               </div>
             )}
 
-            {activateState === "done" && txHash && (
+            {hireStep === "done" && (
               <div style={styles.doneBox}>
-                <div style={styles.doneTitle}>✓ Payment sent — agent activated</div>
+                <div style={styles.doneTitle}>
+                  ✓ Job funded{jobId !== null ? ` — #${jobId.toString()}` : ""}
+                </div>
                 <p style={styles.doneText}>
-                  Real transaction confirmed on BNB Smart Chain.
+                  Escrowed{tokenInfo ? ` 1 ${tokenInfo.symbol}` : ""} for this job on BNB Smart Chain.
+                  If the agent's own runtime is listening for funded jobs, it can now pick this up,
+                  work, and submit a deliverable. This marketplace doesn't run the agent itself — only
+                  the blockchain connects the two of you.
                 </p>
-                <a
-                  style={styles.txLink}
-                  href={`https://bscscan.com/tx/${txHash}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  View transaction on BscScan ↗
-                </a>
               </div>
             )}
 
-            {activateState === "error" && (
+            {hireStep === "error" && (
               <div style={styles.errorBox}>
-                {txError || "Something went wrong with the transaction."}
-                <button style={styles.cancelBtn} onClick={() => setActivateState("idle")}>
+                {hireError || "Something went wrong with the transaction."}
+                <button style={styles.cancelBtn} onClick={() => setHireStep("idle")}>
                   Try again
                 </button>
               </div>
             )}
 
             <p style={styles.demoNote}>
-              This sends a real payment on BNB Smart Chain mainnet to the agent's registered owner
-              address — a genuine onchain "hire" record. Full x402 pay-per-call service invocation
-              requires the agent's own live API and Binance's x402 facilitator, which this demo
-              does not have access to.
+              This creates a real ERC-8183 escrow job on BNB Smart Chain mainnet
+              (AgenticCommerce {shortAddr(ERC8183_ADDRESSES.commerce)}). Funding it does not
+              guarantee the agent will respond — that depends on whether this agent's operator has a
+              live ERC-8183 provider server listening for funded jobs, which most ERC-8004-only
+              listings do not yet have.
             </p>
           </div>
         </div>
@@ -563,6 +708,7 @@ function AgentDetail({
     </div>
   );
 }
+
 
 function CategoryBadge({ category }: { category: string }) {
   const color = CATEGORY_COLORS[category] || CATEGORY_COLORS.other;
