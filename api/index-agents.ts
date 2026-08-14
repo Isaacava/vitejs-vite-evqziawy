@@ -23,6 +23,11 @@ type RegistrationFile = {
 };
 
 type Endpoint = { url: string; protocol: string; version?: string; metadata?: Record<string, unknown> };
+type TransferLog = { data: Hex; topics: readonly Hex[] };
+
+type RegistryReader = {
+  readContract: (args: Record<string, unknown>) => Promise<unknown>;
+};
 
 function supabaseServer() {
   const url = process.env.SUPABASE_URL;
@@ -147,6 +152,7 @@ async function syncAgent(supabase: ReturnType<typeof supabaseServer>, agentId: s
     .maybeSingle();
   if (existingError) throw new Error(existingError.message);
 
+  const now = new Date().toISOString();
   const identityPatch = {
     owner,
     uri,
@@ -154,14 +160,13 @@ async function syncAgent(supabase: ReturnType<typeof supabaseServer>, agentId: s
     description: registration.description || null,
     image: registration.image || null,
     chain: "bsc",
-    indexed_at: new Date().toISOString(),
-    last_indexed_at: new Date().toISOString(),
+    indexed_at: now,
+    last_indexed_at: now,
     ...(existing?.source && existing.source !== "indexed"
       ? {}
       : { source: "indexed", verification_status: existing?.verification_status || "indexed" }),
     ...(!existing || existing.category === "other" || existing.source === "indexed" ? { category } : {}),
     metadata: {
-      ...(existing ? {} : {}),
       registration,
       indexer: "agentmarket",
       resolution_error: resolveError,
@@ -187,8 +192,8 @@ async function syncAgent(supabase: ReturnType<typeof supabaseServer>, agentId: s
       verification_status: "indexed",
       status: "unknown",
       is_first_party: false,
-      indexed_at: new Date().toISOString(),
-      last_indexed_at: new Date().toISOString(),
+      indexed_at: now,
+      last_indexed_at: now,
       metadata: { registration, indexer: "agentmarket", resolution_error: resolveError },
     }).select("id").single();
     if (error) throw new Error(error.message);
@@ -204,11 +209,12 @@ async function syncAgent(supabase: ReturnType<typeof supabaseServer>, agentId: s
       source: "registration",
       confidence: capability === category ? 1 : 0.8,
       metadata: { agentId },
-      updated_at: new Date().toISOString(),
+      updated_at: now,
     }, { onConflict: "agent_id,capability,source" });
   }
 
-  for (const endpoint of extractEndpoints(registration)) {
+  const endpoints = extractEndpoints(registration);
+  for (const endpoint of endpoints) {
     await supabase.from("agent_endpoints").upsert({
       agent_id: dbAgent.id,
       endpoint_url: endpoint.url,
@@ -216,12 +222,14 @@ async function syncAgent(supabase: ReturnType<typeof supabaseServer>, agentId: s
       version: endpoint.version || null,
       status: "unknown",
       metadata: endpoint.metadata || {},
-      updated_at: new Date().toISOString(),
+      updated_at: now,
     }, { onConflict: "agent_id,endpoint_url,protocol" });
   }
 
-  return { resolved: !resolveError, endpointCount: extractEndpoints(registration).length, category };
+  return { resolved: !resolveError, endpointCount: endpoints.length, category };
 }
+
+const registryReader = publicClient as unknown as RegistryReader;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET" && req.method !== "POST") {
@@ -271,19 +279,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }).select("id").single();
     if (syncError) throw new Error(syncError.message);
 
-    const logs = await publicClient.getLogs({
+    const logs = (await publicClient.getLogs({
       address: ERC8004_REGISTRY_ADDRESS,
       event: TRANSFER_EVENT,
       fromBlock: start,
       toBlock: end,
-    });
+    })) as unknown as TransferLog[];
 
     const mintedIds = [...new Set(logs
       .map((log) => {
         try {
           const decoded = decodeEventLog({ abi: [TRANSFER_EVENT], data: log.data, topics: log.topics });
           if (decoded.eventName !== "Transfer") return null;
-          const args = decoded.args as { from: Address; tokenId: bigint };
+          const args = decoded.args as unknown as { from: Address; tokenId: bigint };
           return args.from.toLowerCase() === ZERO_ADDRESS.toLowerCase() ? args.tokenId : null;
         } catch {
           return null;
@@ -298,14 +306,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       try {
         const tokenId = BigInt(agentId);
         const [owner, uri] = await Promise.all([
-          publicClient.readContract({ address: ERC8004_REGISTRY_ADDRESS, abi: [
-            { type: "function", name: "ownerOf", stateMutability: "view", inputs: [{ name: "tokenId", type: "uint256" }], outputs: [{ type: "address" }] },
-          ], functionName: "ownerOf", args: [tokenId] }),
-          publicClient.readContract({ address: ERC8004_REGISTRY_ADDRESS, abi: [
-            { type: "function", name: "tokenURI", stateMutability: "view", inputs: [{ name: "tokenId", type: "uint256" }], outputs: [{ type: "string" }] },
-          ], functionName: "tokenURI", args: [tokenId] }),
+          registryReader.readContract({
+            address: ERC8004_REGISTRY_ADDRESS,
+            abi: [{ type: "function", name: "ownerOf", stateMutability: "view", inputs: [{ name: "tokenId", type: "uint256" }], outputs: [{ type: "address" }] }] as const,
+            functionName: "ownerOf",
+            args: [tokenId],
+          }),
+          registryReader.readContract({
+            address: ERC8004_REGISTRY_ADDRESS,
+            abi: [{ type: "function", name: "tokenURI", stateMutability: "view", inputs: [{ name: "tokenId", type: "uint256" }], outputs: [{ type: "string" }] }] as const,
+            functionName: "tokenURI",
+            args: [tokenId],
+          }),
         ]);
-        await syncAgent(supabase, agentId, owner, uri);
+        await syncAgent(supabase, agentId, String(owner), String(uri));
         upserted += 1;
       } catch {
         errors += 1;
