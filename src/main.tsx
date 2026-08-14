@@ -2,7 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 
 import LandingPage from "./LandingPage";
-import MarketplaceDashboardV4 from "./MarketplaceDashboardV4";
+import MarketplaceWorkspace from "./MarketplaceWorkspace";
 import MissionConsole from "./MissionConsole";
 import "./index.css";
 
@@ -12,6 +12,6 @@ const appMode = window.location.pathname === "/app";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    {jobId ? <MissionConsole /> : appMode ? <MarketplaceDashboardV4 /> : <LandingPage />}
+    {jobId ? <MissionConsole /> : appMode ? <MarketplaceWorkspace /> : <LandingPage />}
   </React.StrictMode>
 );
