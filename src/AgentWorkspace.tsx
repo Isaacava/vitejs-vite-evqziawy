@@ -93,6 +93,12 @@ type BrowserProvider =
     }): Promise<unknown>;
   };
 
+type AvailableJob = {
+  jobId: string;
+  mission: Mission;
+  task: MissionTask;
+};
+
 export default function AgentWorkspace() {
   const [
     provider,
@@ -171,12 +177,8 @@ export default function AgentWorkspace() {
   );
 
   const availableJobs =
-    useMemo(() => {
-      const jobs: Array<{
-        jobId: string;
-        mission: Mission;
-        task: MissionTask;
-      }> = [];
+    useMemo<AvailableJob[]>(() => {
+      const jobs: AvailableJob[] = [];
 
       for (
         const mission of missions
@@ -214,14 +216,18 @@ export default function AgentWorkspace() {
       availableJobs.length ===
       0
     ) {
-      setSelectedJobId(
-        ""
-      );
+      if (
+        selectedJobId
+      ) {
+        setSelectedJobId(
+          ""
+        );
+      }
 
       return;
     }
 
-    const exists =
+    const selectedStillExists =
       availableJobs.some(
         (
           item
@@ -231,7 +237,7 @@ export default function AgentWorkspace() {
       );
 
     if (
-      !exists
+      !selectedStillExists
     ) {
       setSelectedJobId(
         availableJobs[0].jobId
@@ -290,12 +296,12 @@ export default function AgentWorkspace() {
       latest
     );
 
-    setMessage(
-      "✅ Workspace refreshed."
-    );
-
     setError(
       null
+    );
+
+    setMessage(
+      "✅ Workspace refreshed."
     );
   }
 
@@ -342,32 +348,32 @@ export default function AgentWorkspace() {
         );
       }
 
-      const chainId =
+      const rawChainId =
         (await ethereum.request({
           method:
             "eth_chainId",
         })) as string;
 
-      const numericChainId =
-        chainId
+      const chainId =
+        rawChainId
           .toLowerCase()
           .startsWith(
             "0x"
           )
           ? parseInt(
-              chainId,
+              rawChainId,
               16
             )
           : Number(
-              chainId
+              rawChainId
             );
 
       if (
-        numericChainId !==
+        chainId !==
         BSC_TESTNET_CHAIN_ID
       ) {
         throw new Error(
-          `Wrong network. Connected chain ID ${numericChainId}. Use BSC Testnet (97).`
+          `Wrong network. Connected chain ID ${chainId}. Use BSC Testnet (97).`
         );
       }
 
@@ -557,25 +563,27 @@ export default function AgentWorkspace() {
         "Simulating submit()..."
       );
 
-      await publicClient.simulateContract({
-        address:
-          ERC8183_ADDRESSES.commerce,
+      await publicClient.simulateContract(
+        {
+          address:
+            ERC8183_ADDRESSES.commerce,
 
-        abi:
-          COMMERCE_ABI,
+          abi:
+            COMMERCE_ABI,
 
-        functionName:
-          "submit",
+          functionName:
+            "submit",
 
-        args: [
-          job.id,
-          deliverableHash,
-          "0x",
-        ],
+          args: [
+            job.id,
+            deliverableHash,
+            "0x",
+          ],
 
-        account:
-          address,
-      });
+          account:
+            address,
+        }
+      );
 
       setMessage(
         "Confirm submit() in your wallet..."
@@ -1514,7 +1522,7 @@ function saveSubmission(
       )
     );
   } catch {
-    // Ignore storage errors.
+    // Ignore local-storage errors.
   }
 }
 
@@ -2081,21 +2089,7 @@ const styles: Record<
     fontSize:
       "11px",
   },
-};x",
-
-    background:
-      "#211414",
-
-    color:
-      "#ffaaaa",
-  },
-
-  error: {
-    margin:
-      "8px 0 0",
-
-    whiteSpace:
-      "pre-wrap",
+};,
 
     overflowWrap:
       "anywhere",
