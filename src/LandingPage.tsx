@@ -1,4 +1,4 @@
-import { useEffect, useMemo, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import "./landing.css";
 
 const examples = [
@@ -20,6 +20,32 @@ export default function LandingPage() {
   const typed = useTypewriter(examples);
   const displayGoal = useMemo(() => typed || goal, [goal, typed]);
   const ready = typed.length >= goal.length;
+
+  useEffect(() => {
+    const elements = Array.from(document.querySelectorAll<HTMLElement>(".landing .reveal"));
+    if (!elements.length) return;
+
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduced || !("IntersectionObserver" in window)) {
+      elements.forEach((element) => element.classList.add("in"));
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("in");
+            observer.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.08, rootMargin: "0px 0px -32px 0px" },
+    );
+
+    elements.forEach((element) => observer.observe(element));
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <main className="landing">
@@ -197,7 +223,7 @@ function useTypewriter(phrases: string[]) {
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
-    const phrase = phrases[phraseIndex];
+    const phrase = phrases[phraseIndex] ?? "";
     const delay = !deleting && cursor === phrase.length ? 900 : deleting && cursor === 0 ? 350 : deleting ? 24 : 42;
     const timer = window.setTimeout(() => {
       if (!deleting) {
