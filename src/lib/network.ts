@@ -4,16 +4,14 @@ import type { Address, Chain } from "viem";
 export type BscNetworkName = "testnet";
 export type AppEnvironment = "testnet";
 
-// marketplace-testnet is the complete development environment.
-// It is intentionally hard-locked to BSC Testnet so production/Mainnet
-// contracts, balances, and transactions cannot be used accidentally.
 export const APP_ENV: AppEnvironment = "testnet";
 export const BSC_NETWORK: BscNetworkName = "testnet";
 export const BSC_CHAIN: Chain = bscTestnet;
 export const BSC_CHAIN_ID = 97;
 
+const runtimeEnv = (import.meta as unknown as { env?: { VITE_BSC_RPC_URL?: string } }).env;
 export const BSC_RPC_URL =
-  import.meta.env.VITE_BSC_RPC_URL ||
+  runtimeEnv?.VITE_BSC_RPC_URL ||
   "https://data-seed-prebsc-1-s1.bnbchain.org:8545";
 
 export const BSC_EXPLORER_URL = "https://testnet.bscscan.com";
