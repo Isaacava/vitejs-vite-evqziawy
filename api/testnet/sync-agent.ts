@@ -36,7 +36,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const supabase = serverClient();
     const now = new Date().toISOString();
-    const { data: existing, error: existingError } = await supabase.from("agents").select("id,metadata,name,description,category,is_first_party").eq("agent_id", agentIdValue).maybeSingle();
+    const { data: existing, error: existingError } = await supabase
+      .from("agents")
+      .select("id,metadata,name,description,category,is_first_party,indexed_at")
+      .eq("agent_id", agentIdValue)
+      .maybeSingle();
     if (existingError) throw new Error(existingError.message);
 
     const patch = {
@@ -77,7 +81,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       rowId = data.id;
     }
 
-    await supabase.from("agent_capabilities").upsert({ agent_id: rowId, capability: "grid_trading", source: "testnet_registration", confidence: 1, metadata: { environment: "testnet", agentId: agentIdValue }, updated_at: now }, { onConflict: "agent_id,capability,source" });
+    const { error: capabilityError } = await supabase.from("agent_capabilities").upsert({
+      agent_id: rowId,
+      capability: "grid_trading",
+      source: "testnet_registration",
+      confidence: 1,
+      metadata: { environment: "testnet", agentId: agentIdValue },
+      updated_at: now,
+    }, { onConflict: "agent_id,capability,source" });
+    if (capabilityError) throw new Error(capabilityError.message);
 
     return res.status(200).json({ ok: true, network: "bsc-testnet", chain_id: 97, registry: REGISTRY, agent_id: agentIdValue, owner: String(onchainOwner), uri: String(uri), note: "Testnet identity synced. Provider endpoint liveness remains a separate hireability gate." });
   } catch (error) {
