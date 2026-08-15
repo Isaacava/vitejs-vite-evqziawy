@@ -221,17 +221,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
     .slice(0, 10);
 
+  const bestDiscoveryMatch = matches[0] ?? null;
   const bestHireableMatch = matches.find((match) => match.hireability.canCreateJob) ?? null;
+  const bestMatch = bestHireableMatch ?? bestDiscoveryMatch;
 
   return res.status(200).json({
     intent,
-    bestMatch: matches[0] ?? null,
+    bestMatch,
+    bestDiscoveryMatch,
     bestHireableMatch,
-    alternatives: matches.slice(1),
+    alternatives: matches.filter((match) => match !== bestMatch),
     scoring: {
       weights: WEIGHTS,
       historyPolicy: "Missing reputation, completion, and liveness evidence contributes no points and reduces the available-score ceiling. New agents remain matchable on capability, availability and identity evidence.",
       hireabilityPolicy: "Discovery is separate from hireability. Only agents with a currently healthy provider endpoint are marked ready for job creation.",
+      selectionPolicy: "A healthy hireable agent is preferred over a stronger discovery-only result. The strongest discovery result remains available as bestDiscoveryMatch.",
     },
   });
 }
