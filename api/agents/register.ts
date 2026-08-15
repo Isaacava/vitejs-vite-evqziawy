@@ -35,62 +35,64 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const agentId = requiredString(req.body?.agent_id, "agent_id", 80);
     const owner = evmAddress(req.body?.owner, "owner");
-    const name = requiredString(req.body?.name, "name", 120);
-    const description = typeof req.body?.description === "string" ? req.body.description.trim().slice(0, 2000) : null;
+    const requestedName = typeof req.body?.name === "string" ? req.body.name.trim().slice(0, 120) : "";
+    const requestedDescription = typeof req.body?.description === "string" ? req.body.description.trim().slice(0, 2000) : "";
     const endpoint = typeof req.body?.endpoint === "string" ? req.body.endpoint.trim() : "";
-    const category = requiredString(req.body?.category, "category", 80);
+    const requestedCategory = typeof req.body?.category === "string" ? req.body.category.trim().slice(0, 80) : "";
     const capabilities = list(req.body?.capabilities);
 
     if (endpoint && !/^https:\/\//i.test(endpoint)) throw new Error("endpoint must use HTTPS");
-    if (capabilities.length === 0) capabilities.push(category);
 
     const supabase = serverClient();
     const { data: existing, error: existingError } = await supabase
       .from("agents")
-      .select("id,source,verification_status,owner")
+      .select("id,agent_id,source,verification_status,owner,name,description,category,uri")
       .eq("agent_id", agentId)
       .maybeSingle();
     if (existingError) throw new Error(existingError.message);
 
-    if (existing && existing.owner?.toLowerCase() !== owner.toLowerCase()) {
-      return res.status(409).json({ error: "Agent ID already belongs to another wallet" });
+    if (!existing) {
+      return res.status(404).json({
+        error: "Agent has not been discovered yet. AgentMarket inventory comes from ERC-8004 indexing; wait for discovery before claiming it.",
+        next_step: "discovery",
+      });
+    }
+
+    if (existing.owner?.toLowerCase() !== owner.toLowerCase()) {
+      return res.status(409).json({ error: "Agent ID is owned by a different wallet. Connect the wallet that currently owns the ERC-8004 identity." });
     }
 
     const now = new Date().toISOString();
+    const nextName = requestedName || existing.name || `Agent #${agentId}`;
+    const nextDescription = requestedDescription || existing.description || null;
+    const nextCategory = requestedCategory || existing.category || "other";
     const agentPayload: Record<string, unknown> = {
-      agent_id: agentId,
-      owner,
-      name,
-      description,
-      chain: "bsc",
-      category,
-      source: existing?.source || "self_registered",
-      verification_status: existing?.verification_status === "verified" ? "verified" : "pending",
-      status: "unknown",
-      is_first_party: false,
-      indexed_at: existing ? undefined : now,
-      last_indexed_at: now,
-      metadata: { registration: "self_service", verification: "pending_wallet_control" },
+      name: nextName,
+      description: nextDescription,
+      category: nextCategory,
+      last_indexed_at: existing.source === "indexed" ? existing.last_indexed_at : now,
+      metadata: {
+        claim: "self_service",
+        claimed_at: now,
+        verification: existing.verification_status,
+      },
     };
 
-    let agentRow: { id: string; agent_id: string; name: string; source: string; verification_status: string; status: string };
-    if (existing) {
-      const { data, error } = await supabase.from("agents").update(agentPayload as never).eq("id", existing.id).select("id,agent_id,name,source,verification_status,status").single();
-      if (error) throw new Error(error.message);
-      agentRow = data as typeof agentRow;
-    } else {
-      const { data, error } = await supabase.from("agents").insert(agentPayload as never).select("id,agent_id,name,source,verification_status,status").single();
-      if (error) throw new Error(error.message);
-      agentRow = data as typeof agentRow;
-    }
+    const { data: agentRow, error: updateError } = await supabase
+      .from("agents")
+      .update(agentPayload as never)
+      .eq("id", existing.id)
+      .select("id,agent_id,name,source,verification_status,status,owner,uri,category")
+      .single();
+    if (updateError) throw new Error(updateError.message);
 
-    for (const capability of capabilities) {
+    for (const capability of [...new Set([nextCategory, ...capabilities])]) {
       const { error } = await supabase.from("agent_capabilities").upsert({
-        agent_id: agentRow.id,
+        agent_id: existing.id,
         capability,
         source: "self_registered",
-        confidence: 0.7,
-        metadata: { submitted_at: now },
+        confidence: capability === nextCategory ? 1 : 0.7,
+        metadata: { claimed_at: now, agentId },
         updated_at: now,
       }, { onConflict: "agent_id,capability,source" });
       if (error) throw new Error(error.message);
@@ -98,23 +100,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (endpoint) {
       const { error } = await supabase.from("agent_endpoints").upsert({
-        agent_id: agentRow.id,
+        agent_id: existing.id,
         endpoint_url: endpoint,
         protocol: "erc8183",
         status: "unknown",
-        metadata: { source: "self_registered" },
+        metadata: { source: "self_claimed", claimed_at: now },
         updated_at: now,
       }, { onConflict: "agent_id,endpoint_url,protocol" });
       if (error) throw new Error(error.message);
     }
 
-    return res.status(existing ? 200 : 201).json({
+    return res.status(200).json({
       ok: true,
       agent: agentRow,
       next_step: "wallet_signature_verification",
-      message: "Agent registered in the marketplace inventory. Wallet control is pending verification; endpoint liveness is checked separately.",
+      message: "Discovered agent claimed. Wallet control, endpoint liveness, and job evidence remain separate verification gates.",
     });
   } catch (error) {
-    return res.status(400).json({ error: error instanceof Error ? error.message : "Unable to register agent" });
+    return res.status(400).json({ error: error instanceof Error ? error.message : "Unable to claim agent" });
   }
 }
