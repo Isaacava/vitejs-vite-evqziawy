@@ -36,10 +36,13 @@ async function requireTestnetWallet() {
 
 export default function EvaluatorConsole() {
   const jobId = new URLSearchParams(window.location.search).get("job") || "";
+  const missionId = new URLSearchParams(window.location.search).get("mission") || "";
+  const marketplaceJobId = new URLSearchParams(window.location.search).get("market_job") || "";
   const [job, setJob] = useState<any>(null);
   const [policy, setPolicy] = useState<string>("");
   const [refreshing, setRefreshing] = useState(false);
   const [settling, setSettling] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [txHash, setTxHash] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -66,6 +69,29 @@ export default function EvaluatorConsole() {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
+  async function syncSettlement(hash: string) {
+    if (!missionId || !marketplaceJobId) {
+      setNotice("Settlement confirmed on-chain. Open the evaluator from the mission workspace to sync marketplace history.");
+      return;
+    }
+    setSyncing(true);
+    try {
+      const response = await fetch("/api/erc8183-settlement", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mission_id: missionId, job_id: marketplaceJobId, chain_job_id: jobId, tx_hash: hash }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error || "Marketplace settlement sync failed");
+      setNotice(`Settlement confirmed and marketplace state synced as ${String(data.chain_status).toUpperCase()}.`);
+    } catch (cause) {
+      throw cause instanceof Error ? cause : new Error("Marketplace settlement sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   async function settle() {
     if (!job || Number(job.status) !== 2) {
       setError("Settlement is only prepared after the chain reports SUBMITTED.");
@@ -79,8 +105,13 @@ export default function EvaluatorConsole() {
       const data = encodeFunctionData({ abi: ROUTER_ABI, functionName: "settle", args: [BigInt(jobId), "0x"] });
       const receipt = await sendAndConfirm({ to: ROUTER, data });
       setTxHash(receipt.hash);
-      setNotice(`Settlement transaction confirmed in block ${receipt.blockNumber}. Refreshing chain state…`);
+      setNotice(`Settlement transaction confirmed in block ${receipt.blockNumber}. Verifying terminal state…`);
       await refresh();
+      try {
+        await syncSettlement(receipt.hash);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "Marketplace settlement sync failed");
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Settlement transaction failed");
     } finally {
@@ -143,10 +174,10 @@ export default function EvaluatorConsole() {
           </div>
           <div className="evaluator-actions">
             <button onClick={() => void refresh()} disabled={refreshing}>{refreshing ? "Reading chain…" : "Refresh chain state"}</button>
-            <button onClick={() => void settle()} disabled={settling || !job || Number(job.status) !== 2}>{settling ? "Confirming…" : "Settle via wallet →"}</button>
+            <button onClick={() => void settle()} disabled={settling || syncing || !job || Number(job.status) !== 2}>{settling ? "Confirming…" : syncing ? "Syncing…" : "Settle via wallet →"}</button>
           </div>
           {txHash && <div className="evaluator-tx"><small>CONFIRMED TX</small><strong>{txHash}</strong></div>}
-          <small className="evaluator-note">Development mode: BSC Testnet only. The browser wallet remains the signer; AgentMarket never receives a private key.</small>
+          <small className="evaluator-note">Development mode: BSC Testnet only. The browser wallet remains the signer; AgentMarket never receives a private key. Terminal settlement is mirrored into marketplace history only after receipt verification and a fresh chain read.</small>
         </section>
       </div>
     </main>
