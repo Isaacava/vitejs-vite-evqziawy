@@ -32,6 +32,12 @@ type ProviderJobStatus = {
   expired_at: string;
 };
 
+type SettlementPlan = {
+  to: string;
+  data: string;
+  value?: string;
+};
+
 const TESTNET_CHAIN_ID = "0x61";
 const compact = (value?: string | null) => value ? `${value.slice(0, 8)}…${value.slice(-6)}` : "—";
 
@@ -44,6 +50,8 @@ export default function TestnetQuoteExecution() {
   const [chainJobId, setChainJobId] = useState("");
   const [confirmed, setConfirmed] = useState<Record<string, boolean>>({});
   const [providerStatus, setProviderStatus] = useState<ProviderJobStatus | null>(null);
+  const [settlementPlan, setSettlementPlan] = useState<SettlementPlan | null>(null);
+  const [settlementLoading, setSettlementLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [network, setNetwork] = useState("checking");
@@ -136,6 +144,28 @@ export default function TestnetQuoteExecution() {
     }
   }
 
+  async function syncSettlement(receipt: ConfirmedRunnerReceipt) {
+    if (!marketplaceJobId || !chainJobId) {
+      setError("Settlement needs the marketplace job ID and on-chain job ID.");
+      return;
+    }
+    const response = await fetch("/api/testnet/erc8183-settlement", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mission_id: missionId,
+        job_id: marketplaceJobId,
+        chain_job_id: chainJobId,
+        tx_hash: receipt.hash,
+      }),
+    });
+    const body = await response.json() as { error?: string; chain_status?: string; payment_status?: string };
+    if (!response.ok) throw new Error(body.error || "Testnet settlement synchronization failed");
+    setProviderStatus((current) => current ? { ...current, status_name: body.chain_status || "COMPLETED" } : current);
+    setConfirmed((current) => ({ ...current, settle: true }));
+  }
+
   useEffect(() => {
     if (!confirmed.fund || !chainJobId || !marketplaceJobId) return;
     let active = true;
@@ -162,6 +192,7 @@ export default function TestnetQuoteExecution() {
           expired_at: body.job.expired_at,
         });
 
+        if (body.job.status_name === "SUBMITTED") return;
         if (["COMPLETED", "REJECTED", "EXPIRED"].includes(body.job.status_name)) return;
         timer = window.setTimeout(poll, 10000);
       } catch (cause) {
@@ -176,6 +207,32 @@ export default function TestnetQuoteExecution() {
       if (timer) window.clearTimeout(timer);
     };
   }, [confirmed.fund, chainJobId, marketplaceJobId, missionId]);
+
+  useEffect(() => {
+    if (providerStatus?.status_name !== "SUBMITTED" || !chainJobId || !marketplaceJobId || confirmed.settle) return;
+    let active = true;
+    async function loadSettlementPlan() {
+      setSettlementLoading(true);
+      try {
+        const query = new URLSearchParams({ mission_id: missionId, marketplace_job_id: marketplaceJobId, job_id: chainJobId });
+        const response = await fetch(`/api/testnet/settle-plan?${query.toString()}`, { credentials: "include" });
+        const body = await response.json();
+        if (!active) return;
+        if (!response.ok) {
+          setSettlementPlan(null);
+          setSettlementLoading(false);
+          return;
+        }
+        setSettlementPlan(body.transaction as SettlementPlan);
+      } catch {
+        if (active) setSettlementPlan(null);
+      } finally {
+        if (active) setSettlementLoading(false);
+      }
+    }
+    void loadSettlementPlan();
+    return () => { active = false; };
+  }, [providerStatus?.status_name, chainJobId, marketplaceJobId, missionId, confirmed.settle]);
 
   async function confirmNetworkAgain() {
     const ethereum = window.ethereum;
@@ -209,6 +266,13 @@ export default function TestnetQuoteExecution() {
       setLoadingPlan(false);
     }
   }
+
+  const settlementSteps = useMemo<TransactionStep[]>(() => settlementPlan ? [{
+    id: "settle",
+    label: "settle",
+    description: "Finalize the submitted ERC-8183 Testnet job. The server has already simulated this exact transaction for the connected wallet.",
+    tx: settlementPlan,
+  }] : [], [settlementPlan]);
 
   return (
     <main className="console-page">
@@ -275,6 +339,23 @@ export default function TestnetQuoteExecution() {
                 }}
               />
             </section>
+
+            {providerStatus?.status_name === "SUBMITTED" && (
+              <section className="console-card console-plan-card">
+                <div className="console-section-head"><span>SETTLEMENT</span><b>{settlementLoading ? "SIMULATING…" : confirmed.settle ? "CONFIRMED" : settlementPlan ? "READY" : "WAITING"}</b></div>
+                <p className="console-evidence">Settlement is offered only after the Testnet Commerce contract reports SUBMITTED and the server successfully simulates Router.settle for the connected wallet.</p>
+                {settlementPlan ? (
+                  <OnchainTransactionRunner
+                    steps={settlementSteps}
+                    onConfirmed={(step, receipt) => {
+                      if (step.id === "settle") void syncSettlement(receipt).catch((cause) => setError(cause instanceof Error ? cause.message : "Settlement synchronization failed"));
+                    }}
+                  />
+                ) : (
+                  <p className="console-evidence">Settlement is not currently executable for this wallet/job. The UI will keep the submitted state visible until the contract simulation succeeds.</p>
+                )}
+              </section>
+            )}
 
             <section className="console-card">
               <div className="console-section-head"><span>QUOTE ANCHOR</span><b>IMMUTABLE INPUT</b></div>
