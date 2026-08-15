@@ -66,14 +66,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!agent?.owner) throw new Error("Assigned agent does not have a provider wallet");
 
     const provider = address(agent.owner, "agent.owner");
+    const readOptions = { authorizationList: [] as const };
     const paymentToken = await publicClient.readContract({
       address: ERC8183_ADDRESSES.commerce,
       abi: COMMERCE_ABI,
       functionName: "paymentToken",
+      ...readOptions,
     });
     const [tokenSymbol, tokenDecimals] = await Promise.all([
-      publicClient.readContract({ address: paymentToken, abi: ERC20_ABI, functionName: "symbol" }),
-      publicClient.readContract({ address: paymentToken, abi: ERC20_ABI, functionName: "decimals" }),
+      publicClient.readContract({ address: paymentToken, abi: ERC20_ABI, functionName: "symbol", ...readOptions }),
+      publicClient.readContract({ address: paymentToken, abi: ERC20_ABI, functionName: "decimals", ...readOptions }),
     ]);
 
     const expiry = BigInt(Math.floor(Date.now() / 1000) + ttlSeconds);
