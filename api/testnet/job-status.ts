@@ -10,6 +10,14 @@ const publicClient = createPublicClient({
 });
 
 const STATUS_NAMES = ["OPEN", "FUNDED", "SUBMITTED", "COMPLETED", "REJECTED", "EXPIRED"] as const;
+const MARKETPLACE_STATUS: Record<(typeof STATUS_NAMES)[number], "created" | "funded" | "submitted" | "completed" | "rejected" | "expired"> = {
+  OPEN: "created",
+  FUNDED: "funded",
+  SUBMITTED: "submitted",
+  COMPLETED: "completed",
+  REJECTED: "rejected",
+  EXPIRED: "expired",
+};
 
 type ChainJob = {
   id: bigint;
@@ -77,15 +85,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (chainJob.client.toLowerCase() !== auth.user.wallet_address.toLowerCase()) return res.status(403).json({ error: "ERC-8183 job client does not match the authenticated wallet" });
     if (marketplaceJob.chain_job_id != null && String(marketplaceJob.chain_job_id) !== jobId) return res.status(409).json({ error: "Marketplace job is linked to a different on-chain job", expected: marketplaceJob.chain_job_id, received: jobId });
 
-    const statusName = STATUS_NAMES[chainJob.status] || `UNKNOWN_${chainJob.status}`;
-    const mappedStatus = {
-      OPEN: "created",
-      FUNDED: "funded",
-      SUBMITTED: "submitted",
-      COMPLETED: "completed",
-      REJECTED: "rejected",
-      EXPIRED: "expired",
-    }[statusName as keyof typeof STATUS_NAMES] || "unknown";
+    const statusName = STATUS_NAMES[chainJob.status];
+    if (!statusName) return res.status(409).json({ error: "Unknown ERC-8183 job status", onchain_status: chainJob.status });
+    const mappedStatus = MARKETPLACE_STATUS[statusName];
 
     const update = {
       chain_job_id: Number(chainJob.id),
