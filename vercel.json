@@ -3,6 +3,10 @@
     {
       "path": "/api/index-agents",
       "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/check-agent-endpoints",
+      "schedule": "*/15 * * * *"
     }
   ],
   "rewrites": [
