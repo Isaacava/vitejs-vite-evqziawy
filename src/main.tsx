@@ -7,6 +7,7 @@ import MissionConsole from "./MissionConsole";
 import OnchainPrepare from "./OnchainPrepare";
 import OnchainExecute from "./OnchainExecute";
 import TestnetQuoteExecution from "./TestnetQuoteExecution";
+import TestnetSandbox from "./TestnetSandbox";
 import EvaluatorConsole from "./EvaluatorConsole";
 import ProviderSubmit from "./ProviderSubmit";
 import LifecycleActions from "./LifecycleActions";
@@ -26,6 +27,7 @@ const dashboardMode = window.location.pathname === "/dashboard";
 const permissionsMode = window.location.pathname === "/permissions";
 const evidenceMode = window.location.pathname === "/agent/evidence";
 const prepareMode = window.location.pathname === "/prepare";
+const testnetMode = window.location.pathname === "/testnet";
 const testnetQuoteExecuteMode = window.location.pathname === "/testnet/execute";
 const executeMode = window.location.pathname === "/prepare/execute";
 const evaluatorMode = window.location.pathname === "/evaluator";
@@ -38,6 +40,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     {testnetQuoteExecuteMode && missionId && quoteId ? (
       <TestnetQuoteExecution />
+    ) : testnetMode ? (
+      <TestnetSandbox />
     ) : executeMode && missionId ? (
       <OnchainExecute />
     ) : evaluatorMode && jobId ? (
