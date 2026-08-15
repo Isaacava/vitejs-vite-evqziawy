@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 import { getAddress, type Address } from "viem";
 import { COMMERCE_ABI, ERC8183_ADDRESSES, publicClient } from "../lib/erc8183.js";
+import { getAuthenticatedUser } from "./authHandlers.js";
 
 function db() {
   const url = process.env.SUPABASE_URL;
@@ -9,9 +10,14 @@ function db() {
   if (!url || !key) throw new Error("Supabase server configuration is missing");
   return createClient(url, key, { auth: { persistSession: false } });
 }
-function authorized(req: VercelRequest) {
+function runtimeAuthorized(req: VercelRequest) {
   const secret = process.env.AGENT_RUNTIME_SECRET;
   return !secret ? process.env.NODE_ENV !== "production" : req.headers.authorization === `Bearer ${secret}`;
+}
+async function authorizedForAgent(req: VercelRequest, owner: string | null | undefined) {
+  if (runtimeAuthorized(req)) return true;
+  const auth = await getAuthenticatedUser(req);
+  return !!auth && typeof owner === "string" && auth.user.wallet_address.toLowerCase() === owner.toLowerCase();
 }
 function readContract(args: Record<string, unknown>) {
   return (publicClient.readContract as unknown as (value: Record<string, unknown>) => Promise<any>)(args);
@@ -22,7 +28,6 @@ function address(value: unknown, field: string): Address {
 }
 
 export async function watch(req: VercelRequest, res: VercelResponse) {
-  if (!authorized(req)) return res.status(401).json({ error: "Agent runtime unauthorized" });
   if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
   try {
     const agentId = typeof req.query.agent_id === "string" ? req.query.agent_id.trim() : "";
@@ -31,6 +36,7 @@ export async function watch(req: VercelRequest, res: VercelResponse) {
     const { data: agent, error: agentError } = await supabase.from("agents").select("id,agent_id,owner,name,status,verification_status").eq("agent_id", agentId).maybeSingle();
     if (agentError) throw new Error(agentError.message);
     if (!agent) return res.status(404).json({ error: "Agent not found" });
+    if (!(await authorizedForAgent(req, agent.owner))) return res.status(401).json({ error: "Agent owner authentication required" });
     const provider = address(agent.owner, "agent.owner");
     const counter = BigInt(await readContract({ address: ERC8183_ADDRESSES.commerce, abi: COMMERCE_ABI, functionName: "jobCounter" }));
     const requested = Number(req.query.scan || 32);
@@ -47,7 +53,6 @@ export async function watch(req: VercelRequest, res: VercelResponse) {
 }
 
 export async function actions(req: VercelRequest, res: VercelResponse) {
-  if (!authorized(req)) return res.status(401).json({ error: "Agent runtime unauthorized" });
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   const transitions: Record<string, { from: string[]; to: string; payload?: boolean }> = { accept: { from: ["open", "funded"], to: "accepted" }, start: { from: ["accepted"], to: "in_progress" }, progress: { from: ["in_progress"], to: "in_progress", payload: true }, message: { from: ["accepted", "in_progress"], to: "in_progress", payload: true }, submit: { from: ["in_progress"], to: "submitted", payload: true } };
   try {
@@ -62,6 +67,7 @@ export async function actions(req: VercelRequest, res: VercelResponse) {
     const { data: agent, error: agentError } = await supabase.from("agents").select("id,agent_id,owner").eq("agent_id", agentId).maybeSingle();
     if (agentError) throw new Error(agentError.message);
     if (!agent) return res.status(404).json({ error: "Agent not found" });
+    if (!(await authorizedForAgent(req, agent.owner))) return res.status(401).json({ error: "Agent owner authentication required" });
     const provider = address(agent.owner, "agent.owner");
     const { data: job, error: jobError } = await supabase.from("jobs").select("id,chain_job_id,status,provider_agent_id,mission_task_id,client_wallet,description,budget,payment_token").eq("chain_job_id", Number(chainJobId)).maybeSingle();
     if (jobError) throw new Error(jobError.message);
@@ -79,18 +85,11 @@ export async function actions(req: VercelRequest, res: VercelResponse) {
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (action === "accept") updates.status = "accepted";
     if (action === "start") updates.status = "in_progress";
-    if (action === "submit") {
-      updates.status = "submitted";
-      updates.deliverable = payload?.deliverable || payload?.result || null;
-    }
+    if (action === "submit") { updates.status = "submitted"; updates.deliverable = payload?.deliverable || payload?.result || null; }
     const { data: updated, error: updateError } = await supabase.from("jobs").update(updates).eq("id", job.id).select("id,chain_job_id,status,provider_agent_id,mission_task_id,deliverable").single();
     if (updateError) throw new Error(updateError.message);
-    if (action === "message" || action === "progress") {
-      await supabase.from("agent_messages").insert({ mission_id: null, task_id: job.mission_task_id, sender_type: "agent", sender_id: agent.id, body: String(payload?.body || payload?.message || "Provider runtime update") });
-    }
-    if (action === "submit") {
-      await supabase.from("notifications").insert({ mission_id: null, task_id: job.mission_task_id, recipient: provider, kind: "deliverable_submitted", title: "Agent submitted deliverable", body: `Job ${chainJobId} has been submitted for evaluation.` });
-    }
+    if (action === "message" || action === "progress") await supabase.from("agent_messages").insert({ mission_id: null, task_id: job.mission_task_id, sender_type: "agent", sender_id: agent.id, body: String(payload?.body || payload?.message || "Provider runtime update") });
+    if (action === "submit") await supabase.from("notifications").insert({ mission_id: null, task_id: job.mission_task_id, recipient: provider, kind: "deliverable_submitted", title: "Agent submitted deliverable", body: `Job ${chainJobId} has been submitted for evaluation.` });
     return res.status(200).json({ ok: true, action, job: updated, chain: { id: chain.id.toString(), status: Number(chain.status), budget: chain.budget.toString(), provider: chain.provider, client: chain.client, evaluator: chain.evaluator }, note: "Provider workflow state updated only after re-verifying the live FUNDED chain job. On-chain provider submission and settlement remain separate." });
   } catch (error) { return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to perform agent action" }); }
 }
@@ -107,10 +106,7 @@ function evaluate(input: Proposal) {
   else if (Number(input.slippage_bps ?? 0) > 150) reasons.push("Requested slippage is above the conservative guardrail.");
   else if (["high", "critical"].includes(risk)) reasons.push("Risk classification requires explicit user approval.");
   else if (!input.expires_at) reasons.push("Session expiry is not provided; explicit user approval is required.");
-  else {
-    const expiry = Date.parse(input.expires_at);
-    if (!Number.isFinite(expiry) || expiry <= Date.now()) reasons.push("The requested session is expired or has an invalid expiry.");
-  }
+  else { const expiry = Date.parse(input.expires_at); if (!Number.isFinite(expiry) || expiry <= Date.now()) reasons.push("The requested session is expired or has an invalid expiry."); }
   if (reasons.length === 0) return { decision: "approve" as Decision, reasons: ["Requested action is within the supplied risk constraints."] };
   if (reasons[0].includes("outside") || reasons[0].includes("exceeds") || reasons[0].includes("slippage") || reasons[0].includes("expired")) return { decision: "block" as Decision, reasons };
   return { decision: "user_approval" as Decision, reasons };
@@ -124,7 +120,7 @@ export async function riskPolicy(req: VercelRequest, res: VercelResponse) {
 
 export async function riskRuntime(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-  if (!authorized(req)) return res.status(401).json({ error: "Agent runtime unauthorized" });
+  if (!runtimeAuthorized(req)) return res.status(401).json({ error: "Agent runtime unauthorized" });
   try {
     const input = (req.body || {}) as Proposal;
     if (!input.job_id || !input.action) return res.status(400).json({ error: "job_id and action are required" });
