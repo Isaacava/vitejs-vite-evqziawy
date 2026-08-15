@@ -8,6 +8,7 @@ import OnchainPrepare from "./OnchainPrepare";
 import OnchainExecute from "./OnchainExecute";
 import EvaluatorConsole from "./EvaluatorConsole";
 import ProviderSubmit from "./ProviderSubmit";
+import LifecycleActions from "./LifecycleActions";
 import AgentRegistration from "./AgentRegistration";
 import AgentInbox from "./AgentInbox";
 import UserDashboard from "./UserDashboard";
@@ -24,6 +25,7 @@ const prepareMode = window.location.pathname === "/prepare";
 const executeMode = window.location.pathname === "/prepare/execute";
 const evaluatorMode = window.location.pathname === "/evaluator";
 const providerSubmitMode = window.location.pathname === "/provider/submit";
+const lifecycleMode = window.location.pathname === "/lifecycle";
 const registerMode = window.location.pathname === "/agents/register";
 const inboxMode = window.location.pathname === "/agent/inbox";
 
@@ -35,6 +37,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       <EvaluatorConsole />
     ) : providerSubmitMode && jobId ? (
       <ProviderSubmit />
+    ) : lifecycleMode && jobId ? (
+      <LifecycleActions />
     ) : jobId ? (
       <MissionConsole />
     ) : prepareMode && missionId ? (
