@@ -23,7 +23,7 @@ function evmAddress(value: unknown, field: string) {
 
 function list(value: unknown) {
   if (!Array.isArray(value)) return [] as string[];
-  return [...new Set(value.filter((item): item is string => typeof item === "string" && item.trim()).map((item) => item.trim()))].slice(0, 20);
+  return [...new Set(value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim()))].slice(0, 20);
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
