@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
-import { decodeEventLog, parseAbiItem, type Address, type Hex } from "viem";
+import { getAddress, parseAbiItem, type Address, type Hex } from "viem";
 import { ERC8004_REGISTRY_ADDRESS, publicClient } from "../src/lib/erc8183.js";
 
 const TRANSFER_EVENT = parseAbiItem(
@@ -24,10 +24,6 @@ type RegistrationFile = {
 
 type Endpoint = { url: string; protocol: string; version?: string; metadata?: Record<string, unknown> };
 type TransferLog = { data: Hex; topics: readonly Hex[] };
-
-type RegistryReader = {
-  readContract: (args: Record<string, unknown>) => Promise<unknown>;
-};
 
 function supabaseServer() {
   const url = process.env.SUPABASE_URL;
@@ -175,9 +171,9 @@ async function syncAgent(supabase: ReturnType<typeof supabaseServer>, agentId: s
 
   let dbAgent: { id: string } | null = existing ? { id: existing.id } : null;
   if (existing) {
-    const { data, error } = await supabase.from("agents").update(identityPatch).eq("id", existing.id).select("id").single();
+    const { data, error } = await supabase.from("agents").update(identityPatch as never).eq("id", existing.id).select("id").single();
     if (error) throw new Error(error.message);
-    dbAgent = data;
+    dbAgent = data as { id: string };
   } else {
     const { data, error } = await supabase.from("agents").insert({
       agent_id: agentId,
@@ -197,7 +193,7 @@ async function syncAgent(supabase: ReturnType<typeof supabaseServer>, agentId: s
       metadata: { registration, indexer: "agentmarket", resolution_error: resolveError },
     }).select("id").single();
     if (error) throw new Error(error.message);
-    dbAgent = data;
+    dbAgent = data as { id: string };
   }
 
   if (!dbAgent) throw new Error("agent row missing after sync");
@@ -229,7 +225,7 @@ async function syncAgent(supabase: ReturnType<typeof supabaseServer>, agentId: s
   return { resolved: !resolveError, endpointCount: endpoints.length, category };
 }
 
-const registryReader = publicClient as unknown as RegistryReader;
+const readContract = publicClient.readContract.bind(publicClient) as unknown as (args: Record<string, unknown>) => Promise<any>;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET" && req.method !== "POST") {
@@ -289,10 +285,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const mintedIds = [...new Set(logs
       .map((log) => {
         try {
-          const decoded = decodeEventLog({ abi: [TRANSFER_EVENT], data: log.data, topics: log.topics });
-          if (decoded.eventName !== "Transfer") return null;
-          const args = decoded.args as unknown as { from: Address; tokenId: bigint };
-          return args.from.toLowerCase() === ZERO_ADDRESS.toLowerCase() ? args.tokenId : null;
+          const fromTopic = log.topics[1];
+          const tokenTopic = log.topics[3];
+          if (!fromTopic || !tokenTopic) return null;
+          const from = getAddress(`0x${fromTopic.slice(-40)}`);
+          if (from.toLowerCase() !== ZERO_ADDRESS.toLowerCase()) return null;
+          return BigInt(tokenTopic);
         } catch {
           return null;
         }
@@ -306,13 +304,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       try {
         const tokenId = BigInt(agentId);
         const [owner, uri] = await Promise.all([
-          registryReader.readContract({
+          readContract({
             address: ERC8004_REGISTRY_ADDRESS,
             abi: [{ type: "function", name: "ownerOf", stateMutability: "view", inputs: [{ name: "tokenId", type: "uint256" }], outputs: [{ type: "address" }] }] as const,
             functionName: "ownerOf",
             args: [tokenId],
           }),
-          registryReader.readContract({
+          readContract({
             address: ERC8004_REGISTRY_ADDRESS,
             abi: [{ type: "function", name: "tokenURI", stateMutability: "view", inputs: [{ name: "tokenId", type: "uint256" }], outputs: [{ type: "string" }] }] as const,
             functionName: "tokenURI",
