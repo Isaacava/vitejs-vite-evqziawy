@@ -57,10 +57,10 @@ export default function AgentRegistration() {
         }),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body?.error || "Unable to register agent");
-      setMessage("Registered in marketplace inventory. Wallet verification and endpoint health remain separate gates.");
+      if (!response.ok) throw new Error(body?.error || "Unable to connect agent");
+      setMessage("Agent claimed in AgentMarket. Discovery remains the source of marketplace inventory; wallet verification and endpoint health are separate gates.");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to register agent");
+      setError(cause instanceof Error ? cause.message : "Unable to connect agent");
     } finally {
       setBusy(false);
     }
@@ -74,38 +74,38 @@ export default function AgentRegistration() {
       <div className="agent-register-shell">
         <header className="agent-register-nav">
           <a href="/" className="agent-register-brand">AgentMarket</a>
-          <span>AGENT / REGISTRATION</span>
+          <span>AGENT / CLAIM & CONNECT</span>
           <a href="/app">Marketplace →</a>
         </header>
 
         <section className="agent-register-hero">
           <div>
-            <span className="agent-register-kicker">SELF-SERVE REGISTRATION</span>
-            <h1>Bring an existing ERC-8004 agent into the marketplace.</h1>
-            <p>Registration adds the agent to the same inventory used by passive indexing. It starts as pending verification; AgentMarket never invents a verified status.</p>
+            <span className="agent-register-kicker">OPTIONAL PROVIDER ONBOARDING</span>
+            <h1>Claim an agent already discovered on BNB Chain.</h1>
+            <p>AgentMarket discovers ERC-8004 identities automatically and uses that indexed inventory for matching. This page is only for an operator who wants to claim or enrich an existing discovered agent.</p>
           </div>
           <div className="agent-register-note">
-            <small>STATUS MODEL</small>
-            <strong>indexed → verified</strong>
-            <span>Identity control and endpoint liveness are checked independently.</span>
+            <small>INVENTORY SOURCE</small>
+            <strong>ERC-8004 discovery</strong>
+            <span>Claiming never creates a missing agent record. The identity must already be discoverable by the indexer.</span>
           </div>
         </section>
 
         <form className="agent-register-form" onSubmit={submit}>
           <section className="agent-register-card">
-            <div className="agent-register-head"><span>01 / IDENTITY</span><b>PUBLIC DATA ONLY</b></div>
+            <div className="agent-register-head"><span>01 / DISCOVERED IDENTITY</span><b>ERC-8004</b></div>
             <div className="agent-register-fields">
-              <label>ERC-8004 AGENT ID<input value={form.agentId} onChange={(event) => update("agentId", event.target.value)} placeholder="e.g. 3821" /></label>
-              <label>OWNER WALLET<input value={form.owner} onChange={(event) => update("owner", event.target.value)} placeholder="0x…" /></label>
-              <label>AGENT NAME<input value={form.name} onChange={(event) => update("name", event.target.value)} placeholder="Rebalancing Agent" /></label>
+              <label>ERC-8004 AGENT ID<input required value={form.agentId} onChange={(event) => update("agentId", event.target.value)} placeholder="e.g. 3821" /></label>
+              <label>OWNER WALLET<input required value={form.owner} onChange={(event) => update("owner", event.target.value)} placeholder="0x…" /></label>
+              <label>AGENT NAME<input value={form.name} onChange={(event) => update("name", event.target.value)} placeholder="Optional marketplace display name" /></label>
               <label>CATEGORY<select value={form.category} onChange={(event) => update("category", event.target.value)}><option value="grid_trading">Grid trading</option><option value="rebalancing">Rebalancing</option><option value="yield">Yield</option><option value="health_factor">Health factor / monitoring</option><option value="other">Other</option></select></label>
             </div>
           </section>
 
           <section className="agent-register-card agent-register-card-offset">
-            <div className="agent-register-head"><span>02 / CAPABILITIES</span><b>DISCOVERY SIGNALS</b></div>
-            <label className="agent-register-wide">DESCRIPTION<textarea value={form.description} onChange={(event) => update("description", event.target.value)} rows={4} placeholder="What jobs can this agent perform?" /></label>
-            <label className="agent-register-wide">CAPABILITIES<input value={form.capabilities} onChange={(event) => update("capabilities", event.target.value)} placeholder="rebalancing, monitoring, risk checks" /></label>
+            <div className="agent-register-head"><span>02 / OPTIONAL ENRICHMENT</span><b>DISCOVERY DATA FIRST</b></div>
+            <label className="agent-register-wide">DESCRIPTION<textarea value={form.description} onChange={(event) => update("description", event.target.value)} rows={4} placeholder="Optional marketplace description override" /></label>
+            <label className="agent-register-wide">CAPABILITIES<input value={form.capabilities} onChange={(event) => update("capabilities", event.target.value)} placeholder="Optional: rebalancing, monitoring, risk checks" /></label>
             <label className="agent-register-wide">ERC-8183 ENDPOINT<input value={form.endpoint} onChange={(event) => update("endpoint", event.target.value)} placeholder="https://agent.example.com/jobs" /></label>
           </section>
 
@@ -114,7 +114,7 @@ export default function AgentRegistration() {
 
           <div className="agent-register-actions">
             <a className="agent-register-secondary" href="/app">Cancel</a>
-            <button className="agent-register-primary" disabled={busy}>{busy ? "Registering…" : "Register agent →"}</button>
+            <button className="agent-register-primary" disabled={busy}>{busy ? "Claiming…" : "Claim discovered agent →"}</button>
           </div>
         </form>
       </div>
