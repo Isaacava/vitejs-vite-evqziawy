@@ -32,7 +32,12 @@ type Match = {
   };
   reasons?: string[];
 };
-type MatchResponse = { intent: ReturnType<typeof parseMarketplaceIntent>; bestMatch: Match | null; alternatives: Match[] };
+type MatchResponse = {
+  intent: ReturnType<typeof parseMarketplaceIntent>;
+  bestMatch: Match | null;
+  bestHireableMatch?: Match | null;
+  alternatives: Match[];
+};
 type MissionResponse = { mission: { id: string }; task: { id: string }; job: { id: string; status: string } };
 
 const examples = [
@@ -99,7 +104,7 @@ export default function MarketplaceWorkspace() {
       if (!response.ok) throw new Error(data?.error || "Matching API unavailable");
       const next = data as MatchResponse;
       setResult(next);
-      setSelected(next.bestMatch);
+      setSelected(next.bestHireableMatch ?? next.bestMatch);
     } catch (cause) {
       setResult(null);
       setSelected(null);
@@ -146,8 +151,10 @@ export default function MarketplaceWorkspace() {
   }, []);
 
   const candidates = result?.alternatives ?? [];
-  const best = result?.bestMatch;
+  const discoveryBest = result?.bestMatch ?? null;
+  const best = result?.bestHireableMatch ?? discoveryBest;
   const bestReady = Boolean(best?.hireability?.canCreateJob);
+  const showingHireableFallback = Boolean(result?.bestHireableMatch && discoveryBest && result.bestHireableMatch.agent.agent_id !== discoveryBest.agent.agent_id);
 
   return (
     <main className="workspace">
@@ -196,6 +203,7 @@ export default function MarketplaceWorkspace() {
                 <div className={`score-chip ${scoreColor(best.score)}`}><b>{Math.round(best.score)}</b><span>/100</span></div>
               </div>
               <div className="agent-meta-row"><span>{categoryLabel(best.agent.category)}</span><span>{best.agent.status || "unknown endpoint"}</span><span>{best.agent.source || "indexed"}</span>{best.agent.is_first_party && <span>first-party</span>}</div>
+              {showingHireableFallback && <div className="workspace-alert workspace-alert-success" style={{ marginTop: 16, marginBottom: 0 }}>The highest-ranked discovery agent is not currently hireable, so we selected the strongest ready provider instead.</div>}
               {!bestReady && best.hireability && <div className="workspace-alert workspace-alert-error" style={{ marginTop: 16, marginBottom: 0 }}>{best.hireability.reason}</div>}
               <div className="why-block">
                 <div className="why-head"><span>WHY THIS AGENT</span><strong>{confidenceLabel(best.scoreConfidence)}</strong></div>
@@ -210,7 +218,17 @@ export default function MarketplaceWorkspace() {
 
         <aside className="alternatives-panel">
           <div className="section-marker"><span>02</span> ALTERNATIVES</div>
-          <div className="alternatives-list">{candidates.length === 0 && !loading && <p className="empty-state">No additional compatible agents returned yet.</p>}{candidates.map((match) => <button type="button" className="alternative-row" key={match.agent.agent_id} onClick={() => setSelected(match)}><span className="alternative-index">{match.agent.agent_id.slice(-3)}</span><span className="alternative-info"><strong>{match.agent.name || `Agent #${match.agent.agent_id}`}</strong><small>{categoryLabel(match.agent.category)} · {hireabilityLabel(match)}</small></span><strong className={`alternative-score ${scoreColor(match.score)}`}>{Math.round(match.score)}</strong></button>)}</div>
+          <div className="alternatives-list">
+            {discoveryBest && discoveryBest.agent.agent_id !== best?.agent.agent_id && (
+              <button type="button" className="alternative-row" onClick={() => setSelected(discoveryBest)}>
+                <span className="alternative-index">TOP</span>
+                <span className="alternative-info"><strong>{discoveryBest.agent.name || `Agent #${discoveryBest.agent.agent_id}`}</strong><small>{categoryLabel(discoveryBest.agent.category)} · discovery leader · {hireabilityLabel(discoveryBest)}</small></span>
+                <strong className={`alternative-score ${scoreColor(discoveryBest.score)}`}>{Math.round(discoveryBest.score)}</strong>
+              </button>
+            )}
+            {candidates.length === 0 && !loading && !discoveryBest && <p className="empty-state">No additional compatible agents returned yet.</p>}
+            {candidates.map((match) => <button type="button" className="alternative-row" key={match.agent.agent_id} onClick={() => setSelected(match)}><span className="alternative-index">{match.agent.agent_id.slice(-3)}</span><span className="alternative-info"><strong>{match.agent.name || `Agent #${match.agent.agent_id}`}</strong><small>{categoryLabel(match.agent.category)} · {hireabilityLabel(match)}</small></span><strong className={`alternative-score ${scoreColor(match.score)}`}>{Math.round(match.score)}</strong></button>)}
+          </div>
         </aside>
       </section>
 
