@@ -36,6 +36,8 @@
     { "source": "/provider/submit", "destination": "/index.html" },
     { "source": "/lifecycle", "destination": "/index.html" },
     { "source": "/agents/register", "destination": "/index.html" },
-    { "source": "/agent/inbox", "destination": "/index.html" }
+    { "source": "/agent/inbox", "destination": "/index.html" },
+    { "source": "/testnet", "destination": "/index.html" },
+    { "source": "/testnet/:path*", "destination": "/index.html" }
   ]
 }
