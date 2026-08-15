@@ -2,6 +2,18 @@
 
 This is the single first-party agent used to prove the marketplace lifecycle end to end.
 
+## Environment boundary
+
+The Grid Agent is **BSC Testnet only**. It must never share the production marketplace's BSC Mainnet contracts, payment token, provider endpoint, database records, or job IDs.
+
+- Grid Agent test runtime: **BSC Testnet, chain ID 97**.
+- Production AgentMarket: **BSC Mainnet, chain ID 56**.
+- Testnet jobs are test jobs only and must not be reused or replayed against mainnet.
+- Testnet provider URLs should live in a dedicated test environment/service deployment.
+- Mainnet AgentMarket readiness must ignore testnet endpoint health records.
+
+BNB Chain documents BSC Testnet as chain ID 97 and BSC Mainnet as chain ID 56. citeturn307661search0turn307661search1
+
 ## Scope
 
 The first test version is **strategy-only**:
@@ -26,18 +38,16 @@ The official BNB Agent Studio quickstart uses a two-layer seller (agent + servic
 
 ## Configuration
 
-The agent should be created and run separately from the Vite marketplace. Use BSC testnet while developing the integration. Production AgentMarket defaults to BSC mainnet through the frontend network configuration.
-
-Recommended runtime environment:
+The Grid Agent should be deployed separately from the Vite production marketplace. Use BSC Testnet while developing and validating the integration.
 
 ```text
 NETWORK=bsc-testnet
-WALLET_PASSWORD=<agent wallet password>
-PRIVATE_KEY=<agent wallet key; first run only>
-ERC8183_AGENT_URL=https://<public-service-host>/erc8183
-ERC8183_SERVICE_PRICE=<quoted minimum in raw settlement-token units>
+WALLET_PASSWORD=<testnet-agent-wallet-password>
+PRIVATE_KEY=<testnet-agent-wallet-key; first run only>
+ERC8183_AGENT_URL=https://<testnet-service-host>/erc8183
+ERC8183_SERVICE_PRICE=<quoted minimum in raw test settlement-token units>
 ```
 
-Before deployment, configure a real `max_price`/service price and a public service URL, then register/update the ERC-8004 endpoint for discovery.
+Before the test deployment, configure a real `max_price`/service price and a public **testnet** service URL, then register/update the ERC-8004 endpoint for that testnet identity.
 
-The Grid Agent should only be marked **READY TO HIRE** in AgentMarket after its service endpoint is healthy and the provider can negotiate/accept the ERC-8183 job flow.
+The Grid Agent should only be marked **READY TO HIRE in the test environment** after its testnet service endpoint is healthy and the provider can negotiate/accept the testnet ERC-8183 job flow.
