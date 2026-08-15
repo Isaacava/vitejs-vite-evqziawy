@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
+import { keccak256, stringToBytes } from "viem";
 import { getAuthenticatedUser } from "./authHandlers.js";
 
 function db() {
@@ -35,6 +36,19 @@ function asString(value: unknown, fallback = "") {
   return typeof value === "string" ? value.trim() : fallback;
 }
 
+function quoteHash(quote: { quote_id: string; agent_id: string; requester_wallet: string; goal: string; price: string; currency: string; expires_at: string }) {
+  const canonical = JSON.stringify({
+    quote_id: quote.quote_id,
+    agent_id: quote.agent_id,
+    requester_wallet: quote.requester_wallet.toLowerCase(),
+    goal: quote.goal,
+    price: quote.price,
+    currency: quote.currency,
+    expires_at: quote.expires_at,
+  });
+  return keccak256(stringToBytes(canonical));
+}
+
 export async function quoteHandler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -44,14 +58,62 @@ export async function quoteHandler(req: VercelRequest, res: VercelResponse) {
   const auth = await getAuthenticatedUser(req);
   if (!auth) return res.status(401).json({ error: "Wallet authentication required" });
 
-  const agentId = asString(req.body?.agent_id);
-  const goal = asString(req.body?.goal);
-  const metadata = req.body?.metadata && typeof req.body.metadata === "object" ? req.body.metadata : {};
-  const maxBudget = asString(req.body?.max_budget);
-  if (!agentId || !goal) return res.status(400).json({ error: "agent_id and goal are required" });
+  const action = asString(req.body?.action, "request").toLowerCase();
 
   try {
     const supabase = db();
+
+    if (action === "accept") {
+      const quoteId = asString(req.body?.quote_id);
+      if (!quoteId) return res.status(400).json({ error: "quote_id is required" });
+
+      const { data: quote, error: quoteError } = await supabase
+        .from("marketplace_quotes")
+        .select("quote_id,agent_id,requester_wallet,goal,price,currency,provider_quote,status,requested_at,expires_at")
+        .eq("quote_id", quoteId)
+        .maybeSingle();
+      if (quoteError) throw new Error(quoteError.message);
+      if (!quote) return res.status(404).json({ error: "Quote not found" });
+      if (quote.requester_wallet.toLowerCase() !== auth.user.wallet_address.toLowerCase()) return res.status(403).json({ error: "Quote belongs to a different wallet" });
+      if (quote.status !== "offered") return res.status(409).json({ error: `Quote is ${quote.status}, not offered` });
+      if (new Date(quote.expires_at).getTime() <= Date.now()) {
+        await supabase.from("marketplace_quotes").update({ status: "expired" }).eq("quote_id", quoteId);
+        return res.status(409).json({ error: "Quote has expired" });
+      }
+
+      const acceptedAt = new Date().toISOString();
+      const { data: accepted, error: updateError } = await supabase
+        .from("marketplace_quotes")
+        .update({ status: "accepted", accepted_at: acceptedAt, updated_at: acceptedAt })
+        .eq("quote_id", quoteId)
+        .eq("requester_wallet", auth.user.wallet_address)
+        .eq("status", "offered")
+        .select("quote_id,agent_id,requester_wallet,goal,price,currency,provider_quote,status,expires_at,accepted_at")
+        .single();
+      if (updateError) throw new Error(updateError.message);
+
+      return res.status(200).json({
+        ok: true,
+        quote: accepted,
+        quote_hash: quoteHash({
+          quote_id: accepted.quote_id,
+          agent_id: accepted.agent_id,
+          requester_wallet: accepted.requester_wallet,
+          goal: accepted.goal,
+          price: accepted.price,
+          currency: accepted.currency,
+          expires_at: accepted.expires_at,
+        }),
+        next: "create_and_fund_erc8183_job",
+      });
+    }
+
+    const agentId = asString(req.body?.agent_id);
+    const goal = asString(req.body?.goal);
+    const metadata = req.body?.metadata && typeof req.body.metadata === "object" ? req.body.metadata : {};
+    const maxBudget = asString(req.body?.max_budget);
+    if (!agentId || !goal) return res.status(400).json({ error: "agent_id and goal are required" });
+
     const { data: agent, error: agentError } = await supabase
       .from("agents")
       .select("id,agent_id,name,owner,verification_status,status")
@@ -114,10 +176,13 @@ export async function quoteHandler(req: VercelRequest, res: VercelResponse) {
         requester_wallet: auth.user.wallet_address,
         goal,
         request_metadata: metadata,
+        price: "",
+        currency: "",
         status: "rejected",
         provider_status_code: providerResponse.status,
-        provider_response: providerQuote,
+        provider_quote: providerQuote,
         requested_at: requestedAt.toISOString(),
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
       });
       return res.status(409).json({ error: "Provider declined the quote request", quote_id: quoteId, provider_status: providerResponse.status, provider_response: providerQuote });
     }
@@ -127,6 +192,7 @@ export async function quoteHandler(req: VercelRequest, res: VercelResponse) {
     const currency = asString(normalized.currency ?? normalized.payment_token ?? normalized.token, "provider settlement token");
     const quoteExpires = asString(normalized.expires_at ?? normalized.expiration ?? normalized.valid_until);
     const expiresAt = quoteExpires ? new Date(quoteExpires) : new Date(Date.now() + 15 * 60 * 1000);
+    if (!price) throw new Error("Provider quote did not include a price");
     if (!Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now()) throw new Error("Provider returned an invalid quote expiry");
 
     const quote = {
