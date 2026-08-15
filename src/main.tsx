@@ -13,6 +13,7 @@ import AgentRegistration from "./AgentRegistration";
 import AgentInbox from "./AgentInbox";
 import UserDashboard from "./UserDashboard";
 import SessionPermissions from "./SessionPermissions";
+import AgentEvidence from "./AgentEvidence";
 import "./index.css";
 
 const params = new URLSearchParams(window.location.search);
@@ -21,6 +22,7 @@ const missionId = params.get("mission");
 const appMode = window.location.pathname === "/app";
 const dashboardMode = window.location.pathname === "/dashboard";
 const permissionsMode = window.location.pathname === "/permissions";
+const evidenceMode = window.location.pathname === "/agent/evidence";
 const prepareMode = window.location.pathname === "/prepare";
 const executeMode = window.location.pathname === "/prepare/execute";
 const evaluatorMode = window.location.pathname === "/evaluator";
@@ -39,6 +41,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       <ProviderSubmit />
     ) : lifecycleMode && jobId ? (
       <LifecycleActions />
+    ) : evidenceMode ? (
+      <AgentEvidence />
     ) : jobId ? (
       <MissionConsole />
     ) : prepareMode && missionId ? (
