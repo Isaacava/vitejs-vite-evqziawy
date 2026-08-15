@@ -77,33 +77,34 @@ export async function quoteHandler(req: VercelRequest, res: VercelResponse) {
       if (quote.requester_wallet.toLowerCase() !== auth.user.wallet_address.toLowerCase()) return res.status(403).json({ error: "Quote belongs to a different wallet" });
       if (quote.status !== "offered") return res.status(409).json({ error: `Quote is ${quote.status}, not offered` });
       if (new Date(quote.expires_at).getTime() <= Date.now()) {
-        await supabase.from("marketplace_quotes").update({ status: "expired" }).eq("quote_id", quoteId);
+        await supabase.from("marketplace_quotes").update({ status: "expired", updated_at: new Date().toISOString() }).eq("quote_id", quoteId);
         return res.status(409).json({ error: "Quote has expired" });
       }
 
       const acceptedAt = new Date().toISOString();
+      const acceptedHash = quoteHash({
+        quote_id: quote.quote_id,
+        agent_id: quote.agent_id,
+        requester_wallet: quote.requester_wallet,
+        goal: quote.goal,
+        price: quote.price,
+        currency: quote.currency,
+        expires_at: quote.expires_at,
+      });
+
       const { data: accepted, error: updateError } = await supabase
         .from("marketplace_quotes")
-        .update({ status: "accepted", accepted_at: acceptedAt, updated_at: acceptedAt })
+        .update({ status: "accepted", accepted_at: acceptedAt, quote_hash: acceptedHash, updated_at: acceptedAt })
         .eq("quote_id", quoteId)
         .eq("requester_wallet", auth.user.wallet_address)
         .eq("status", "offered")
-        .select("quote_id,agent_id,requester_wallet,goal,price,currency,provider_quote,status,expires_at,accepted_at")
+        .select("quote_id,agent_id,requester_wallet,goal,price,currency,provider_quote,status,expires_at,accepted_at,quote_hash")
         .single();
       if (updateError) throw new Error(updateError.message);
 
       return res.status(200).json({
         ok: true,
         quote: accepted,
-        quote_hash: quoteHash({
-          quote_id: accepted.quote_id,
-          agent_id: accepted.agent_id,
-          requester_wallet: accepted.requester_wallet,
-          goal: accepted.goal,
-          price: accepted.price,
-          currency: accepted.currency,
-          expires_at: accepted.expires_at,
-        }),
         next: "create_and_fund_erc8183_job",
       });
     }
