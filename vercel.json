@@ -15,6 +15,17 @@
     { "source": "/api/agent-runtimes/risk-guardian", "destination": "/api/agent?route=risk-runtime" },
     { "source": "/api/risk-guardian", "destination": "/api/agent?route=risk-policy" },
     { "source": "/api/missions", "destination": "/api/dashboard?route=missions" },
-    { "source": "/api/erc8183/prepare", "destination": "/api/erc8183" }
+    { "source": "/api/erc8183/prepare", "destination": "/api/erc8183" },
+    { "source": "/app", "destination": "/index.html" },
+    { "source": "/dashboard", "destination": "/index.html" },
+    { "source": "/permissions", "destination": "/index.html" },
+    { "source": "/agent/evidence", "destination": "/index.html" },
+    { "source": "/prepare", "destination": "/index.html" },
+    { "source": "/prepare/execute", "destination": "/index.html" },
+    { "source": "/evaluator", "destination": "/index.html" },
+    { "source": "/provider/submit", "destination": "/index.html" },
+    { "source": "/lifecycle", "destination": "/index.html" },
+    { "source": "/agents/register", "destination": "/index.html" },
+    { "source": "/agent/inbox", "destination": "/index.html" }
   ]
 }
