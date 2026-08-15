@@ -11,6 +11,42 @@ export type GridOrchestrationResult =
   | { ok: true; context: GridRuntimeContext; proposal: DefiProposal }
   | { ok: false; stage: "validation" | "risk"; errors: string[] };
 
+function readGridParameters(proposal: DefiProposal) {
+  const metadata = proposal.metadata?.grid;
+  if (!metadata || typeof metadata !== "object") {
+    return { valid: false as const, errors: ["Grid proposal is missing grid parameters."] };
+  }
+
+  const values = metadata as Record<string, unknown>;
+  const lowerPrice = values.lower_price;
+  const upperPrice = values.upper_price;
+  const gridLevels = values.grid_levels;
+
+  if (
+    typeof lowerPrice !== "number" ||
+    typeof upperPrice !== "number" ||
+    typeof gridLevels !== "number" ||
+    !Number.isFinite(lowerPrice) ||
+    !Number.isFinite(upperPrice) ||
+    !Number.isInteger(gridLevels) ||
+    lowerPrice <= 0 ||
+    upperPrice <= lowerPrice ||
+    gridLevels < 2 ||
+    gridLevels > 100
+  ) {
+    return { valid: false as const, errors: ["Grid parameters are invalid."] };
+  }
+
+  return {
+    valid: true as const,
+    parameters: {
+      lower_price: lowerPrice,
+      upper_price: upperPrice,
+      grid_levels: gridLevels,
+    },
+  };
+}
+
 export function prepareGridRuntime(proposal: DefiProposal): GridOrchestrationResult {
   const validation = validateDefiProposal(proposal);
   if (!validation.valid) {
@@ -19,6 +55,11 @@ export function prepareGridRuntime(proposal: DefiProposal): GridOrchestrationRes
 
   if (proposal.agent !== "grid") {
     return { ok: false, stage: "validation", errors: ["Proposal is not a Grid Agent proposal."] };
+  }
+
+  const gridParameters = readGridParameters(proposal);
+  if (!gridParameters.valid) {
+    return { ok: false, stage: "validation", errors: gridParameters.errors };
   }
 
   const risk = evaluateRiskProposal({
@@ -50,7 +91,7 @@ export function prepareGridRuntime(proposal: DefiProposal): GridOrchestrationRes
       slippage_bps: proposal.slippage_bps ?? 0,
       risk: "medium",
       expires_at: proposal.expires_at,
-      parameters: {},
+      parameters: gridParameters.parameters,
     }),
     risk.decision,
     risk.reasons.join(" "),
