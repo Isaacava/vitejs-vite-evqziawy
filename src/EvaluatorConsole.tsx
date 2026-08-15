@@ -28,6 +28,12 @@ const publicClient = createPublicClient({ chain: bscTestnet, transport: http() }
 const STATUS: Record<number, string> = { 0: "OPEN", 1: "FUNDED", 2: "SUBMITTED", 3: "COMPLETED", 4: "REJECTED", 5: "EXPIRED" };
 const compact = (value?: string | null) => value ? `${value.slice(0, 8)}…${value.slice(-6)}` : "—";
 
+async function requireTestnetWallet() {
+  if (!window.ethereum) throw new Error("No compatible browser wallet was detected.");
+  const chainId = String(await window.ethereum.request({ method: "eth_chainId" })).toLowerCase();
+  if (chainId !== "0x61") throw new Error("Switch the connected wallet to BSC Testnet (chain ID 97) before settlement.");
+}
+
 export default function EvaluatorConsole() {
   const jobId = new URLSearchParams(window.location.search).get("job") || "";
   const [job, setJob] = useState<any>(null);
@@ -69,6 +75,7 @@ export default function EvaluatorConsole() {
     setError("");
     setNotice("");
     try {
+      await requireTestnetWallet();
       const data = encodeFunctionData({ abi: ROUTER_ABI, functionName: "settle", args: [BigInt(jobId), "0x"] });
       const receipt = await sendAndConfirm({ to: ROUTER, data });
       setTxHash(receipt.hash);
