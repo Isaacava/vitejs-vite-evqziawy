@@ -53,7 +53,6 @@ export function buildGridProposal(input: GridProposalInput): GridProposal {
   const expiry = Date.parse(input.expiresAt);
   if (!Number.isFinite(expiry) || expiry <= Date.now()) throw new Error("expiresAt must be in the future");
 
-  const spacing = (input.upperPrice - input.lowerPrice) / (input.gridLevels - 1);
   const summary = `Create a ${input.gridLevels}-level grid for ${input.token} on ${input.protocol} between ${input.lowerPrice} and ${input.upperPrice}.`;
 
   return {
