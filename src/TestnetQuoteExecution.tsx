@@ -22,6 +22,16 @@ type ReceiptSyncResponse = {
   note?: string;
 };
 
+type ProviderJobStatus = {
+  status_name: string;
+  status: number;
+  provider: string;
+  budget: string;
+  deliverable_hash: string;
+  submitted_at: string | null;
+  expired_at: string;
+};
+
 const TESTNET_CHAIN_ID = "0x61";
 const compact = (value?: string | null) => value ? `${value.slice(0, 8)}…${value.slice(-6)}` : "—";
 
@@ -33,6 +43,7 @@ export default function TestnetQuoteExecution() {
   const [data, setData] = useState<PreparedResponse | null>(null);
   const [chainJobId, setChainJobId] = useState("");
   const [confirmed, setConfirmed] = useState<Record<string, boolean>>({});
+  const [providerStatus, setProviderStatus] = useState<ProviderJobStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [network, setNetwork] = useState("checking");
@@ -125,6 +136,47 @@ export default function TestnetQuoteExecution() {
     }
   }
 
+  useEffect(() => {
+    if (!confirmed.fund || !chainJobId || !marketplaceJobId) return;
+    let active = true;
+    let timer: number | undefined;
+
+    const poll = async () => {
+      try {
+        const query = new URLSearchParams({
+          mission_id: missionId,
+          marketplace_job_id: marketplaceJobId,
+          job_id: chainJobId,
+        });
+        const response = await fetch(`/api/testnet/job-status?${query.toString()}`, { credentials: "include" });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body?.error || "Unable to read Testnet provider status");
+        if (!active) return;
+        setProviderStatus({
+          status_name: body.job.status_name,
+          status: Number(body.job.status),
+          provider: body.job.provider,
+          budget: body.job.budget,
+          deliverable_hash: body.job.deliverable_hash,
+          submitted_at: body.job.submitted_at,
+          expired_at: body.job.expired_at,
+        });
+
+        if (["COMPLETED", "REJECTED", "EXPIRED"].includes(body.job.status_name)) return;
+        timer = window.setTimeout(poll, 10000);
+      } catch (cause) {
+        if (active) setError(cause instanceof Error ? cause.message : "Unable to poll Testnet provider status");
+        timer = window.setTimeout(poll, 15000);
+      }
+    };
+
+    void poll();
+    return () => {
+      active = false;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [confirmed.fund, chainJobId, marketplaceJobId, missionId]);
+
   async function confirmNetworkAgain() {
     const ethereum = window.ethereum;
     if (!ethereum) throw new Error("No browser wallet detected.");
@@ -201,6 +253,17 @@ export default function TestnetQuoteExecution() {
                 <button className="console-brass-button" type="button" disabled={loadingPlan} onClick={() => void reloadPlan()}>{loadingPlan ? "Refreshing…" : "Refresh Testnet preflight →"}</button>
               </div>
             </section>
+
+            {providerStatus && (
+              <section className="console-card">
+                <div className="console-section-head"><span>PROVIDER EXECUTION</span><b>{providerStatus.status_name}</b></div>
+                <div className="console-stat"><span>Provider</span><strong>{compact(providerStatus.provider)}</strong></div>
+                <div className="console-stat"><span>On-chain budget</span><strong>{providerStatus.budget}</strong></div>
+                <div className="console-stat"><span>Deliverable hash</span><strong>{compact(providerStatus.deliverable_hash)}</strong></div>
+                <div className="console-stat"><span>Submitted</span><strong>{providerStatus.submitted_at ? new Date(providerStatus.submitted_at).toLocaleString() : "Waiting for provider"}</strong></div>
+                <p className="console-evidence">AgentMarket is reading the actual BSC Testnet Commerce job. The provider status cannot be advanced by the client UI.</p>
+              </section>
+            )}
 
             <section className="console-card console-plan-card">
               <div className="console-section-head"><span>WALLET EXECUTION</span><b>{chainJobId ? `JOB ${chainJobId}` : "AWAITING createJob"}</b></div>
