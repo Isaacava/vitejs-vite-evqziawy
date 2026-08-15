@@ -1,8 +1,8 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
-import { getAddress, type Address } from "viem";
-import { COMMERCE_ABI, ERC8183_ADDRESSES, publicClient } from "../lib/erc8183.js";
+import { getAddress, keccak256, stringToBytes, type Address, type Hex } from "viem";
 import { getAuthenticatedUser } from "./authHandlers.js";
+import { PROVIDER_COMMERCE_ABI, PROVIDER_ERC8183_TESTNET, providerPublicClient } from "../lib/erc8183ProviderTestnet.js";
 
 function db() {
   const url = process.env.SUPABASE_URL;
@@ -20,7 +20,7 @@ async function authorizedForAgent(req: VercelRequest, owner: string | null | und
   return !!auth && typeof owner === "string" && auth.user.wallet_address.toLowerCase() === owner.toLowerCase();
 }
 function readContract(args: Record<string, unknown>) {
-  return (publicClient.readContract as unknown as (value: Record<string, unknown>) => Promise<any>)(args);
+  return (providerPublicClient.readContract as unknown as (value: Record<string, unknown>) => Promise<any>)(args);
 }
 function address(value: unknown, field: string): Address {
   if (typeof value !== "string" || !/^0x[a-fA-F0-9]{40}$/.test(value)) throw new Error(`${field} must be a valid EVM address`);
@@ -38,17 +38,17 @@ export async function watch(req: VercelRequest, res: VercelResponse) {
     if (!agent) return res.status(404).json({ error: "Agent not found" });
     if (!(await authorizedForAgent(req, agent.owner))) return res.status(401).json({ error: "Agent owner authentication required" });
     const provider = address(agent.owner, "agent.owner");
-    const counter = BigInt(await readContract({ address: ERC8183_ADDRESSES.commerce, abi: COMMERCE_ABI, functionName: "jobCounter" }));
+    const counter = BigInt(await readContract({ address: PROVIDER_ERC8183_TESTNET.commerce, abi: PROVIDER_COMMERCE_ABI, functionName: "jobCounter" }));
     const requested = Number(req.query.scan || 32);
     const scan = Math.max(1, Math.min(Number.isFinite(requested) ? requested : 32, 100));
     const first = counter > BigInt(scan) ? counter - BigInt(scan) + 1n : 1n;
     const jobs: any[] = [];
     for (let id = counter; id >= first; id -= 1n) {
-      const job = await readContract({ address: ERC8183_ADDRESSES.commerce, abi: COMMERCE_ABI, functionName: "getJob", args: [id] });
+      const job = await readContract({ address: PROVIDER_ERC8183_TESTNET.commerce, abi: PROVIDER_COMMERCE_ABI, functionName: "getJob", args: [id] });
       if (job.id === 0n || job.provider.toLowerCase() !== provider.toLowerCase() || Number(job.status) !== 1) continue;
       jobs.push({ id: job.id.toString(), client: job.client, provider: job.provider, evaluator: job.evaluator, description: job.description, budget: job.budget.toString(), expiredAt: job.expiredAt.toString(), status: Number(job.status), deliverable: job.deliverable });
     }
-    return res.status(200).json({ ok: true, network: "bsc-mainnet", agent, provider, scanned: { from: first.toString(), to: counter.toString(), count: scan }, funded_jobs: jobs, guidance: "Re-read FUNDED status, provider, expiry and budget before accepting or submitting." });
+    return res.status(200).json({ ok: true, network: "bsc-testnet", chain_id: 97, agent, provider, scanned: { from: first.toString(), to: counter.toString(), count: scan }, funded_jobs: jobs, guidance: "Re-read FUNDED status, provider, expiry and budget before accepting or submitting." });
   } catch (error) { return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to scan funded jobs" }); }
 }
 
@@ -73,24 +73,56 @@ export async function actions(req: VercelRequest, res: VercelResponse) {
     if (jobError) throw new Error(jobError.message);
     if (!job) return res.status(404).json({ error: "Job is not indexed in the marketplace yet" });
     if (job.provider_agent_id !== agent.id) return res.status(403).json({ error: "This agent is not the assigned provider for the job" });
-    const chain = await readContract({ address: ERC8183_ADDRESSES.commerce, abi: COMMERCE_ABI, functionName: "getJob", args: [BigInt(chainJobId)] });
+
+    const current = String(job.status || "").toLowerCase();
+    const normalizedCurrent = current === "open" ? "funded" : current;
+
+    if (action === "submit") {
+      if (current !== "in_progress") return res.status(409).json({ error: `Cannot submit a job in ${current || "unknown"} state` });
+      const result = typeof payload?.result === "string" ? payload.result.trim() : "";
+      const txHash = typeof payload?.tx_hash === "string" ? payload.tx_hash.trim() : "";
+      if (!result || !/^0x[a-fA-F0-9]{64}$/.test(txHash)) return res.status(400).json({ error: "submit requires result and the confirmed transaction hash" });
+
+      const receipt = await providerPublicClient.getTransactionReceipt({ hash: txHash as Hex });
+      if (receipt.status !== "success") return res.status(409).json({ error: "Provider submission transaction reverted", tx_hash: txHash });
+      if (!receipt.to || receipt.to.toLowerCase() !== PROVIDER_ERC8183_TESTNET.commerce.toLowerCase()) return res.status(409).json({ error: "Submission transaction target is not the BSC Testnet Commerce contract" });
+
+      const chain = await readContract({ address: PROVIDER_ERC8183_TESTNET.commerce, abi: PROVIDER_COMMERCE_ABI, functionName: "getJob", args: [BigInt(chainJobId)] });
+      if (chain.id === 0n) return res.status(404).json({ error: "Chain job not found" });
+      if (chain.provider.toLowerCase() !== provider.toLowerCase()) return res.status(403).json({ error: "Chain provider does not match the assigned provider agent" });
+      if (Number(chain.expiredAt) * 1000 <= Date.now()) return res.status(409).json({ error: "Chain job has expired" });
+      if (Number(chain.status) !== 2) return res.status(409).json({ error: `Chain job is not SUBMITTED; current state is ${Number(chain.status)}` });
+
+      const expectedHash = keccak256(stringToBytes(result));
+      if (chain.deliverable.toLowerCase() !== expectedHash.toLowerCase()) return res.status(409).json({ error: "On-chain deliverable hash does not match the submitted result" });
+
+      const now = new Date().toISOString();
+      const { data: updated, error: updateError } = await supabase.from("jobs").update({ status: "submitted", deliverable: result, chain_status: "submitted", chain_tx_hash: txHash, chain_last_synced_at: now, updated_at: now }).eq("id", job.id).select("id,chain_job_id,status,provider_agent_id,mission_task_id,deliverable,chain_status,chain_tx_hash").single();
+      if (updateError) throw new Error(updateError.message);
+
+      const { data: task } = await supabase.from("mission_tasks").select("mission_id").eq("id", job.mission_task_id).maybeSingle();
+      if (task?.mission_id) {
+        await supabase.from("user_activity").insert({ mission_id: task.mission_id, job_id: job.id, type: "provider_submitted", title: "Agent submitted deliverable", description: `Verified BSC Testnet submission ${txHash}`, metadata: { tx_hash: txHash, chain_job_id: chainJobId, block_number: receipt.blockNumber.toString() } });
+        await supabase.from("notifications").insert({ mission_id: task.mission_id, task_id: job.mission_task_id, recipient: job.client_wallet || "", kind: "provider_submitted", title: "Agent submitted deliverable", body: `Job ${chainJobId} is SUBMITTED on BSC Testnet and ready for the policy/dispute window.` });
+      }
+      return res.status(200).json({ ok: true, action, job: updated, chain: { id: chain.id.toString(), status: Number(chain.status), deliverable: chain.deliverable, provider: chain.provider, client: chain.client, evaluator: chain.evaluator }, tx_hash: txHash, note: "Marketplace state advanced only after a successful BSC Testnet receipt and matching on-chain deliverable hash." });
+    }
+
+    const chain = await readContract({ address: PROVIDER_ERC8183_TESTNET.commerce, abi: PROVIDER_COMMERCE_ABI, functionName: "getJob", args: [BigInt(chainJobId)] });
     if (chain.id === 0n) return res.status(404).json({ error: "Chain job not found" });
     if (chain.provider.toLowerCase() !== provider.toLowerCase()) return res.status(403).json({ error: "Chain provider does not match the assigned provider agent" });
     if (Number(chain.status) !== 1) return res.status(409).json({ error: `Chain job is not FUNDED; current state is ${Number(chain.status)}` });
     if (Number(chain.expiredAt) * 1000 <= Date.now()) return res.status(409).json({ error: "Chain job has expired" });
-    const current = String(job.status || "").toLowerCase();
-    const normalizedCurrent = current === "open" ? "funded" : current;
     if (action === "accept" && normalizedCurrent !== "funded") return res.status(409).json({ error: `Cannot accept a job in ${current || "unknown"} state` });
     if (action !== "accept" && !transition.from.includes(current)) return res.status(409).json({ error: `Cannot ${action} a job in ${current || "unknown"} state` });
+
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (action === "accept") updates.status = "accepted";
     if (action === "start") updates.status = "in_progress";
-    if (action === "submit") { updates.status = "submitted"; updates.deliverable = payload?.deliverable || payload?.result || null; }
     const { data: updated, error: updateError } = await supabase.from("jobs").update(updates).eq("id", job.id).select("id,chain_job_id,status,provider_agent_id,mission_task_id,deliverable").single();
     if (updateError) throw new Error(updateError.message);
     if (action === "message" || action === "progress") await supabase.from("agent_messages").insert({ mission_id: null, task_id: job.mission_task_id, sender_type: "agent", sender_id: agent.id, body: String(payload?.body || payload?.message || "Provider runtime update") });
-    if (action === "submit") await supabase.from("notifications").insert({ mission_id: null, task_id: job.mission_task_id, recipient: provider, kind: "deliverable_submitted", title: "Agent submitted deliverable", body: `Job ${chainJobId} has been submitted for evaluation.` });
-    return res.status(200).json({ ok: true, action, job: updated, chain: { id: chain.id.toString(), status: Number(chain.status), budget: chain.budget.toString(), provider: chain.provider, client: chain.client, evaluator: chain.evaluator }, note: "Provider workflow state updated only after re-verifying the live FUNDED chain job. On-chain provider submission and settlement remain separate." });
+    return res.status(200).json({ ok: true, action, job: updated, chain: { id: chain.id.toString(), status: Number(chain.status), budget: chain.budget.toString(), provider: chain.provider, client: chain.client, evaluator: chain.evaluator }, note: "Provider workflow state updated only after re-verifying the live FUNDED chain job." });
   } catch (error) { return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to perform agent action" }); }
 }
 
