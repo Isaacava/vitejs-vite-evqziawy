@@ -11,6 +11,13 @@ export const PROVIDER_ERC8183_TESTNET = {
 export const PROVIDER_COMMERCE_ABI = [
   {
     type: "function",
+    name: "jobCounter",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
     name: "getJob",
     stateMutability: "view",
     inputs: [{ name: "jobId", type: "uint256" }],
