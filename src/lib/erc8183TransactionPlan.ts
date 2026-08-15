@@ -1,3 +1,4 @@
+import { encodeFunctionData, type Address } from "viem";
 import type { PreparedTransaction } from "./onchainExecutor";
 
 export type Erc8183PreparedResponse = {
@@ -14,15 +15,105 @@ export type Erc8183PlanStep = {
   transaction: PreparedTransaction | null;
 };
 
+const ROUTER_ABI = [{
+  type: "function",
+  name: "registerJob",
+  stateMutability: "nonpayable",
+  inputs: [
+    { name: "jobId", type: "uint256" },
+    { name: "policy", type: "address" },
+  ],
+  outputs: [],
+}] as const;
+
+const COMMERCE_ABI = [
+  {
+    type: "function",
+    name: "setBudget",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "jobId", type: "uint256" },
+      { name: "amount", type: "uint256" },
+      { name: "optParams", type: "bytes" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "fund",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "jobId", type: "uint256" },
+      { name: "expectedBudget", type: "uint256" },
+      { name: "optParams", type: "bytes" },
+    ],
+    outputs: [],
+  },
+] as const;
+
+const ERC20_ABI = [{
+  type: "function",
+  name: "approve",
+  stateMutability: "nonpayable",
+  inputs: [
+    { name: "spender", type: "address" },
+    { name: "amount", type: "uint256" },
+  ],
+  outputs: [{ name: "", type: "bool" }],
+}] as const;
+
 function toPrepared(tx?: { to?: string; data?: string; value?: string }): PreparedTransaction | null {
   if (!tx?.to || !tx?.data) return null;
   return { to: tx.to, data: tx.data, ...(tx.value ? { value: tx.value } : {}) };
 }
 
+function isAddress(value?: string): value is Address {
+  return /^0x[a-fA-F0-9]{40}$/.test(value || "");
+}
+
+function encodeJobTransactions(data: Erc8183PreparedResponse, chainJobId: string) {
+  const jobId = BigInt(chainJobId);
+  const commerce = data.transactions.set_budget?.to || data.transactions.fund?.to;
+  const router = data.transactions.register_job?.to;
+  const policy = data.transactions.register_job?.data_builder?.match(/policy[:=]\s*(0x[a-fA-F0-9]{40})/)?.[1];
+
+  if (!isAddress(commerce) || !isAddress(router)) {
+    throw new Error("ERC-8183 transaction targets are incomplete.");
+  }
+
+  const fallbackPolicy = "0x4f4678d4439fec812ac7674bb3efb4c8f5fb78a6" as Address;
+  const registerPolicy = isAddress(policy) ? policy : fallbackPolicy;
+
+  return {
+    register: {
+      to: router,
+      data: encodeFunctionData({ abi: ROUTER_ABI, functionName: "registerJob", args: [jobId, registerPolicy] }),
+    } satisfies PreparedTransaction,
+    setBudget: {
+      to: commerce,
+      data: encodeFunctionData({ abi: COMMERCE_ABI, functionName: "setBudget", args: [jobId, BigInt(data.payment.budget_raw), "0x"] }),
+    } satisfies PreparedTransaction,
+    fund: {
+      to: commerce,
+      data: encodeFunctionData({ abi: COMMERCE_ABI, functionName: "fund", args: [jobId, BigInt(data.payment.budget_raw), "0x"] }),
+    } satisfies PreparedTransaction,
+  };
+}
+
+function encodeApproval(data: Erc8183PreparedResponse): PreparedTransaction | null {
+  if (BigInt(data.payment.allowance_raw) >= BigInt(data.payment.budget_raw)) return null;
+  const token = data.payment.token;
+  const commerce = data.transactions.fund?.to;
+  if (!isAddress(token) || !isAddress(commerce)) throw new Error("Payment token or Commerce address is invalid.");
+  return {
+    to: token,
+    data: encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [commerce, BigInt(data.payment.budget_raw)] }),
+  };
+}
+
 export function buildErc8183Plan(data: Erc8183PreparedResponse, chainJobId?: string): Erc8183PlanStep[] {
-  const register = data.transactions.register_job;
-  const setBudget = data.transactions.set_budget;
-  const fund = data.transactions.fund;
+  const encoded = chainJobId ? encodeJobTransactions(data, chainJobId) : null;
+  const approval = encodeApproval(data);
 
   return [
     {
@@ -34,26 +125,26 @@ export function buildErc8183Plan(data: Erc8183PreparedResponse, chainJobId?: str
     {
       id: "register",
       label: "registerJob",
-      description: chainJobId ? `Register confirmed job ${chainJobId}.` : "Waiting for the createJob receipt before this transaction can be encoded.",
-      transaction: chainJobId ? toPrepared(register) : null,
+      description: encoded ? `Register confirmed job ${chainJobId}.` : "Waiting for the createJob receipt before this transaction can be encoded.",
+      transaction: encoded?.register || null,
     },
     {
       id: "set_budget",
       label: "setBudget",
-      description: chainJobId ? `Attach budget ${data.payment.budget_raw} to job ${chainJobId}.` : "Waiting for the confirmed jobId.",
-      transaction: chainJobId ? toPrepared(setBudget) : null,
+      description: encoded ? `Attach budget ${data.payment.budget_raw} to job ${chainJobId}.` : "Waiting for the confirmed jobId.",
+      transaction: encoded?.setBudget || null,
     },
     {
       id: "approve",
       label: "approve",
-      description: BigInt(data.payment.allowance_raw) >= BigInt(data.payment.budget_raw) ? "Existing allowance is sufficient; no approval transaction is required." : "Approve the Commerce contract to spend the mission payment token.",
-      transaction: BigInt(data.payment.allowance_raw) >= BigInt(data.payment.budget_raw) ? null : toPrepared(data.transactions.approve),
+      description: approval ? "Approve Commerce to spend the mission payment token." : "Existing allowance is sufficient; no approval transaction is required.",
+      transaction: approval,
     },
     {
       id: "fund",
       label: "fund",
-      description: chainJobId ? `Move the approved budget into the escrow for job ${chainJobId}.` : "Waiting for the confirmed jobId.",
-      transaction: chainJobId ? toPrepared(fund) : null,
+      description: encoded ? `Move the approved budget into escrow for job ${chainJobId}.` : "Waiting for the confirmed jobId.",
+      transaction: encoded?.fund || null,
     },
   ];
 }
