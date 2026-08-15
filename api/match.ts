@@ -31,6 +31,15 @@ type ReputationRow = {
   source: string;
 };
 
+const WEIGHTS = {
+  capability: 35,
+  verification: 20,
+  endpointLiveness: 15,
+  completion: 10,
+  jobVolume: 5,
+  reputation: 15,
+} as const;
+
 function clamp(value: number) {
   return Math.max(0, Math.min(100, value));
 }
@@ -55,45 +64,80 @@ function scoreAgent(
         ? 55
         : 0;
 
+  const livenessAvailable = Boolean(endpoint);
   const liveness = endpoint?.status === "online"
     ? 100
     : endpoint?.status === "degraded"
       ? 60
       : endpoint?.status === "offline"
         ? 15
-        : 35;
+        : 0;
 
   const onChainScores = reputationRows
     .filter((row) => row.source !== "platform")
     .map((row) => clamp(Number(row.score)))
     .filter((score) => Number.isFinite(score));
 
-  const reputation = onChainScores.length
+  const reputationAvailable = onChainScores.length > 0;
+  const reputation = reputationAvailable
     ? onChainScores.reduce((sum, score) => sum + score, 0) / onChainScores.length
-    : 50;
+    : 0;
 
-  // New ERC-8004 agents are intentionally not penalized for having no history.
-  const volume = onChainScores.length ? clamp(Math.log10(onChainScores.length + 1) * 60) : 0;
-  const completion = onChainScores.length ? reputation : 50;
+  const volumeAvailable = onChainScores.length > 0;
+  const volume = volumeAvailable ? clamp(Math.log10(onChainScores.length + 1) * 60) : 0;
+
+  // Until ERC-8183 terminal outcomes are available, completion is unavailable rather than neutral.
+  const completionAvailable = reputationAvailable;
+  const completion = completionAvailable ? reputation : 0;
 
   const score =
-    capability * 0.35 +
-    verification * 0.20 +
-    liveness * 0.15 +
-    completion * 0.10 +
-    volume * 0.05 +
-    reputation * 0.15;
+    capability * (WEIGHTS.capability / 100) +
+    verification * (WEIGHTS.verification / 100) +
+    liveness * (WEIGHTS.endpointLiveness / 100) +
+    completion * (WEIGHTS.completion / 100) +
+    volume * (WEIGHTS.jobVolume / 100) +
+    reputation * (WEIGHTS.reputation / 100);
+
+  const scoreMax =
+    WEIGHTS.capability +
+    WEIGHTS.verification +
+    (livenessAvailable ? WEIGHTS.endpointLiveness : 0) +
+    (completionAvailable ? WEIGHTS.completion : 0) +
+    (volumeAvailable ? WEIGHTS.jobVolume : 0) +
+    (reputationAvailable ? WEIGHTS.reputation : 0);
+
+  const evidenceCount = [reputationAvailable, completionAvailable, livenessAvailable].filter(Boolean).length;
+  const scoreConfidence = evidenceCount >= 2 ? "high" : evidenceCount === 1 ? "medium" : "low";
+  const normalizedScore = scoreMax > 0 ? Math.round((score / scoreMax) * 10000) / 100 : 0;
+  const reasons: string[] = [];
+
+  if (capability === 100) reasons.push("Strong capability match");
+  else if (intent.category === "other") reasons.push("General DeFi capability match");
+  if (verification >= 70) reasons.push(`ERC-8004 identity ${agent.verification_status}`);
+  if (endpoint?.status === "online") reasons.push("Endpoint is healthy");
+  if (reputationAvailable) reasons.push("On-chain reputation evidence available");
+  if (completionAvailable) reasons.push("Verified outcome history available");
+  if (!reputationAvailable) reasons.push("Reputation history not yet available");
+  if (!completionAvailable) reasons.push("Completion history not yet available");
 
   return {
-    score: Math.round(score * 100) / 100,
+    score: normalizedScore,
+    scoreMax,
+    scoreConfidence,
     breakdown: {
-      capability: Math.round(capability),
-      verification: Math.round(verification),
-      endpointLiveness: Math.round(liveness),
-      completion: Math.round(completion),
-      jobVolume: Math.round(volume),
-      reputation: Math.round(reputation),
+      capability: Math.round(capability * WEIGHTS.capability / 100),
+      verification: Math.round(verification * WEIGHTS.verification / 100),
+      endpointLiveness: Math.round(liveness * WEIGHTS.endpointLiveness / 100),
+      completion: Math.round(completion * WEIGHTS.completion / 100),
+      jobVolume: Math.round(volume * WEIGHTS.jobVolume / 100),
+      reputation: Math.round(reputation * WEIGHTS.reputation / 100),
     },
+    evidence: {
+      reputationAvailable,
+      completionAvailable,
+      livenessAvailable,
+    },
+    reasons: reasons.slice(0, 4),
   };
 }
 
@@ -156,13 +200,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     bestMatch: matches[0] ?? null,
     alternatives: matches.slice(1),
     scoring: {
-      capability: 0.35,
-      verification: 0.20,
-      endpointLiveness: 0.15,
-      completion: 0.10,
-      jobVolume: 0.05,
-      reputation: 0.15,
-      historyPolicy: "New agents receive a neutral history score until real job outcomes exist.",
+      weights: WEIGHTS,
+      historyPolicy: "Missing reputation, completion, and liveness evidence contributes no points and reduces the available-score ceiling. New agents remain matchable on capability, availability and identity evidence.",
     },
   });
 }
