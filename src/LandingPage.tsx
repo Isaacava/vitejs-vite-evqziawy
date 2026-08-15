@@ -19,7 +19,7 @@ export default function LandingPage() {
   const goal = examples[0];
   const typed = useTypewriter(examples);
   const displayGoal = useMemo(() => typed || goal, [goal, typed]);
-  const ready = typed.length >= goal.length;
+  const [instrumentReady, setInstrumentReady] = useState(false);
 
   useEffect(() => {
     const elements = Array.from(document.querySelectorAll<HTMLElement>(".landing .reveal"));
@@ -47,6 +47,11 @@ export default function LandingPage() {
     return () => observer.disconnect();
   }, []);
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => setInstrumentReady(true), 280);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   return (
     <main className="landing">
       <nav className="land-nav">
@@ -64,7 +69,7 @@ export default function LandingPage() {
           <a href="#workflow">How it works</a>
           <a href="#builders">For builders</a>
         </div>
-        <a className="land-nav-cta" href="/app">Launch marketplace</a>
+        <a className="land-nav-cta" href="/app" aria-label="Launch the AgentMarket marketplace">Launch marketplace</a>
       </nav>
 
       <section className="hero-band">
@@ -90,7 +95,7 @@ export default function LandingPage() {
             </div>
           </div>
 
-          <div className={`match-instrument reveal ${ready ? "is-ready" : ""}`}>
+          <div className={`match-instrument ${instrumentReady ? "is-ready" : ""}`} aria-label="Live agent matching example">
             <div className="instrument-top">
               <span>MATCH INSTRUMENT</span>
               <span>LIVE</span>
