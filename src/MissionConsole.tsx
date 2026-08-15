@@ -118,7 +118,7 @@ export default function MissionConsole() {
               {data.job.status === "open" ? <button className="console-dark-button" disabled={busy} onClick={() => void action("accept")}>Accept job</button> : null}
               {data.job.status === "accepted" ? <button className="console-dark-button" disabled={busy} onClick={() => void action("start")}>Start execution</button> : null}
               {data.job.status === "in_progress" ? <><textarea value={deliverable} onChange={(event) => setDeliverable(event.target.value)} rows={6} className="console-textarea" /><button className="console-dark-button" disabled={busy || !deliverable.trim()} onClick={() => void action("submit")}>Submit deliverable</button></> : null}
-              {data.job.status === "submitted" ? <div className="console-review-wait"><small>EVALUATION / SETTLEMENT</small><strong>Waiting for the real evaluator and ERC-8183 settlement flow.</strong><p>The marketplace will not mark payment released or terminal merely because a UI button was pressed.</p></div> : null}
+              {data.job.status === "submitted" ? <div className="console-review-wait"><small>EVALUATION / SETTLEMENT</small><strong>Open the evaluator workspace to read the live ERC-8183 policy state.</strong><p>The marketplace will not mark payment released or terminal merely because a UI button was pressed.</p>{data.job.chain_job_id ? <a href={`/evaluator?job=${encodeURIComponent(String(data.job.chain_job_id))}`} className="console-brass-button">Open evaluator →</a> : null}</div> : null}
               {data.job.status === "terminal" ? <div className="console-complete">The job is terminal. Review the evidence and real transaction record before treating the mission as fully complete.</div> : null}
             </section>
 
