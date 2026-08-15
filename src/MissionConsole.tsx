@@ -23,7 +23,7 @@ export default function MissionConsole() {
 
   const load = useCallback(async () => {
     if (!jobId) return;
-    const response = await fetch(`/api/jobs?id=${encodeURIComponent(jobId)}`);
+    const response = await fetch(`/api/jobs?id=${encodeURIComponent(jobId)}`, { credentials: "include" });
     const body = await response.json();
     if (!response.ok) throw new Error(body?.error || "Unable to load job");
     setData(body as JobView);
@@ -41,6 +41,7 @@ export default function MissionConsole() {
     try {
       const response = await fetch("/api/jobs", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ job_id: jobId, action: name, deliverable }),
       });
@@ -105,8 +106,14 @@ export default function MissionConsole() {
               {canPrepare && (
                 <div className="console-chain-callout">
                   <div><small>ERC-8183</small><strong>Turn this mission into a wallet-ready job.</strong><span>Create → policy → budget → approve → fund.</span></div>
-                  <a href={`/prepare?mission=${encodeURIComponent(data.mission?.id || "")}`} className="console-brass-button">Prepare on-chain →</a>
+                  <div className="console-button-row">
+                    <a href={`/prepare?mission=${encodeURIComponent(data.mission?.id || "")}`} className="console-brass-button">Prepare on-chain →</a>
+                    <a href={`/prepare/execute?mission=${encodeURIComponent(data.mission?.id || "")}`} className="console-dark-button">Open wallet execution →</a>
+                  </div>
                 </div>
+              )}
+              {data.job.chain_job_id && data.job.status === "open" && (
+                <a href={`/prepare/execute?mission=${encodeURIComponent(data.mission?.id || "")}`} className="console-dark-button">Continue wallet execution →</a>
               )}
               {data.job.status === "open" ? <button className="console-dark-button" disabled={busy} onClick={() => void action("accept")}>Accept job</button> : null}
               {data.job.status === "accepted" ? <button className="console-dark-button" disabled={busy} onClick={() => void action("start")}>Start execution</button> : null}
