@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 
-import LandingPage from "./LandingPage";
+import LandingEntry from "./LandingEntry";
 import MarketplaceWorkspace from "./MarketplaceWorkspace";
 import MissionConsole from "./MissionConsole";
 import OnchainPrepare from "./OnchainPrepare";
@@ -19,7 +19,7 @@ import ProviderSubmit from "./ProviderSubmit";
 import LifecycleActions from "./LifecycleActions";
 import AgentRegistration from "./AgentRegistration";
 import AgentInbox from "./AgentInbox";
-import UserDashboard from "./UserDashboard";
+import DashboardShell from "./DashboardShell";
 import SessionPermissions from "./SessionPermissions";
 import AgentEvidence from "./AgentEvidence";
 import "./index.css";
@@ -85,13 +85,13 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     ) : inboxMode ? (
       <AgentInbox />
     ) : dashboardMode ? (
-      <UserDashboard />
+      <DashboardShell />
     ) : permissionsMode ? (
       <SessionPermissions />
     ) : appMode ? (
       <MarketplaceWorkspace />
     ) : (
-      <LandingPage />
+      <LandingEntry />
     )}
   </React.StrictMode>
 );
