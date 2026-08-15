@@ -79,6 +79,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       abi: PROVIDER_COMMERCE_ABI,
       functionName: "getJob",
       args: [BigInt(jobId)],
+      authorizationList: [],
     }) as unknown as ChainJob;
 
     if (!chainJob || chainJob.id === 0n) return res.status(404).json({ error: "ERC-8183 job not found", job_id: jobId });
