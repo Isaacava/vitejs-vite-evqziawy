@@ -77,7 +77,7 @@ jobs:
             "0x9c01845705b3078aa2e8cff7520a6376fd766de5"
           )
           for address in "${forbidden[@]}"; do
-            if grep -Rni --exclude-dir=.git --exclude='package-lock.json' "$address" src api/testnet agents; then
+            if grep -Rni --exclude-dir=.git --exclude='package-lock.json' "$address" src api/_testnet agents; then
               echo "Found forbidden Mainnet contract address in a Testnet surface: $address"
               exit 1
             fi
@@ -87,8 +87,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -Rni --exclude-dir=.git --exclude='package-lock.json' "bsc-testnet" src api/testnet agents >/dev/null
-          grep -Rni --exclude-dir=.git --exclude='package-lock.json' "chain_id.*97\|chainId.*97\|0x61" src api/testnet agents >/dev/null
+          grep -Rni --exclude-dir=.git --exclude='package-lock.json' "bsc-testnet" src api/_testnet agents >/dev/null
+          grep -Rni --exclude-dir=.git --exclude='package-lock.json' "chain_id.*97\|chainId.*97\|0x61" src api/_testnet agents >/dev/null
 
       - name: Verify ERC-8183 Testnet lifecycle surfaces are present
         shell: bash
@@ -104,10 +104,23 @@ jobs:
             "voteReject"
             "claimRefund"
           )
-          surfaces=(src api/testnet agents)
+          surfaces=(src api/_testnet agents)
           for method in "${required[@]}"; do
             if ! grep -Rni --exclude-dir=.git --exclude='package-lock.json' "$method" "${surfaces[@]}" >/dev/null; then
               echo "Missing required ERC-8183 Testnet lifecycle surface: $method"
               exit 1
             fi
           done
+
+      - name: Verify Vercel Hobby Function budget
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t functions < <(find api -type f -name '*.ts' ! -name '_*.ts' | sort)
+          count=${#functions[@]}
+          echo "Detected deployable Vercel API entrypoints: $count"
+          printf '%s\n' "${functions[@]}"
+          if [ "$count" -gt 12 ]; then
+            echo "Vercel Hobby limit exceeded: $count deployable Functions (maximum 12)."
+            exit 1
+          fi
