@@ -16,7 +16,8 @@ export type PreparedTransaction = {
 
 export type ReceiptLog = {
   address: string;
-  topics: string[];
+  topics: `0x${string}`[];
+  data: `0x${string}`;
 };
 
 export type ConfirmedTransaction = {
@@ -61,7 +62,7 @@ export async function waitForTransaction(hash: string, timeoutMs = 180_000, poll
     }) as null | {
       status?: string;
       blockNumber?: string;
-      logs?: Array<{ address?: string; topics?: string[] }>;
+      logs?: Array<{ address?: string; topics?: string[]; data?: string }>;
     };
     if (receipt) {
       const status = receipt.status?.toLowerCase();
@@ -69,7 +70,8 @@ export async function waitForTransaction(hash: string, timeoutMs = 180_000, poll
       if (!receipt.blockNumber) throw new Error("Confirmed transaction is missing a block number.");
       const logs: ReceiptLog[] = (receipt.logs || []).map((log) => ({
         address: log.address || "",
-        topics: log.topics || [],
+        topics: (log.topics || []) as `0x${string}`[],
+        data: (log.data || "0x") as `0x${string}`,
       }));
       return {
         hash,
