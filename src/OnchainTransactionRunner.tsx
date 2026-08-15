@@ -1,6 +1,12 @@
 import { useState } from "react";
 import { sendAndConfirm, type PreparedTransaction } from "./lib/onchainExecutor";
 
+export type ConfirmedRunnerReceipt = {
+  hash: string;
+  blockNumber: string;
+  logs?: Array<{ topics: readonly `0x${string}`[]; data: `0x${string}` }>;
+};
+
 export type TransactionStep = {
   id: string;
   label: string;
@@ -9,9 +15,14 @@ export type TransactionStep = {
   disabled?: boolean;
 };
 
-export default function OnchainTransactionRunner({ steps }: { steps: TransactionStep[] }) {
+type Props = {
+  steps: TransactionStep[];
+  onConfirmed?: (step: TransactionStep, receipt: ConfirmedRunnerReceipt) => void;
+};
+
+export default function OnchainTransactionRunner({ steps, onConfirmed }: Props) {
   const [running, setRunning] = useState<string | null>(null);
-  const [results, setResults] = useState<Record<string, { hash: string; blockNumber: string }>>({});
+  const [results, setResults] = useState<Record<string, ConfirmedRunnerReceipt>>({});
   const [error, setError] = useState("");
 
   async function run(step: TransactionStep) {
@@ -20,7 +31,9 @@ export default function OnchainTransactionRunner({ steps }: { steps: Transaction
     setError("");
     try {
       const receipt = await sendAndConfirm(step.tx);
-      setResults((current) => ({ ...current, [step.id]: receipt }));
+      const confirmed = receipt as ConfirmedRunnerReceipt;
+      setResults((current) => ({ ...current, [step.id]: confirmed }));
+      onConfirmed?.(step, confirmed);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Transaction failed");
     } finally {
@@ -38,7 +51,7 @@ export default function OnchainTransactionRunner({ steps }: { steps: Transaction
           <article className="console-plan-row" key={step.id}>
             <div>
               <small>{String(index + 1).padStart(2, "0")} / {step.label}</small>
-              <strong>{result ? "CONFIRMED" : step.tx ? "READY" : "WAITING"}</strong>
+              <strong>{result ? "CONFIRMED" : step.tx && !step.disabled ? "READY" : "WAITING"}</strong>
             </div>
             <p>{step.description}</p>
             {step.tx && !result && (
