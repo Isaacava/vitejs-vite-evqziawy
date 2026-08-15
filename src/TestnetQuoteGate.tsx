@@ -22,7 +22,6 @@ export default function TestnetQuoteGate() {
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
   const missionId = params.get("mission") || "";
   const quoteId = params.get("quote") || "";
-  const marketplaceJobId = params.get("job") || "";
   const [result, setResult] = useState<GateResponse | null>(null);
   const [remaining, setRemaining] = useState<number | null>(null);
   const [error, setError] = useState("");
