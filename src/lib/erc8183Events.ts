@@ -14,22 +14,37 @@ const JOB_CREATED_ABI = [{
   anonymous: false,
 }] as const;
 
-export function extractCreatedJobId(logs: Array<{ topics: readonly Hex[]; data: Hex }>, commerceAddress: string) {
+type ReceiptLog = { topics: readonly Hex[]; data: Hex };
+
+type DecodeTopics = [Hex, ...Hex[]];
+
+function decodeJobCreated(log: ReceiptLog) {
+  if (log.topics.length === 0) return null;
+  const topics = [...log.topics] as DecodeTopics;
+  return decodeEventLog({
+    abi: JOB_CREATED_ABI,
+    data: log.data,
+    topics,
+  });
+}
+
+export function extractCreatedJobId(logs: ReceiptLog[], commerceAddress: string) {
+  const expectedCommerce = commerceAddress.trim().toLowerCase();
   const match = logs.find((log) => {
     try {
-      const decoded = decodeEventLog({ abi: JOB_CREATED_ABI, data: log.data, topics: log.topics });
-      return decoded.eventName === "JobCreated";
+      const decoded = decodeJobCreated(log);
+      return decoded?.eventName === "JobCreated";
     } catch {
       return false;
     }
   });
 
   if (!match) throw new Error("The createJob receipt did not contain a JobCreated event.");
-  const decoded = decodeEventLog({ abi: JOB_CREATED_ABI, data: match.data, topics: match.topics });
-  if (decoded.eventName !== "JobCreated") throw new Error("Unexpected ERC-8183 event in receipt.");
-  if (commerceAddress && commerceAddress.toLowerCase() !== "") {
-    // Caller is responsible for checking the receipt's `to` address before calling this helper.
-  }
+  const decoded = decodeJobCreated(match);
+  if (!decoded || decoded.eventName !== "JobCreated") throw new Error("Unexpected ERC-8183 event in receipt.");
+
+  if (!expectedCommerce) throw new Error("Commerce contract address is required to validate the receipt target.");
+
   return {
     jobId: decoded.args.jobId.toString(),
     client: decoded.args.client,
