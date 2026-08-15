@@ -79,9 +79,9 @@ export default function TestnetJobHistory() {
           <div>
             <span className="console-kicker">DEVELOPMENT / BSC TESTNET / CHAIN 97</span>
             <h1>Every Testnet job, one place.</h1>
-            <p>Recover unfinished jobs after a browser close or refresh. AgentMarket reads the stored marketplace state and hands recovery back to the real Testnet transaction path.</p>
+            <p>Recover unfinished jobs after a browser close or refresh. AgentMarket verifies the real Testnet Commerce job before showing it here.</p>
           </div>
-          <div className="console-state"><small>ENVIRONMENT</small><strong>TESTNET ONLY</strong><span>{jobs.length} jobs recorded</span></div>
+          <div className="console-state"><small>ENVIRONMENT</small><strong>TESTNET ONLY</strong><span>{jobs.length} verified Testnet jobs</span></div>
         </section>
 
         <section className="console-grid">
@@ -90,23 +90,22 @@ export default function TestnetJobHistory() {
         </section>
 
         {loading ? (
-          <section className="console-card"><p className="console-evidence">Loading Testnet jobs…</p></section>
+          <section className="console-card"><p className="console-evidence">Loading verified Testnet jobs…</p></section>
         ) : jobs.length === 0 ? (
-          <section className="console-card"><p className="console-evidence">No marketplace jobs are recorded for this account yet. Start from the Testnet sandbox.</p><a className="console-brass-button" href="/testnet" style={{ textDecoration: "none", display: "inline-flex" }}>Open Testnet sandbox →</a></section>
+          <section className="console-card"><p className="console-evidence">No verified Testnet jobs are recorded for this account yet. Start from the Testnet sandbox.</p><a className="console-brass-button" href="/testnet" style={{ textDecoration: "none", display: "inline-flex" }}>Open Testnet sandbox →</a></section>
         ) : (
           <section className="console-grid">
             {jobs.map((job) => (
               <article className="console-card" key={job.id}>
-                <div className="console-section-head"><span>{STATUS_LABELS[job.job_status] || job.job_status.toUpperCase()}</span><b>{job.chain_status || "NO CHAIN STATE"}</b></div>
+                <div className="console-section-head"><span>{STATUS_LABELS[job.job_status] || job.job_status.toUpperCase()}</span><b>{job.chain_status || "UNKNOWN"}</b></div>
                 <h2 style={{ marginTop: 0 }}>{job.mission_title}</h2>
                 <div className="console-stat"><span>Task</span><strong>{job.task_title}</strong></div>
                 <div className="console-stat"><span>Marketplace job</span><strong>{compact(job.id)}</strong></div>
-                <div className="console-stat"><span>Chain job</span><strong>{job.chain_job_id == null ? "Not created" : `#${job.chain_job_id}`}</strong></div>
+                <div className="console-stat"><span>Chain job</span><strong>#{job.chain_job_id}</strong></div>
                 <div className="console-stat"><span>Budget</span><strong>{job.budget ?? "—"}</strong></div>
                 <div className="console-stat"><span>Updated</span><strong>{formatDate(job.updated_at)}</strong></div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
-                  {job.recoverable && job.chain_job_id != null && <a className="console-brass-button" href={`/testnet/recover?job=${encodeURIComponent(job.id)}`} style={{ textDecoration: "none", display: "inline-flex" }}>Resume job →</a>}
-                  {job.chain_job_id != null && <a className="console-brass-button" href={`/testnet/execute?mission=${encodeURIComponent(job.mission_id || "")}&quote=&job=${encodeURIComponent(job.id)}`} style={{ textDecoration: "none", display: "inline-flex", opacity: job.recoverable ? 0.7 : 1 }}>Open execution record</a>}
+                  {job.recoverable && <a className="console-brass-button" href={`/testnet/recover?job=${encodeURIComponent(job.id)}`} style={{ textDecoration: "none", display: "inline-flex" }}>Resume job →</a>}
                 </div>
                 <p className="console-evidence">Created {formatDate(job.created_at)} · Funded {formatDate(job.funded_at)} · Submitted {formatDate(job.submitted_at)} · Terminal {formatDate(job.terminal_at)}</p>
               </article>
