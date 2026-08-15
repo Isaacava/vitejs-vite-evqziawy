@@ -62,20 +62,36 @@ export async function actions(req: VercelRequest, res: VercelResponse) {
     const { data: agent, error: agentError } = await supabase.from("agents").select("id,agent_id,owner").eq("agent_id", agentId).maybeSingle();
     if (agentError) throw new Error(agentError.message);
     if (!agent) return res.status(404).json({ error: "Agent not found" });
-    address(agent.owner, "agent.owner");
-    const { data: job, error: jobError } = await supabase.from("jobs").select("id,chain_job_id,status,provider_agent_id,mission_task_id").eq("chain_job_id", Number(chainJobId)).maybeSingle();
+    const provider = address(agent.owner, "agent.owner");
+    const { data: job, error: jobError } = await supabase.from("jobs").select("id,chain_job_id,status,provider_agent_id,mission_task_id,client_wallet,description,budget,payment_token").eq("chain_job_id", Number(chainJobId)).maybeSingle();
     if (jobError) throw new Error(jobError.message);
     if (!job) return res.status(404).json({ error: "Job is not indexed in the marketplace yet" });
     if (job.provider_agent_id !== agent.id) return res.status(403).json({ error: "This agent is not the assigned provider for the job" });
+    const chain = await readContract({ address: ERC8183_ADDRESSES.commerce, abi: COMMERCE_ABI, functionName: "getJob", args: [BigInt(chainJobId)] });
+    if (chain.id === 0n) return res.status(404).json({ error: "Chain job not found" });
+    if (chain.provider.toLowerCase() !== provider.toLowerCase()) return res.status(403).json({ error: "Chain provider does not match the assigned provider agent" });
+    if (Number(chain.status) !== 1) return res.status(409).json({ error: `Chain job is not FUNDED; current state is ${Number(chain.status)}` });
+    if (Number(chain.expiredAt) * 1000 <= Date.now()) return res.status(409).json({ error: "Chain job has expired" });
     const current = String(job.status || "").toLowerCase();
-    if (!transition.from.includes(current)) return res.status(409).json({ error: `Cannot ${action} a job in ${current || "unknown"} state` });
+    const normalizedCurrent = current === "open" ? "funded" : current;
+    if (action === "accept" && normalizedCurrent !== "funded") return res.status(409).json({ error: `Cannot accept a job in ${current || "unknown"} state` });
+    if (action !== "accept" && !transition.from.includes(current)) return res.status(409).json({ error: `Cannot ${action} a job in ${current || "unknown"} state` });
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
-    if (action !== "progress" && action !== "message") updates.status = transition.to;
-    if (action === "submit") updates.deliverable = payload?.deliverable || payload?.result || null;
+    if (action === "accept") updates.status = "accepted";
+    if (action === "start") updates.status = "in_progress";
+    if (action === "submit") {
+      updates.status = "submitted";
+      updates.deliverable = payload?.deliverable || payload?.result || null;
+    }
     const { data: updated, error: updateError } = await supabase.from("jobs").update(updates).eq("id", job.id).select("id,chain_job_id,status,provider_agent_id,mission_task_id,deliverable").single();
     if (updateError) throw new Error(updateError.message);
-    if (action === "message" || action === "progress") await supabase.from("messages").insert({ job_id: job.id, sender: agent.id, kind: action, body: payload?.body || payload?.message || payload, metadata: { source: "agent_runtime" } });
-    return res.status(200).json({ ok: true, action, job: updated, note: "Application state updated; chain submission and settlement remain separate." });
+    if (action === "message" || action === "progress") {
+      await supabase.from("agent_messages").insert({ mission_id: null, task_id: job.mission_task_id, sender_type: "agent", sender_id: agent.id, body: String(payload?.body || payload?.message || "Provider runtime update") });
+    }
+    if (action === "submit") {
+      await supabase.from("notifications").insert({ mission_id: null, task_id: job.mission_task_id, recipient: provider, kind: "deliverable_submitted", title: "Agent submitted deliverable", body: `Job ${chainJobId} has been submitted for evaluation.` });
+    }
+    return res.status(200).json({ ok: true, action, job: updated, chain: { id: chain.id.toString(), status: Number(chain.status), budget: chain.budget.toString(), provider: chain.provider, client: chain.client, evaluator: chain.evaluator }, note: "Provider workflow state updated only after re-verifying the live FUNDED chain job. On-chain provider submission and settlement remain separate." });
   } catch (error) { return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to perform agent action" }); }
 }
 
@@ -119,7 +135,7 @@ export async function riskRuntime(req: VercelRequest, res: VercelResponse) {
     const result = evaluate(input);
     const now = new Date().toISOString();
     const evidence = { source: "risk_guardian_runtime", version: "1", decision: result.decision, action: input.action, reasons: result.reasons, proposal: input, evaluated_at: now, server_signing: false };
-    await supabase.from("messages").insert({ task_id: job.mission_task_id, sender: "risk-guardian", recipient: "mission", body: `Risk Guardian: ${result.decision}. ${result.reasons.join(" ")}`, created_at: now });
+    await supabase.from("agent_messages").insert({ mission_id: null, task_id: job.mission_task_id, sender_type: "agent", sender_id: "risk-guardian", body: `Risk Guardian: ${result.decision}. ${result.reasons.join(" ")}` });
     const { data: evaluation } = await supabase.from("evaluations").upsert({ job_id: job.id, verdict: "pending", evidence, notes: `Risk Guardian decision: ${result.decision}`, updated_at: now }, { onConflict: "job_id" }).select("id,verdict,evidence").single();
     return res.status(200).json({ ok: true, job: { id: job.id, chain_job_id: job.chain_job_id, status: job.status }, decision: result.decision, reasons: result.reasons, execution: { permitted: result.decision === "approve", user_confirmation_required: result.decision === "user_approval", server_signing: false }, evaluation_id: evaluation?.id || null });
   } catch (error) { return res.status(400).json({ error: error instanceof Error ? error.message : "Risk Guardian runtime failed" }); }
