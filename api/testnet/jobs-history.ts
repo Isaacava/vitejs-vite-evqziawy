@@ -80,6 +80,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           abi: COMMERCE_ABI,
           functionName: "getJob",
           args: [BigInt(job.chain_job_id)],
+          authorizationList: [],
         });
       } catch {
         continue;
