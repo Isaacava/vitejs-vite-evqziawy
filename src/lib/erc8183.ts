@@ -17,7 +17,8 @@ import {
  * ============================================================
  * BNB AGENTIC COMMERCE CONTRACTS (ERC-8183)
  * Network is selected by src/lib/network.ts.
- * The marketplace-testnet branch is hard-locked to BSC Testnet.
+ * Production defaults to BSC mainnet; preview/testing can use
+ * BSC testnet with VITE_BSC_NETWORK=testnet plus contract overrides.
  * ============================================================
  */
 
@@ -45,20 +46,6 @@ export const COMMERCE_ABI = [
   },
   {
     type: "function",
-    name: "paymentToken",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "address" }],
-  },
-  {
-    type: "function",
-    name: "jobCounter",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-  {
-    type: "function",
     name: "setBudget",
     stateMutability: "nonpayable",
     inputs: [
@@ -79,6 +66,56 @@ export const COMMERCE_ABI = [
     ],
     outputs: [],
   },
+  {
+    type: "function",
+    name: "submit",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "jobId", type: "uint256" },
+      { name: "deliverable", type: "bytes32" },
+      { name: "optParams", type: "bytes" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "paymentToken",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "jobCounter",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "getJob",
+    stateMutability: "view",
+    inputs: [{ name: "jobId", type: "uint256" }],
+    outputs: [
+      {
+        name: "",
+        type: "tuple",
+        components: [
+          { name: "id", type: "uint256" },
+          { name: "client", type: "address" },
+          { name: "provider", type: "address" },
+          { name: "evaluator", type: "address" },
+          { name: "description", type: "string" },
+          { name: "budget", type: "uint256" },
+          { name: "expiredAt", type: "uint256" },
+          { name: "status", type: "uint8" },
+          { name: "hook", type: "address" },
+          { name: "submittedAt", type: "uint256" },
+          { name: "deliverable", type: "bytes32" },
+        ],
+      },
+    ],
+  },
 ] as const;
 
 export const ROUTER_ABI = [
@@ -89,6 +126,37 @@ export const ROUTER_ABI = [
     inputs: [
       { name: "jobId", type: "uint256" },
       { name: "policy", type: "address" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "jobPolicy",
+    stateMutability: "view",
+    inputs: [{ name: "jobId", type: "uint256" }],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "policyWhitelist",
+    stateMutability: "view",
+    inputs: [{ name: "policy", type: "address" }],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "commerce",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "settle",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "jobId", type: "uint256" },
+      { name: "optParams", type: "bytes" },
     ],
     outputs: [],
   },
