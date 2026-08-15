@@ -9,6 +9,7 @@ import OnchainExecute from "./OnchainExecute";
 import TestnetQuoteExecution from "./TestnetQuoteExecution";
 import TestnetSandbox from "./TestnetSandbox";
 import TestnetRecovery from "./TestnetRecovery";
+import TestnetJobHistory from "./TestnetJobHistory";
 import EvaluatorConsole from "./EvaluatorConsole";
 import ProviderSubmit from "./ProviderSubmit";
 import LifecycleActions from "./LifecycleActions";
@@ -31,6 +32,7 @@ const prepareMode = window.location.pathname === "/prepare";
 const testnetMode = window.location.pathname === "/testnet";
 const testnetQuoteExecuteMode = window.location.pathname === "/testnet/execute";
 const testnetRecoveryMode = window.location.pathname === "/testnet/recover";
+const testnetHistoryMode = window.location.pathname === "/testnet/jobs";
 const executeMode = window.location.pathname === "/prepare/execute";
 const evaluatorMode = window.location.pathname === "/evaluator";
 const providerSubmitMode = window.location.pathname === "/provider/submit";
@@ -44,6 +46,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       <TestnetQuoteExecution />
     ) : testnetRecoveryMode ? (
       <TestnetRecovery />
+    ) : testnetHistoryMode ? (
+      <TestnetJobHistory />
     ) : testnetMode ? (
       <TestnetSandbox />
     ) : executeMode && missionId ? (
