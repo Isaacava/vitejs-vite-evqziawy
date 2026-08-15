@@ -22,7 +22,7 @@ function evmAddress(value: unknown, field: string) {
 }
 
 function list(value: unknown) {
-  if (!Array.isArray(value)) return [];
+  if (!Array.isArray(value)) return [] as string[];
   return [...new Set(value.filter((item): item is string => typeof item === "string" && item.trim()).map((item) => item.trim()))].slice(0, 20);
 }
 
@@ -57,7 +57,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const now = new Date().toISOString();
-    const agentPayload = {
+    const agentPayload: Record<string, unknown> = {
       agent_id: agentId,
       owner,
       name,
@@ -73,15 +73,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       metadata: { registration: "self_service", verification: "pending_wallet_control" },
     };
 
-    let agentRow;
+    let agentRow: { id: string; agent_id: string; name: string; source: string; verification_status: string; status: string };
     if (existing) {
-      const { data, error } = await supabase.from("agents").update(agentPayload).eq("id", existing.id).select("id,agent_id,name,source,verification_status,status").single();
+      const { data, error } = await supabase.from("agents").update(agentPayload as never).eq("id", existing.id).select("id,agent_id,name,source,verification_status,status").single();
       if (error) throw new Error(error.message);
-      agentRow = data;
+      agentRow = data as typeof agentRow;
     } else {
-      const { data, error } = await supabase.from("agents").insert(agentPayload).select("id,agent_id,name,source,verification_status,status").single();
+      const { data, error } = await supabase.from("agents").insert(agentPayload as never).select("id,agent_id,name,source,verification_status,status").single();
       if (error) throw new Error(error.message);
-      agentRow = data;
+      agentRow = data as typeof agentRow;
     }
 
     for (const capability of capabilities) {
