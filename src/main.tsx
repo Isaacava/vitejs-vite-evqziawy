@@ -12,6 +12,7 @@ import TestnetRecovery from "./TestnetRecovery";
 import TestnetJobHistory from "./TestnetJobHistory";
 import TestnetProviderReadiness from "./TestnetProviderReadiness";
 import TestnetTransactionPreflight from "./TestnetTransactionPreflight";
+import TestnetGridRun from "./TestnetGridRun";
 import EvaluatorConsole from "./EvaluatorConsole";
 import ProviderSubmit from "./ProviderSubmit";
 import LifecycleActions from "./LifecycleActions";
@@ -37,6 +38,7 @@ const testnetRecoveryMode = window.location.pathname === "/testnet/recover";
 const testnetHistoryMode = window.location.pathname === "/testnet/jobs";
 const testnetProvidersMode = window.location.pathname === "/testnet/providers";
 const testnetPreflightMode = window.location.pathname === "/testnet/preflight";
+const testnetGridRunMode = window.location.pathname === "/testnet/run";
 const executeMode = window.location.pathname === "/prepare/execute";
 const evaluatorMode = window.location.pathname === "/evaluator";
 const providerSubmitMode = window.location.pathname === "/provider/submit";
@@ -56,6 +58,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       <TestnetProviderReadiness />
     ) : testnetPreflightMode ? (
       <TestnetTransactionPreflight />
+    ) : testnetGridRunMode ? (
+      <TestnetGridRun />
     ) : testnetMode ? (
       <TestnetSandbox />
     ) : executeMode && missionId ? (
