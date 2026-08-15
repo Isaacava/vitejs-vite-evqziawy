@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import "./mission-console.css";
 
 const TESTNET_CHAIN_ID = "0x61";
-const TESTNET_CHAIN = 97;
 const TESTNET_CONTRACTS = {
   commerce: "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de",
   router: "0xd7d36d66d2f1b608a0f943f722d27e3744f66f25",
@@ -71,8 +70,11 @@ export default function TestnetSandbox() {
       if (!ethereum) throw new Error("No compatible browser wallet detected.");
       try {
         await ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: TESTNET_CHAIN_ID }] });
-      } catch (switchError: any) {
-        if (switchError?.code !== 4902) throw switchError;
+      } catch (switchError: unknown) {
+        const code = typeof switchError === "object" && switchError !== null && "code" in switchError
+          ? (switchError as { code?: number }).code
+          : undefined;
+        if (code !== 4902) throw switchError;
         await ethereum.request({
           method: "wallet_addEthereumChain",
           params: [{
@@ -92,15 +94,6 @@ export default function TestnetSandbox() {
 
   useEffect(() => {
     void refresh();
-    const ethereum = window.ethereum;
-    if (!ethereum) return;
-    const handler = () => { void refresh(); };
-    ethereum.on?.("accountsChanged", handler);
-    ethereum.on?.("chainChanged", handler);
-    return () => {
-      ethereum.removeListener?.("accountsChanged", handler);
-      ethereum.removeListener?.("chainChanged", handler);
-    };
   }, []);
 
   return (
