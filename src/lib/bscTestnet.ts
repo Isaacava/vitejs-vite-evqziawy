@@ -80,3 +80,5 @@ export async function readPaymentState(wallet: Address) {
     allowanceFormatted: formatUnits(allowance, decimals),
   };
 }
+
+export type PaymentState = Awaited<ReturnType<typeof readPaymentState>>;
