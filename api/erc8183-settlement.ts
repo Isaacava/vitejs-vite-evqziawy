@@ -1,10 +1,10 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createPublicClient, http, type Address, type Hex } from "viem";
-import { bscTestnet } from "viem/chains";
+import { bsc } from "viem/chains";
 import { getAuthenticatedUser, serverClient } from "../src/server/authHandlers.js";
 
-const COMMERCE = "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address;
-const ROUTER = "0xd7d36d66d2f1b608a0f943f722d27e3744f66f25" as Address;
+const COMMERCE = "0xea4daa3100a767e86fded867729ae7446476eba6" as Address;
+const ROUTER = "0x51895229e12f9876011789b04f8698af06ccd6da" as Address;
 
 const COMMERCE_ABI = [
   {
@@ -31,7 +31,7 @@ const COMMERCE_ABI = [
   },
 ] as const;
 
-const client = createPublicClient({ chain: bscTestnet, transport: http() });
+const client = createPublicClient({ chain: bsc, transport: http() });
 const CHAIN_STATUS: Record<number, "open" | "funded" | "submitted" | "completed" | "rejected" | "expired"> = {
   0: "open",
   1: "funded",
@@ -92,7 +92,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(409).json({ error: "Settlement transaction reverted", tx_hash: txHash, status: receipt.status });
   }
   if (!receipt.to || receipt.to.toLowerCase() !== ROUTER.toLowerCase()) {
-    return res.status(409).json({ error: "Transaction target is not the ERC-8183 router", expected_target: ROUTER, actual_target: receipt.to });
+    return res.status(409).json({ error: "Transaction target is not the production ERC-8183 router", expected_target: ROUTER, actual_target: receipt.to });
   }
 
   const chainJob = await client.readContract({
@@ -119,11 +119,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       mission_id: mission.id,
       job_id: job.id,
       tx_hash: txHash,
-      chain_id: 97,
+      chain_id: 56,
       kind: "settlement",
       status: "confirmed",
       block_number: Number(receipt.blockNumber),
-      metadata: { chain_job_id: chainJobId, chain_status: chainStatus },
+      metadata: { chain_job_id: chainJobId, chain_status: chainStatus, network: "bsc-mainnet" },
     });
     if (txError) throw new Error(txError.message);
   }
@@ -157,6 +157,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         chain_status: chainStatus,
         block_number: Number(receipt.blockNumber),
         deliverable: chainJob.deliverable || null,
+        chain_id: 56,
       },
       updated_at: new Date().toISOString(),
     }).eq("id", evaluation.id);
@@ -172,8 +173,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         chain_status: chainStatus,
         block_number: Number(receipt.blockNumber),
         deliverable: chainJob.deliverable || null,
+        chain_id: 56,
       },
-      notes: "Terminal outcome verified from the BSC Testnet ERC-8183 job state.",
+      notes: "Terminal outcome verified from the BSC Mainnet ERC-8183 job state.",
     });
   }
 
@@ -197,6 +199,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           verified: true,
           tx_hash: txHash,
           chain_job_id: chainJobId,
+          chain_id: 56,
         },
       });
     }
@@ -208,12 +211,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     job_id: job.id,
     type: "settlement_synced",
     title: `Settlement ${chainStatus}`,
-    description: `Verified terminal ERC-8183 state on BSC Testnet: ${chainStatus}.`,
-    metadata: { tx_hash: txHash, chain_job_id: chainJobId, chain_status: chainStatus, block_number: Number(receipt.blockNumber) },
+    description: `Verified terminal ERC-8183 state on BSC Mainnet: ${chainStatus}.`,
+    metadata: { tx_hash: txHash, chain_job_id: chainJobId, chain_status: chainStatus, block_number: Number(receipt.blockNumber), chain_id: 56 },
   });
 
   return res.status(200).json({
     ok: true,
+    network: "bsc-mainnet",
+    chain_id: 56,
     tx_hash: txHash,
     block_number: receipt.blockNumber.toString(),
     chain_job_id: chainJobId,
@@ -221,6 +226,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     evaluation_verdict: verdict,
     payment_status: paymentStatus,
     reputation_recorded: !!job.provider_agent_id,
-    note: "Terminal marketplace state was updated only after successful router receipt verification and a terminal ERC-8183 job read.",
+    note: "Production terminal state was updated only after successful mainnet router receipt verification and a terminal ERC-8183 job read.",
   });
 }
