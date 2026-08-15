@@ -7,6 +7,7 @@ import MissionConsole from "./MissionConsole";
 import OnchainPrepare from "./OnchainPrepare";
 import OnchainExecute from "./OnchainExecute";
 import TestnetQuoteExecution from "./TestnetQuoteExecution";
+import TestnetQuoteGate from "./TestnetQuoteGate";
 import TestnetSandbox from "./TestnetSandbox";
 import TestnetRecovery from "./TestnetRecovery";
 import TestnetJobHistory from "./TestnetJobHistory";
@@ -34,6 +35,7 @@ const evidenceMode = window.location.pathname === "/agent/evidence";
 const prepareMode = window.location.pathname === "/prepare";
 const testnetMode = window.location.pathname === "/testnet";
 const testnetQuoteExecuteMode = window.location.pathname === "/testnet/execute";
+const testnetQuoteGateMode = window.location.pathname === "/testnet/quote-gate";
 const testnetRecoveryMode = window.location.pathname === "/testnet/recover";
 const testnetHistoryMode = window.location.pathname === "/testnet/jobs";
 const testnetProvidersMode = window.location.pathname === "/testnet/providers";
@@ -50,6 +52,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     {testnetQuoteExecuteMode && missionId && quoteId ? (
       <TestnetQuoteExecution />
+    ) : testnetQuoteGateMode && missionId && quoteId ? (
+      <TestnetQuoteGate />
     ) : testnetRecoveryMode ? (
       <TestnetRecovery />
     ) : testnetHistoryMode ? (
