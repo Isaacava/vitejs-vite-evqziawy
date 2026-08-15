@@ -16,6 +16,17 @@ type Preparation = {
   note: string;
 };
 
+type ReceiptResult = {
+  ok: boolean;
+  phase: string;
+  tx_hash: string;
+  block_number: string;
+  receipt_status: string;
+  job?: { id: string; mission_task_id: string; status: string; chain_job_id: number | null; chain_status: string; updated_at: string };
+  onchain_job?: { id: string; status: number; budget: string; provider: string; client: string } | null;
+  note?: string;
+};
+
 const compact = (value?: string | null) => value ? `${value.slice(0, 8)}…${value.slice(-6)}` : "—";
 const validAddress = (value?: string | null) => /^0x[a-fA-F0-9]{40}$/.test(value || "");
 
@@ -28,6 +39,10 @@ export default function OnchainPrepare() {
   const [loading, setLoading] = useState(true);
   const [readingChain, setReadingChain] = useState(false);
   const [preparing, setPreparing] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [receiptPhase, setReceiptPhase] = useState("create");
+  const [txHash, setTxHash] = useState("");
+  const [receiptResult, setReceiptResult] = useState<ReceiptResult | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -120,6 +135,39 @@ export default function OnchainPrepare() {
     }
   }
 
+  async function syncReceipt() {
+    const jobId = data?.mission?.id ? new URLSearchParams(window.location.search).get("job") || "" : "";
+    if (!missionId || !jobId || !txHash.startsWith("0x") || txHash.length !== 66) {
+      setError("Receipt verification needs the mission, marketplace job ID, and a 66-character transaction hash.");
+      return;
+    }
+    setSyncing(true);
+    setError("");
+    setReceiptResult(null);
+    try {
+      const response = await fetch("/api/erc8183/prepare", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "sync_receipt",
+          mission_id: missionId,
+          job_id: jobId,
+          phase: receiptPhase,
+          tx_hash: txHash,
+          chain_job_id: data?.transactions?.create_job && receiptPhase === "create" ? undefined : (data?.mission?.id ? new URLSearchParams(window.location.search).get("chainJob") || undefined : undefined),
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body?.error || "Receipt verification failed");
+      setReceiptResult(body as ReceiptResult);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Receipt verification failed");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   if (!missionId) {
     return (
       <main className="console-page">
@@ -183,7 +231,7 @@ export default function OnchainPrepare() {
                 <div className="console-stat"><span>Wallet balance</span><strong>{livePayment ? `${livePayment.balanceFormatted} ${livePayment.symbol}` : "—"}</strong></div>
                 <div className="console-stat"><span>Allowance to Commerce</span><strong>{livePayment ? `${livePayment.allowanceFormatted} ${livePayment.symbol}` : "—"}</strong></div>
                 <div className="console-stat"><span>Approval required</span><strong>{livePayment ? (allowanceEnough ? "No" : "Yes") : "—"}</strong></div>
-                <p className="console-evidence">The SDK resolves the payment token from the Commerce contract at runtime. An ERC-20 approval is only needed when the existing allowance is insufficient.</p>
+                <p className="console-evidence">The payment token is resolved from Commerce at runtime. Approval is only needed when the existing allowance is insufficient.</p>
               </aside>
             </div>
 
@@ -208,6 +256,29 @@ export default function OnchainPrepare() {
                   <div className="console-evidence"><small>IMPORTANT</small><p>{data.note}</p></div>
                 </>
               )}
+            </section>
+
+            <section className="console-card console-plan-card">
+              <div className="console-section-head"><span>04 / RECEIPT CONFIRMATION</span><b>{receiptResult ? "CONFIRMED" : "WAITING FOR HASH"}</b></div>
+              <p className="console-evidence">After your wallet confirms a transaction, enter its hash here. AgentMarket verifies the actual BSC Testnet receipt and contract target before advancing the marketplace job state.</p>
+              <div className="console-grid">
+                <div>
+                  <label className="console-field-label" htmlFor="receipt-phase">CONFIRMED PHASE</label>
+                  <select id="receipt-phase" className="console-input" value={receiptPhase} onChange={(event) => setReceiptPhase(event.target.value)}>
+                    <option value="create">createJob</option>
+                    <option value="register">registerJob</option>
+                    <option value="set_budget">setBudget</option>
+                    <option value="approve">approve</option>
+                    <option value="fund">fund</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="console-field-label" htmlFor="tx-hash">TRANSACTION HASH</label>
+                  <input id="tx-hash" className="console-input" value={txHash} onChange={(event) => setTxHash(event.target.value.trim())} placeholder="0x…" autoComplete="off" spellCheck={false} />
+                </div>
+              </div>
+              <button className="console-dark-button" disabled={syncing || !txHash} onClick={() => void syncReceipt()}>{syncing ? "Verifying receipt…" : "Verify on-chain receipt →"}</button>
+              {receiptResult && <div className="console-evidence"><small>VERIFIED</small><p>{receiptResult.phase} confirmed in block {receiptResult.block_number}. Chain state: {receiptResult.job?.chain_status || "verified"}. Tx: {compact(receiptResult.tx_hash)}.</p></div>}
             </section>
           </>
         )}
