@@ -8,6 +8,7 @@ import OnchainPrepare from "./OnchainPrepare";
 import OnchainExecute from "./OnchainExecute";
 import TestnetQuoteExecution from "./TestnetQuoteExecution";
 import TestnetSandbox from "./TestnetSandbox";
+import TestnetRecovery from "./TestnetRecovery";
 import EvaluatorConsole from "./EvaluatorConsole";
 import ProviderSubmit from "./ProviderSubmit";
 import LifecycleActions from "./LifecycleActions";
@@ -29,6 +30,7 @@ const evidenceMode = window.location.pathname === "/agent/evidence";
 const prepareMode = window.location.pathname === "/prepare";
 const testnetMode = window.location.pathname === "/testnet";
 const testnetQuoteExecuteMode = window.location.pathname === "/testnet/execute";
+const testnetRecoveryMode = window.location.pathname === "/testnet/recover";
 const executeMode = window.location.pathname === "/prepare/execute";
 const evaluatorMode = window.location.pathname === "/evaluator";
 const providerSubmitMode = window.location.pathname === "/provider/submit";
@@ -40,6 +42,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     {testnetQuoteExecuteMode && missionId && quoteId ? (
       <TestnetQuoteExecution />
+    ) : testnetRecoveryMode ? (
+      <TestnetRecovery />
     ) : testnetMode ? (
       <TestnetSandbox />
     ) : executeMode && missionId ? (
