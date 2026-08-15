@@ -27,6 +27,40 @@ function address(value: unknown, field: string): Address {
   return getAddress(value);
 }
 
+export async function heartbeat(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  if (!runtimeAuthorized(req)) return res.status(401).json({ error: "Agent runtime unauthorized" });
+  try {
+    const agentId = typeof req.body?.agent_id === "string" ? req.body.agent_id.trim() : "";
+    const endpointUrl = typeof req.body?.endpoint_url === "string" ? req.body.endpoint_url.trim() : "";
+    const status = typeof req.body?.status === "string" ? req.body.status.trim().toLowerCase() : "";
+    const latency = req.body?.latency_ms == null ? null : Number(req.body.latency_ms);
+    const statusCode = req.body?.status_code == null ? null : Number(req.body.status_code);
+    if (!agentId || !["online", "degraded", "offline", "unknown"].includes(status)) return res.status(400).json({ error: "agent_id and a valid status are required" });
+    if (latency !== null && (!Number.isFinite(latency) || latency < 0)) return res.status(400).json({ error: "latency_ms must be a non-negative number" });
+    if (statusCode !== null && (!Number.isInteger(statusCode) || statusCode < 100 || statusCode > 599)) return res.status(400).json({ error: "status_code must be a valid HTTP status code" });
+
+    const supabase = db();
+    const { data: agent, error: agentError } = await supabase.from("agents").select("id,agent_id,owner,name,status,verification_status").eq("agent_id", agentId).maybeSingle();
+    if (agentError) throw new Error(agentError.message);
+    if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+    const now = new Date().toISOString();
+    const { error: healthError } = await supabase.from("agent_health_checks").insert({ agent_id: agent.id, endpoint_url: endpointUrl || null, status, latency_ms: latency === null ? null : Math.round(latency), status_code: statusCode, source: "runtime", checked_at: now, metadata: { agent_id: agent.agent_id } });
+    if (healthError) throw new Error(healthError.message);
+
+    if (endpointUrl) {
+      await supabase.from("agent_endpoints").upsert({ agent_id: agent.id, endpoint_url: endpointUrl, protocol: "erc8183", status, last_checked_at: now, latency_ms: latency === null ? null : Math.round(latency), status_code: statusCode, updated_at: now }, { onConflict: "agent_id,endpoint_url,protocol" });
+    }
+
+    await supabase.from("agents").update({ status, last_health_check_at: now }).eq("id", agent.id);
+
+    return res.status(200).json({ ok: true, agent: { id: agent.id, agent_id: agent.agent_id, status, verification_status: agent.verification_status }, heartbeat: { status, latency_ms: latency === null ? null : Math.round(latency), status_code: statusCode, checked_at: now }, note: "Heartbeat accepted from the authenticated runtime; marketplace ranking can now distinguish current liveness from stale registration." });
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : "Unable to record agent heartbeat" });
+  }
+}
+
 export async function watch(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
   try {
