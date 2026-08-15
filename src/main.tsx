@@ -10,6 +10,7 @@ import AgentRegistration from "./AgentRegistration";
 import AgentInbox from "./AgentInbox";
 import UserDashboard from "./UserDashboard";
 import SessionPermissions from "./SessionPermissions";
+import EvaluatorConsole from "./EvaluatorConsole";
 import "./index.css";
 
 const params = new URLSearchParams(window.location.search);
@@ -20,12 +21,15 @@ const dashboardMode = window.location.pathname === "/dashboard";
 const permissionsMode = window.location.pathname === "/permissions";
 const prepareMode = window.location.pathname === "/prepare";
 const executeMode = window.location.pathname === "/prepare/execute";
+const evaluatorMode = window.location.pathname === "/evaluator";
 const registerMode = window.location.pathname === "/agents/register";
 const inboxMode = window.location.pathname === "/agent/inbox";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    {jobId ? (
+    {evaluatorMode && jobId ? (
+      <EvaluatorConsole />
+    ) : jobId ? (
       <MissionConsole />
     ) : executeMode && missionId ? (
       <OnchainExecute />
