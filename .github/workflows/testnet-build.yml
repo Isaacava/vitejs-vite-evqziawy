@@ -89,3 +89,25 @@ jobs:
           set -euo pipefail
           grep -Rni --exclude-dir=.git --exclude='package-lock.json' "bsc-testnet" src api/testnet agents >/dev/null
           grep -Rni --exclude-dir=.git --exclude='package-lock.json' "chain_id.*97\|chainId.*97\|0x61" src api/testnet agents >/dev/null
+
+      - name: Verify ERC-8183 Testnet lifecycle surfaces are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            "createJob"
+            "registerJob"
+            "setBudget"
+            "fund"
+            "settle"
+            "dispute"
+            "voteReject"
+            "claimRefund"
+          )
+          surfaces=(src api/testnet agents)
+          for method in "${required[@]}"; do
+            if ! grep -Rni --exclude-dir=.git --exclude='package-lock.json' "$method" "${surfaces[@]}" >/dev/null; then
+              echo "Missing required ERC-8183 Testnet lifecycle surface: $method"
+              exit 1
+            fi
+          done
