@@ -49,6 +49,10 @@ export default function TestnetQuoteExecution() {
         if (chainId !== TESTNET_CHAIN_ID) throw new Error("Wrong network. Switch your wallet to BSC Testnet (chain 97) before continuing.");
         if (active) setNetwork("bsc-testnet / 97");
 
+        const accounts = (await ethereum.request({ method: "eth_accounts" })) as string[];
+        const clientAddress = accounts[0];
+        if (!clientAddress) throw new Error("No wallet account is connected. Connect the wallet and retry.");
+
         const auth = await fetch("/api/auth/me", { credentials: "include" });
         if (!auth.ok) throw new Error("Wallet authentication is required before signing the Testnet job.");
 
@@ -56,7 +60,7 @@ export default function TestnetQuoteExecution() {
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mission_id: missionId, quote_id: quoteId, client_address: (await ethereum.request({ method: "eth_accounts" }) as string[])[0] }),
+          body: JSON.stringify({ mission_id: missionId, quote_id: quoteId, client_address: clientAddress }),
         });
         const body = await response.json();
         if (!response.ok) throw new Error(body?.error || "Unable to prepare the accepted Testnet quote");
@@ -73,6 +77,10 @@ export default function TestnetQuoteExecution() {
   }, [missionId, quoteId]);
 
   const rawPlan = useMemo(() => data ? buildErc8183Plan(data, chainJobId || undefined) : [], [data, chainJobId]);
+  const approvalRequired = useMemo(() => {
+    if (!data) return false;
+    return BigInt(data.payment.allowance_raw) < BigInt(data.payment.budget_raw);
+  }, [data]);
   const steps = useMemo<TransactionStep[]>(() => {
     const order = ["create", "register", "set_budget", "approve", "fund"];
     return rawPlan.map((step) => ({
@@ -83,11 +91,11 @@ export default function TestnetQuoteExecution() {
       disabled:
         (step.id === "register" && !confirmed.create) ||
         (step.id === "set_budget" && !confirmed.register) ||
-        (step.id === "approve" && !confirmed.set_budget && !confirmed.approve) ||
-        (step.id === "fund" && (!confirmed.set_budget || (step.transaction == null))) ||
+        (step.id === "approve" && (!confirmed.set_budget || !approvalRequired)) ||
+        (step.id === "fund" && (!confirmed.set_budget || (approvalRequired && !confirmed.approve) || step.transaction == null)) ||
         order.indexOf(step.id) < 0,
     }));
-  }, [rawPlan, confirmed]);
+  }, [rawPlan, confirmed, approvalRequired]);
 
   async function syncReceipt(step: TransactionStep, receipt: ConfirmedRunnerReceipt) {
     if (!marketplaceJobId) {
@@ -131,14 +139,17 @@ export default function TestnetQuoteExecution() {
     try {
       await confirmNetworkAgain();
       const accounts = (await window.ethereum!.request({ method: "eth_accounts" })) as string[];
+      const clientAddress = accounts[0];
+      if (!clientAddress) throw new Error("No wallet account is connected. Connect the wallet and retry.");
       const response = await fetch("/api/testnet/prepare-quote", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mission_id: missionId, quote_id: quoteId, client_address: accounts[0] }),
+        body: JSON.stringify({ mission_id: missionId, quote_id: quoteId, client_address: clientAddress }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body?.error || "Unable to refresh Testnet plan");
+      if (body.network !== "bsc-testnet" || Number(body.chain_id) !== 97) throw new Error("Refresh response is not BSC Testnet data.");
       setData(body as PreparedResponse);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to refresh Testnet plan");
@@ -186,6 +197,7 @@ export default function TestnetQuoteExecution() {
                 <div className="console-stat"><span>Quoted budget</span><strong>{data.payment.budget_raw}</strong></div>
                 <div className="console-stat"><span>Balance</span><strong>{data.payment.balance_formatted} {data.payment.symbol}</strong></div>
                 <div className="console-stat"><span>Allowance</span><strong>{data.payment.allowance_formatted} {data.payment.symbol}</strong></div>
+                <div className="console-stat"><span>Approval required</span><strong>{approvalRequired ? "Yes" : "No"}</strong></div>
                 <button className="console-brass-button" type="button" disabled={loadingPlan} onClick={() => void reloadPlan()}>{loadingPlan ? "Refreshing…" : "Refresh Testnet preflight →"}</button>
               </div>
             </section>
