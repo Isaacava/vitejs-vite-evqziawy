@@ -22,7 +22,7 @@ export function validateDefiProposal(input: unknown): ProposalValidation {
   if (typeof proposal.notional === "number" && (!Number.isFinite(proposal.notional) || proposal.notional < 0)) errors.push("notional must be a non-negative number.");
   if (typeof proposal.spend_cap === "number" && (!Number.isFinite(proposal.spend_cap) || proposal.spend_cap < 0)) errors.push("spend_cap must be a non-negative number.");
   if (typeof proposal.notional === "number" && typeof proposal.spend_cap === "number" && proposal.notional > proposal.spend_cap) errors.push("notional cannot exceed spend_cap.");
-  if (typeof proposal.slippage_bps === "number" && (!Number.isFinite(proposal.slippage_bps) || proposal.slippage_bps < 0 || proposal.slippage_bps > 1500)) errors.push("slippage_bps must be between 0 and 1500.");
+  if (typeof proposal.slippage_bps === "number" && (!Number.isFinite(proposal.slippage_bps) || proposal.slippage_bps < 0 || proposal.slippage_bps > 150)) errors.push("slippage_bps must be between 0 and 150.");
   if (!Array.isArray(proposal.token_allowlist)) errors.push("token_allowlist is required.");
   if (!Array.isArray(proposal.protocol_allowlist)) errors.push("protocol_allowlist is required.");
 
