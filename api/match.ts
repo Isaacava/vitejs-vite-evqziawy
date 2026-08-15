@@ -120,10 +120,31 @@ function scoreAgent(
   if (!reputationAvailable) reasons.push("Reputation history not yet available");
   if (!completionAvailable) reasons.push("Completion history not yet available");
 
+  // Discovery and hireability are deliberately separate. An ERC-8004 identity
+  // may be discoverable even when there is no live provider service behind it.
+  const hireability = endpoint?.status === "online"
+    ? {
+        status: "ready" as const,
+        canCreateJob: true,
+        reason: "A live provider endpoint is currently reporting healthy.",
+      }
+    : endpoint?.status === "degraded"
+      ? {
+          status: "degraded" as const,
+          canCreateJob: false,
+          reason: "The provider endpoint is reachable but degraded; do not fund a job yet.",
+        }
+      : {
+          status: "discoverable_only" as const,
+          canCreateJob: false,
+          reason: "The agent is discoverable, but no healthy provider endpoint is available.",
+        };
+
   return {
     score: normalizedScore,
     scoreMax,
     scoreConfidence,
+    hireability,
     breakdown: {
       capability: Math.round(capability * WEIGHTS.capability / 100),
       verification: Math.round(verification * WEIGHTS.verification / 100),
@@ -192,16 +213,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       agent,
       ...scoreAgent(agent, intent, endpointByAgent.get(agent.id), reputationByAgent.get(agent.id) ?? []),
     }))
-    .sort((a, b) => b.score - a.score)
+    .sort((a, b) => {
+      if (a.hireability.canCreateJob !== b.hireability.canCreateJob) {
+        return a.hireability.canCreateJob ? -1 : 1;
+      }
+      return b.score - a.score;
+    })
     .slice(0, 10);
+
+  const bestHireableMatch = matches.find((match) => match.hireability.canCreateJob) ?? null;
 
   return res.status(200).json({
     intent,
     bestMatch: matches[0] ?? null,
+    bestHireableMatch,
     alternatives: matches.slice(1),
     scoring: {
       weights: WEIGHTS,
       historyPolicy: "Missing reputation, completion, and liveness evidence contributes no points and reduces the available-score ceiling. New agents remain matchable on capability, availability and identity evidence.",
+      hireabilityPolicy: "Discovery is separate from hireability. Only agents with a currently healthy provider endpoint are marked ready for job creation.",
     },
   });
 }
