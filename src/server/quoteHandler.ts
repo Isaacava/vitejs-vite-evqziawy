@@ -24,11 +24,11 @@ function negotiateUrl(endpointUrl: string) {
     endpoint.pathname = path.slice(0, path.lastIndexOf("/")) + "/negotiate";
     return endpoint.toString();
   }
-  if (path.endsWith("/erc8183")) {
+  if (path.endsWith("/apex") || path.endsWith("/erc8183")) {
     endpoint.pathname = `${path}/negotiate`;
     return endpoint.toString();
   }
-  endpoint.pathname = `${path}/erc8183/negotiate`;
+  endpoint.pathname = `${path}/apex/negotiate`;
   return endpoint.toString();
 }
 
@@ -102,11 +102,7 @@ export async function quoteHandler(req: VercelRequest, res: VercelResponse) {
         .single();
       if (updateError) throw new Error(updateError.message);
 
-      return res.status(200).json({
-        ok: true,
-        quote: accepted,
-        next: "create_and_fund_erc8183_job",
-      });
+      return res.status(200).json({ ok: true, quote: accepted, next: "create_and_fund_erc8183_job" });
     }
 
     const agentId = asString(req.body?.agent_id);
@@ -148,12 +144,12 @@ export async function quoteHandler(req: VercelRequest, res: VercelResponse) {
         method: "POST",
         headers: { "content-type": "application/json", accept: "application/json" },
         body: JSON.stringify({
-          job: {
-            agent_id: agent.agent_id,
-            goal,
-            description: goal,
+          task_description: goal,
+          terms: {
+            ...(metadata as Record<string, unknown>),
             max_budget: maxBudget || undefined,
-            metadata,
+            agent_id: agent.agent_id,
+            deliverables: metadata.deliverables ?? "structured provider result",
           },
         }),
         signal: controller.signal,
@@ -191,8 +187,8 @@ export async function quoteHandler(req: VercelRequest, res: VercelResponse) {
     const normalized = providerQuote && typeof providerQuote === "object" ? providerQuote as Record<string, unknown> : {};
     const price = asString(normalized.price ?? normalized.amount ?? normalized.budget ?? normalized.service_price);
     const currency = asString(normalized.currency ?? normalized.payment_token ?? normalized.token, "provider settlement token");
-    const quoteExpires = asString(normalized.expires_at ?? normalized.expiration ?? normalized.valid_until);
-    const expiresAt = quoteExpires ? new Date(quoteExpires) : new Date(Date.now() + 15 * 60 * 1000);
+    const quoteExpires = asString(normalized.quote_expires_at ?? normalized.expires_at ?? normalized.expiration ?? normalized.valid_until);
+    const expiresAt = quoteExpires ? new Date(quoteExpires) : new Date(Date.now() + 5 * 60 * 1000);
     if (!price) throw new Error("Provider quote did not include a price");
     if (!Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now()) throw new Error("Provider returned an invalid quote expiry");
 
