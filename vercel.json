@@ -13,6 +13,7 @@
     { "source": "/api/agent-actions", "destination": "/api/agent?route=actions" },
     { "source": "/api/agent-jobs/watch", "destination": "/api/agent?route=watch" },
     { "source": "/api/agent-runtimes/risk-guardian", "destination": "/api/agent?route=risk-runtime" },
+    { "source": "/api/agent/heartbeat", "destination": "/api/agent?route=heartbeat" },
     { "source": "/api/risk-guardian", "destination": "/api/agent?route=risk-policy" },
     { "source": "/api/missions", "destination": "/api/dashboard?route=missions" },
     { "source": "/api/erc8183/prepare", "destination": "/api/erc8183" },
