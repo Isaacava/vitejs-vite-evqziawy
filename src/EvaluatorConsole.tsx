@@ -96,7 +96,7 @@ export default function EvaluatorConsole() {
         <header className="evaluator-nav">
           <a href="/" className="evaluator-brand">AgentMarket</a>
           <span>EVALUATOR / SETTLEMENT</span>
-          <a href={`/dashboard?job=${encodeURIComponent(jobId)}`}>Back to dashboard →</a>
+          <div className="evaluator-nav-actions"><a href={`/lifecycle?job=${encodeURIComponent(jobId)}`}>Dispute / refund →</a><a href={`/dashboard?job=${encodeURIComponent(jobId)}`}>Back to dashboard →</a></div>
         </header>
 
         {error && <div className="evaluator-alert evaluator-alert-error">{error}</div>}
