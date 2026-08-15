@@ -6,11 +6,12 @@ import MarketplaceWorkspace from "./MarketplaceWorkspace";
 import MissionConsole from "./MissionConsole";
 import OnchainPrepare from "./OnchainPrepare";
 import OnchainExecute from "./OnchainExecute";
+import EvaluatorConsole from "./EvaluatorConsole";
+import ProviderSubmit from "./ProviderSubmit";
 import AgentRegistration from "./AgentRegistration";
 import AgentInbox from "./AgentInbox";
 import UserDashboard from "./UserDashboard";
 import SessionPermissions from "./SessionPermissions";
-import EvaluatorConsole from "./EvaluatorConsole";
 import "./index.css";
 
 const params = new URLSearchParams(window.location.search);
@@ -22,17 +23,20 @@ const permissionsMode = window.location.pathname === "/permissions";
 const prepareMode = window.location.pathname === "/prepare";
 const executeMode = window.location.pathname === "/prepare/execute";
 const evaluatorMode = window.location.pathname === "/evaluator";
+const providerSubmitMode = window.location.pathname === "/provider/submit";
 const registerMode = window.location.pathname === "/agents/register";
 const inboxMode = window.location.pathname === "/agent/inbox";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    {evaluatorMode && jobId ? (
-      <EvaluatorConsole />
-    ) : jobId ? (
+    {jobId ? (
       <MissionConsole />
     ) : executeMode && missionId ? (
       <OnchainExecute />
+    ) : evaluatorMode && jobId ? (
+      <EvaluatorConsole />
+    ) : providerSubmitMode && jobId ? (
+      <ProviderSubmit />
     ) : prepareMode && missionId ? (
       <OnchainPrepare />
     ) : registerMode ? (
