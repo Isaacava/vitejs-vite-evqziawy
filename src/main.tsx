@@ -29,14 +29,14 @@ const inboxMode = window.location.pathname === "/agent/inbox";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    {jobId ? (
-      <MissionConsole />
-    ) : executeMode && missionId ? (
+    {executeMode && missionId ? (
       <OnchainExecute />
     ) : evaluatorMode && jobId ? (
       <EvaluatorConsole />
     ) : providerSubmitMode && jobId ? (
       <ProviderSubmit />
+    ) : jobId ? (
+      <MissionConsole />
     ) : prepareMode && missionId ? (
       <OnchainPrepare />
     ) : registerMode ? (
