@@ -86,14 +86,18 @@ function evaluate(input: Proposal) {
   const risk = typeof input.risk === "string" ? input.risk.trim().toLowerCase() : "unknown";
   const token = typeof input.token === "string" ? input.token.trim().toLowerCase() : "";
   const allowlist = Array.isArray(input.token_allowlist) ? input.token_allowlist.map((v) => typeof v === "string" ? v.trim().toLowerCase() : "").filter(Boolean) : [];
-  if (allowlist.length && (!token || !allowlist.includes(token))) return { decision: "block" as Decision, reasons: ["Asset is outside the approved token allowlist."] };
-  if (Number(input.spend_cap ?? 0) > 0 && Number(input.notional ?? 0) > Number(input.spend_cap)) return { decision: "block" as Decision, reasons: ["Requested value exceeds the approved spend cap."] };
-  if (Number(input.slippage_bps ?? 0) > 150) return { decision: "block" as Decision, reasons: ["Requested slippage is above the conservative guardrail."] };
-  if (["high", "critical"].includes(risk)) return { decision: "user_approval" as Decision, reasons: ["Risk classification requires explicit user approval."] };
-  if (!input.expires_at) return { decision: "user_approval" as Decision, reasons: ["Session expiry is not provided; explicit user approval is required."] };
-  const expiry = Date.parse(input.expires_at);
-  if (!Number.isFinite(expiry) || expiry <= Date.now()) return { decision: "block" as Decision, reasons: ["The requested session is expired or has an invalid expiry."] };
-  return { decision: "approve" as Decision, reasons: ["Requested action is within the supplied risk constraints."] };
+  if (allowlist.length && (!token || !allowlist.includes(token))) reasons.push("Asset is outside the approved token allowlist.");
+  else if (Number(input.spend_cap ?? 0) > 0 && Number(input.notional ?? 0) > Number(input.spend_cap)) reasons.push("Requested value exceeds the approved spend cap.");
+  else if (Number(input.slippage_bps ?? 0) > 150) reasons.push("Requested slippage is above the conservative guardrail.");
+  else if (["high", "critical"].includes(risk)) reasons.push("Risk classification requires explicit user approval.");
+  else if (!input.expires_at) reasons.push("Session expiry is not provided; explicit user approval is required.");
+  else {
+    const expiry = Date.parse(input.expires_at);
+    if (!Number.isFinite(expiry) || expiry <= Date.now()) reasons.push("The requested session is expired or has an invalid expiry.");
+  }
+  if (reasons.length === 0) return { decision: "approve" as Decision, reasons: ["Requested action is within the supplied risk constraints."] };
+  if (reasons[0].includes("outside") || reasons[0].includes("exceeds") || reasons[0].includes("slippage") || reasons[0].includes("expired")) return { decision: "block" as Decision, reasons };
+  return { decision: "user_approval" as Decision, reasons };
 }
 
 export async function riskPolicy(req: VercelRequest, res: VercelResponse) {
