@@ -25,6 +25,11 @@ type Match = {
     completionAvailable?: boolean;
     livenessAvailable?: boolean;
   };
+  hireability?: {
+    status: "ready" | "degraded" | "discoverable_only";
+    canCreateJob: boolean;
+    reason: string;
+  };
   reasons?: string[];
 };
 type MatchResponse = { intent: ReturnType<typeof parseMarketplaceIntent>; bestMatch: Match | null; alternatives: Match[] };
@@ -64,6 +69,13 @@ function confidenceLabel(value?: Match["scoreConfidence"]) {
   return "LIMITED HISTORY";
 }
 
+function hireabilityLabel(match?: Match | null) {
+  if (!match?.hireability) return "READINESS UNKNOWN";
+  if (match.hireability.status === "ready") return "READY TO HIRE";
+  if (match.hireability.status === "degraded") return "PROVIDER DEGRADED";
+  return "DISCOVERABLE ONLY";
+}
+
 export default function MarketplaceWorkspace() {
   const [goal, setGoal] = useState(examples[0]);
   const [result, setResult] = useState<MatchResponse | null>(null);
@@ -97,8 +109,13 @@ export default function MarketplaceWorkspace() {
     }
   }
 
-  async function hire() {
-    if (!selected) return;
+  async function hire(match: Match | null = selected) {
+    if (!match) return;
+    if (!match.hireability?.canCreateJob) {
+      setError(match.hireability?.reason || "This agent is discoverable but is not ready to accept jobs.");
+      return;
+    }
+
     setLoading(true);
     setError("");
     try {
@@ -112,7 +129,7 @@ export default function MarketplaceWorkspace() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ goal, agent_id: selected.agent.agent_id, budget: 0 }),
+        body: JSON.stringify({ goal, agent_id: match.agent.agent_id, budget: 0 }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data?.error || "Mission creation failed");
@@ -130,6 +147,7 @@ export default function MarketplaceWorkspace() {
 
   const candidates = result?.alternatives ?? [];
   const best = result?.bestMatch;
+  const bestReady = Boolean(best?.hireability?.canCreateJob);
 
   return (
     <main className="workspace">
@@ -171,33 +189,34 @@ export default function MarketplaceWorkspace() {
             <article className="best-agent-card">
               <div className="best-agent-top">
                 <div>
-                  <div className="verified-line"><span className="status-dot" /> {best.agent.verification_status || "Indexed identity"}</div>
+                  <div className="verified-line"><span className="status-dot" /> {hireabilityLabel(best)}</div>
                   <h2>{best.agent.name || `Agent #${best.agent.agent_id}`}</h2>
                   <p>{best.agent.description || "On-chain DeFi specialist discovered through the marketplace registry."}</p>
                 </div>
                 <div className={`score-chip ${scoreColor(best.score)}`}><b>{Math.round(best.score)}</b><span>/100</span></div>
               </div>
               <div className="agent-meta-row"><span>{categoryLabel(best.agent.category)}</span><span>{best.agent.status || "unknown endpoint"}</span><span>{best.agent.source || "indexed"}</span>{best.agent.is_first_party && <span>first-party</span>}</div>
+              {!bestReady && best.hireability && <div className="workspace-alert workspace-alert-error" style={{ marginTop: 16, marginBottom: 0 }}>{best.hireability.reason}</div>}
               <div className="why-block">
                 <div className="why-head"><span>WHY THIS AGENT</span><strong>{confidenceLabel(best.scoreConfidence)}</strong></div>
                 <div className="why-summary"><span>Normalized match</span><b>{Math.round(best.score)}/100</b><span>Available evidence ceiling</span><b>{Math.round(best.scoreMax ?? 100)}/100</b></div>
                 <div className="metric-list">{Object.entries(best.breakdown).map(([key, value]) => <div className="metric-row" key={key}><span>{key.replace(/([A-Z])/g, " $1")}</span><div className="metric-track"><i style={{ width: `${Math.max(0, Math.min(100, (value / ({ capability: 35, verification: 20, endpointLiveness: 15, completion: 10, jobVolume: 5, reputation: 15 } as Record<string, number>)[key]) * 100))}%` }} /></div><b>{Math.round(value)}</b></div>)}</div>
                 {best.reasons && <div className="evidence-reasons">{best.reasons.map((reason) => <span key={reason}>{reason}</span>)}</div>}
               </div>
-              <div className="best-agent-actions"><button type="button" className="dark-button" onClick={hire} disabled={loading || !!mission}>{mission ? "Mission created" : "Hire this agent"}</button><button type="button" className="outline-button" onClick={() => setSelected(best)}>Inspect agent</button></div>
+              <div className="best-agent-actions"><button type="button" className="dark-button" onClick={() => void hire(best)} disabled={loading || !!mission || !bestReady}>{mission ? "Mission created" : bestReady ? "Hire this agent" : "Provider not ready"}</button><button type="button" className="outline-button" onClick={() => setSelected(best)}>Inspect agent</button></div>
             </article>
           )}
         </div>
 
         <aside className="alternatives-panel">
           <div className="section-marker"><span>02</span> ALTERNATIVES</div>
-          <div className="alternatives-list">{candidates.length === 0 && !loading && <p className="empty-state">No additional compatible agents returned yet.</p>}{candidates.map((match) => <button type="button" className="alternative-row" key={match.agent.agent_id} onClick={() => setSelected(match)}><span className="alternative-index">{match.agent.agent_id.slice(-3)}</span><span className="alternative-info"><strong>{match.agent.name || `Agent #${match.agent.agent_id}`}</strong><small>{categoryLabel(match.agent.category)} · {confidenceLabel(match.scoreConfidence)}</small></span><strong className={`alternative-score ${scoreColor(match.score)}`}>{Math.round(match.score)}</strong></button>)}</div>
+          <div className="alternatives-list">{candidates.length === 0 && !loading && <p className="empty-state">No additional compatible agents returned yet.</p>}{candidates.map((match) => <button type="button" className="alternative-row" key={match.agent.agent_id} onClick={() => setSelected(match)}><span className="alternative-index">{match.agent.agent_id.slice(-3)}</span><span className="alternative-info"><strong>{match.agent.name || `Agent #${match.agent.agent_id}`}</strong><small>{categoryLabel(match.agent.category)} · {hireabilityLabel(match)}</small></span><strong className={`alternative-score ${scoreColor(match.score)}`}>{Math.round(match.score)}</strong></button>)}</div>
         </aside>
       </section>
 
       <section className="registry-note"><div><span className="small-label">REGISTRY CONTEXT</span><h3>Indexed first. Verified separately.</h3><p>AgentMarket treats ERC-8004 registration, endpoint liveness and reputation as separate signals. New agents are still matchable before they have a long job history.</p></div><div className="registry-path"><span>CHAIN</span><b>ERC-8004</b><i>→</i><span>REGISTRY</span><b>AgentMarket</b><i>→</i><span>MATCH</span></div></section>
 
-      {selected && <div className="agent-drawer-backdrop" onClick={() => setSelected(null)}><aside className="agent-drawer" onClick={(event) => event.stopPropagation()}><button className="drawer-close" type="button" onClick={() => setSelected(null)} aria-label="Close agent details">×</button><span className="small-label">AGENT PROFILE</span><div className="drawer-score"><b>{Math.round(selected.score)}</b><span>/100 match · {confidenceLabel(selected.scoreConfidence)}</span></div><h2>{selected.agent.name || `Agent #${selected.agent.agent_id}`}</h2><p>{selected.agent.description || "No description was published in the registration file yet."}</p><div className="drawer-facts"><div><span>agentId</span><b>{selected.agent.agent_id}</b></div><div><span>Owner</span><b>{compactAddress(selected.agent.owner)}</b></div><div><span>Category</span><b>{categoryLabel(selected.agent.category)}</b></div><div><span>Identity</span><b>{selected.agent.verification_status || "indexed"}</b></div><div><span>Endpoint</span><b>{selected.agent.status || "unknown"}</b></div><div><span>History</span><b>{selected.evidence?.completionAvailable ? "Available" : "Insufficient"}</b></div></div><div className="drawer-breakdown">{Object.entries(selected.breakdown).map(([key, value]) => <div className="metric-row" key={key}><span>{key.replace(/([A-Z])/g, " $1")}</span><b>{Math.round(value)}</b></div>)}</div><button className="dark-button" type="button" onClick={hire} disabled={loading || !!mission}>Hire this agent</button></aside></div>}
+      {selected && <div className="agent-drawer-backdrop" onClick={() => setSelected(null)}><aside className="agent-drawer" onClick={(event) => event.stopPropagation()}><button className="drawer-close" type="button" onClick={() => setSelected(null)} aria-label="Close agent details">×</button><span className="small-label">AGENT PROFILE</span><div className="drawer-score"><b>{Math.round(selected.score)}</b><span>/100 match · {confidenceLabel(selected.scoreConfidence)}</span></div><h2>{selected.agent.name || `Agent #${selected.agent.agent_id}`}</h2><p>{selected.agent.description || "No description was published in the registration file yet."}</p><div className="drawer-facts"><div><span>Readiness</span><b>{hireabilityLabel(selected)}</b></div><div><span>agentId</span><b>{selected.agent.agent_id}</b></div><div><span>Owner</span><b>{compactAddress(selected.agent.owner)}</b></div><div><span>Category</span><b>{categoryLabel(selected.agent.category)}</b></div><div><span>Identity</span><b>{selected.agent.verification_status || "indexed"}</b></div><div><span>Endpoint</span><b>{selected.agent.status || "unknown"}</b></div><div><span>History</span><b>{selected.evidence?.completionAvailable ? "Available" : "Insufficient"}</b></div></div><div className="drawer-breakdown">{Object.entries(selected.breakdown).map(([key, value]) => <div className="metric-row" key={key}><span>{key.replace(/([A-Z])/g, " $1")}</span><b>{Math.round(value)}</b></div>)}</div><button className="dark-button" type="button" onClick={() => void hire(selected)} disabled={loading || !!mission || !selected.hireability?.canCreateJob}>{mission ? "Mission created" : selected.hireability?.canCreateJob ? "Hire this agent" : "Provider not ready"}</button></aside></div>}
     </main>
   );
 }
