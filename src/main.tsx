@@ -6,6 +6,7 @@ import MarketplaceWorkspace from "./MarketplaceWorkspace";
 import MissionConsole from "./MissionConsole";
 import OnchainPrepare from "./OnchainPrepare";
 import OnchainExecute from "./OnchainExecute";
+import TestnetQuoteExecution from "./TestnetQuoteExecution";
 import EvaluatorConsole from "./EvaluatorConsole";
 import ProviderSubmit from "./ProviderSubmit";
 import LifecycleActions from "./LifecycleActions";
@@ -19,11 +20,13 @@ import "./index.css";
 const params = new URLSearchParams(window.location.search);
 const jobId = params.get("job");
 const missionId = params.get("mission");
+const quoteId = params.get("quote");
 const appMode = window.location.pathname === "/app";
 const dashboardMode = window.location.pathname === "/dashboard";
 const permissionsMode = window.location.pathname === "/permissions";
 const evidenceMode = window.location.pathname === "/agent/evidence";
 const prepareMode = window.location.pathname === "/prepare";
+const testnetQuoteExecuteMode = window.location.pathname === "/testnet/execute";
 const executeMode = window.location.pathname === "/prepare/execute";
 const evaluatorMode = window.location.pathname === "/evaluator";
 const providerSubmitMode = window.location.pathname === "/provider/submit";
@@ -33,7 +36,9 @@ const inboxMode = window.location.pathname === "/agent/inbox";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    {executeMode && missionId ? (
+    {testnetQuoteExecuteMode && missionId && quoteId ? (
+      <TestnetQuoteExecution />
+    ) : executeMode && missionId ? (
       <OnchainExecute />
     ) : evaluatorMode && jobId ? (
       <EvaluatorConsole />
