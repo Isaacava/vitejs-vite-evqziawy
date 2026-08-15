@@ -33,7 +33,6 @@ export default function AgentInbox() {
   const [actionLoading, setActionLoading] = useState("");
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<Job | null>(null);
-  const [resultText, setResultText] = useState("");
   const [messageText, setMessageText] = useState("");
 
   async function refresh() {
@@ -44,7 +43,7 @@ export default function AgentInbox() {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(`/api/agent-jobs/watch?agent_id=${encodeURIComponent(agentId.trim())}&scan=32`);
+      const response = await fetch(`/api/agent-jobs/watch?agent_id=${encodeURIComponent(agentId.trim())}&scan=32`, { credentials: "include" });
       const body = (await response.json()) as ApiResponse;
       if (!response.ok) throw new Error(body.error || "Unable to read the agent inbox");
       setData(body);
@@ -56,13 +55,9 @@ export default function AgentInbox() {
     }
   }
 
-  async function action(actionName: "accept" | "start" | "progress" | "message" | "submit") {
+  async function action(actionName: "accept" | "start" | "progress" | "message") {
     if (!agentId.trim() || !current) return;
-    if (actionName === "submit" && !resultText.trim()) {
-      setError("Add a deliverable before submitting the job.");
-      return;
-    }
-    if (actionName === "message" && !messageText.trim()) {
+    if ((actionName === "message" || actionName === "progress") && !messageText.trim()) {
       setError("Write a message before sending it.");
       return;
     }
@@ -70,23 +65,15 @@ export default function AgentInbox() {
     setActionLoading(actionName);
     setError("");
     try {
-      const payload = actionName === "submit"
-        ? { result: resultText.trim() }
-        : actionName === "message"
-          ? { body: messageText.trim() }
-          : actionName === "progress"
-            ? { body: messageText.trim() || "Provider runtime progressed the job." }
-            : undefined;
-
+      const payload = actionName === "message" || actionName === "progress" ? { body: messageText.trim() } : undefined;
       const response = await fetch("/api/agent-actions", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ agent_id: agentId.trim(), chain_job_id: current.id, action: actionName, payload }),
       });
       const body = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(body.error || `Unable to ${actionName} job`);
-
-      if (actionName === "submit") setResultText("");
       if (actionName === "message" || actionName === "progress") setMessageText("");
       await refresh();
     } catch (cause) {
@@ -178,10 +165,8 @@ export default function AgentInbox() {
                     <button disabled={!!actionLoading} onClick={() => void action("progress")}>{actionLoading === "progress" ? "Saving…" : "Save progress"}</button>
                     <button disabled={!!actionLoading} onClick={() => void action("message")}>{actionLoading === "message" ? "Sending…" : "Send message"}</button>
                   </div>
-                  <label>DELIVERABLE</label>
-                  <textarea value={resultText} onChange={(event) => setResultText(event.target.value)} placeholder="Paste the provider result/evidence here…" />
-                  <button className="inbox-submit-button" disabled={!!actionLoading} onClick={() => void action("submit")}>{actionLoading === "submit" ? "Submitting…" : "Submit deliverable →"}</button>
-                  <p className="inbox-action-note">Submit updates the marketplace workflow. Actual ERC-8183 on-chain provider submission remains a separate wallet-signing transaction.</p>
+                  <a className="inbox-submit-button" href={`/provider/submit?agent=${encodeURIComponent(agentId.trim())}&job=${encodeURIComponent(current.id)}`}>Open wallet submission →</a>
+                  <p className="inbox-action-note">On-chain submit verifies the provider wallet, job state, deliverable hash, receipt, and BSC Testnet contract before the marketplace marks the job submitted.</p>
                 </div>
               </>
             )}
