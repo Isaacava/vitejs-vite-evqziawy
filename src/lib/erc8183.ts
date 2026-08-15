@@ -7,30 +7,28 @@ import {
   type EIP1193Provider,
 } from "viem";
 
-import { bsc } from "viem/chains";
+import {
+  BSC_CHAIN,
+  BSC_RPC_URL,
+  NETWORK_CONTRACTS,
+} from "./network";
 
 /*
  * ============================================================
  * BNB AGENTIC COMMERCE CONTRACTS (ERC-8183)
- * BSC MAINNET — same chain as the ERC-8004 agent indexer
- * Source: https://github.com/bnb-chain/bnbagent-sdk (Network & Contracts)
+ * Network is selected by src/lib/network.ts.
+ * Production defaults to BSC mainnet; preview/testing can use
+ * BSC testnet with VITE_BSC_NETWORK=testnet plus contract overrides.
  * ============================================================
  */
 
 export const ERC8183_ADDRESSES = {
-  commerce: "0xea4daa3100a767e86fded867729ae7446476eba6" as Address, // AgenticCommerce (APEX)
-  router: "0x51895229e12f9876011789b04f8698af06ccd6da" as Address, // EvaluatorRouter — also used as evaluator + hook
-  policy: "0x9c01845705b3078aa2e8cff7520a6376fd766de5" as Address, // OptimisticPolicy (default policy)
+  commerce: NETWORK_CONTRACTS.commerce as Address,
+  router: NETWORK_CONTRACTS.router as Address,
+  policy: NETWORK_CONTRACTS.policy as Address,
 } as const;
 
-export const ERC8004_REGISTRY_ADDRESS =
-  "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432" as Address;
-
-/*
- * ============================================================
- * AGENTIC COMMERCE ABI
- * ============================================================
- */
+export const ERC8004_REGISTRY_ADDRESS = NETWORK_CONTRACTS.registry as Address;
 
 export const COMMERCE_ABI = [
   {
@@ -120,12 +118,6 @@ export const COMMERCE_ABI = [
   },
 ] as const;
 
-/*
- * ============================================================
- * EVALUATOR ROUTER ABI
- * ============================================================
- */
-
 export const ROUTER_ABI = [
   {
     type: "function",
@@ -158,7 +150,6 @@ export const ROUTER_ABI = [
     inputs: [],
     outputs: [{ name: "", type: "address" }],
   },
-  // Permissionless — anyone can call once the policy has a verdict.
   {
     type: "function",
     name: "settle",
@@ -170,12 +161,6 @@ export const ROUTER_ABI = [
     outputs: [],
   },
 ] as const;
-
-/*
- * ============================================================
- * PAYMENT TOKEN ABI (ERC-20)
- * ============================================================
- */
 
 export const ERC20_ABI = [
   {
@@ -221,27 +206,15 @@ export const ERC20_ABI = [
   },
 ] as const;
 
-/*
- * ============================================================
- * PUBLIC BSC MAINNET CLIENT
- * ============================================================
- */
-
 export const publicClient = createPublicClient({
-  chain: bsc,
-  transport: http("https://bsc-dataseed.binance.org"),
+  chain: BSC_CHAIN,
+  transport: http(BSC_RPC_URL),
 });
-
-/*
- * ============================================================
- * WALLET CLIENT
- * ============================================================
- */
 
 export function getWalletClient(provider: EIP1193Provider, account: Address) {
   return createWalletClient({
     account,
-    chain: bsc,
+    chain: BSC_CHAIN,
     transport: custom(provider),
   });
 }
