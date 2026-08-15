@@ -1,0 +1,20 @@
+{
+  "crons": [
+    {
+      "path": "/api/index-agents",
+      "schedule": "0 2 * * *"
+    }
+  ],
+  "rewrites": [
+    { "source": "/api/auth/nonce", "destination": "/api/auth?action=nonce" },
+    { "source": "/api/auth/verify", "destination": "/api/auth?action=verify" },
+    { "source": "/api/auth/me", "destination": "/api/auth?action=me" },
+    { "source": "/api/auth/logout", "destination": "/api/auth?action=logout" },
+    { "source": "/api/agent-actions", "destination": "/api/agent?route=actions" },
+    { "source": "/api/agent-jobs/watch", "destination": "/api/agent?route=watch" },
+    { "source": "/api/agent-runtimes/risk-guardian", "destination": "/api/agent?route=risk-runtime" },
+    { "source": "/api/risk-guardian", "destination": "/api/agent?route=risk-policy" },
+    { "source": "/api/missions", "destination": "/api/dashboard?route=missions" },
+    { "source": "/api/erc8183/prepare", "destination": "/api/erc8183" }
+  ]
+}

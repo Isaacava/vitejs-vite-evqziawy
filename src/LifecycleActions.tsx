@@ -111,47 +111,17 @@ export default function LifecycleActions() {
           <span>ERC-8183 / EXCEPTIONS</span>
           <a href={`/evaluator?job=${encodeURIComponent(jobId)}`}>Back to evaluator →</a>
         </header>
-
         {error && <div className="lifecycle-alert lifecycle-alert-error">{error}</div>}
         {notice && <div className="lifecycle-alert lifecycle-alert-success">{notice}</div>}
-
         <section className="lifecycle-hero">
-          <div>
-            <span className="lifecycle-kicker">DISPUTE / REJECT / REFUND</span>
-            <h1>The unhappy paths are first-class protocol states.</h1>
-            <p>AgentMarket does not invent a dispute verdict. These controls call the ERC-8183 policy/kernel directly and then re-read the chain.</p>
-          </div>
+          <div><span className="lifecycle-kicker">DISPUTE / REJECT / REFUND</span><h1>The unhappy paths are first-class protocol states.</h1><p>AgentMarket does not invent a dispute verdict. These controls call the ERC-8183 policy/kernel directly and then re-read the chain.</p></div>
           <div className="lifecycle-state"><small>CHAIN STATUS</small><strong>{job ? statusLabel : "LOADING"}</strong><span>Job #{jobId || "—"} · BSC Testnet</span></div>
         </section>
-
         <div className="lifecycle-grid">
-          <section className="lifecycle-card">
-            <div className="lifecycle-head"><span>01 / DISPUTE</span><b>{disputeAvailable ? "AVAILABLE" : "LOCKED"}</b></div>
-            <h2>Client dispute</h2>
-            <p>Available only to the job client while the chain still reports SUBMITTED and the protocol dispute window is open. The contract remains the final authority on the exact window.</p>
-            <button disabled={!disputeAvailable || !!busy} onClick={() => void run("dispute")}>{busy === "dispute" ? "Confirming…" : "Raise dispute →"}</button>
-            <small>Wallet must match the on-chain client.</small>
-          </section>
-
-          <section className="lifecycle-card">
-            <div className="lifecycle-head"><span>02 / VOTER PATH</span><b>{status === 2 ? "READY FOR ELIGIBLE VOTER" : "LOCKED"}</b></div>
-            <h2>Vote reject</h2>
-            <p>Whitelisted voters may vote after a dispute. AgentMarket does not maintain the voter whitelist; the OptimisticPolicy contract decides whether the connected wallet is authorized.</p>
-            <button disabled={status !== 2 || !!busy} onClick={() => void run("voteReject")}>{busy === "voteReject" ? "Confirming…" : "Vote reject →"}</button>
-            <small>A non-whitelisted wallet will be rejected by the policy contract.</small>
-          </section>
-
-          <section className="lifecycle-card lifecycle-card-wide">
-            <div className="lifecycle-head"><span>03 / EXPIRY ESCAPE HATCH</span><b>{refundAvailable ? "AVAILABLE" : "LOCKED"}</b></div>
-            <div>
-              <h2>Claim refund after expiry</h2>
-              <p>The current BNB implementation documents <code>claimRefund(jobId)</code> as the universal fallback after <code>expiredAt</code> when settlement has not completed. It is non-pausable and does not rely on a platform moderator.</p>
-              <div className="lifecycle-meta"><span>EXPIRES</span><strong>{job ? new Date(Number(job.expiredAt) * 1000).toLocaleString() : "—"}</strong></div>
-              <button disabled={!refundAvailable || !!busy} onClick={() => void run("claimRefund")}>{busy === "claimRefund" ? "Confirming…" : "Claim refund →"}</button>
-            </div>
-          </section>
+          <section className="lifecycle-card"><div className="lifecycle-head"><span>01 / DISPUTE</span><b>{disputeAvailable ? "AVAILABLE" : "LOCKED"}</b></div><h2>Client dispute</h2><p>Available only to the job client while the chain still reports SUBMITTED and the protocol dispute window is open. The contract remains the final authority on the exact window.</p><button disabled={!disputeAvailable || !!busy} onClick={() => void run("dispute")}>{busy === "dispute" ? "Confirming…" : "Raise dispute →"}</button><small>Wallet must match the on-chain client.</small></section>
+          <section className="lifecycle-card"><div className="lifecycle-head"><span>02 / VOTER PATH</span><b>{status === 2 ? "READY FOR ELIGIBLE VOTER" : "LOCKED"}</b></div><h2>Vote reject</h2><p>Whitelisted voters may vote after a dispute. AgentMarket does not maintain the voter whitelist; the OptimisticPolicy contract decides whether the connected wallet is authorized.</p><button disabled={status !== 2 || !!busy} onClick={() => void run("voteReject")}>{busy === "voteReject" ? "Confirming…" : "Vote reject →"}</button><small>A non-whitelisted wallet will be rejected by the policy contract.</small></section>
+          <section className="lifecycle-card lifecycle-card-wide"><div className="lifecycle-head"><span>03 / EXPIRY ESCAPE HATCH</span><b>{refundAvailable ? "AVAILABLE" : "LOCKED"}</b></div><div><h2>Claim refund after expiry</h2><p>The current BNB implementation documents <code>claimRefund(jobId)</code> as the fallback after <code>expiredAt</code> when settlement has not completed. It is non-pausable and does not rely on a platform moderator.</p><div className="lifecycle-meta"><span>EXPIRES</span><strong>{job ? new Date(Number(job.expiredAt) * 1000).toLocaleString() : "—"}</strong></div><button disabled={!refundAvailable || !!busy} onClick={() => void run("claimRefund")}>{busy === "claimRefund" ? "Confirming…" : "Claim refund →"}</button></div></section>
         </div>
-
         <footer className="lifecycle-footer">Protocol source of truth: BSC Testnet. Supabase mirrors verified chain results; it never decides whether a dispute, reject, settle, or refund is valid.</footer>
       </div>
     </main>

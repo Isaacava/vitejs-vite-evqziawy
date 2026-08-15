@@ -12,6 +12,8 @@ export type MarketplaceAgent = {
 
 export type AgentMatch = MarketplaceAgent & {
   score: number;
+  scoreMax: number;
+  scoreConfidence: "high" | "medium" | "low";
   reasons: string[];
   breakdown: {
     capability: number;
@@ -20,6 +22,11 @@ export type AgentMatch = MarketplaceAgent & {
     reputation: number;
     completion: number;
     liveness: number;
+  };
+  evidence: {
+    reputationAvailable: boolean;
+    completionAvailable: boolean;
+    livenessAvailable: boolean;
   };
 };
 
@@ -77,25 +84,46 @@ export function matchAgents(goal: string, agents: MarketplaceAgent[]): AgentMatc
           ? Math.round(WEIGHTS.availability * 0.65)
           : Math.round(WEIGHTS.availability * 0.2);
       const verification = agent.isFirstParty ? WEIGHTS.verification : Math.round(WEIGHTS.verification * 0.65);
-      const reputation = Math.round((Math.max(0, Math.min(100, agent.reputation ?? 50)) / 100) * WEIGHTS.reputation);
-      const completion = Math.round((Math.max(0, Math.min(100, agent.completionRate ?? 50)) / 100) * WEIGHTS.completion);
-      const liveness = agent.endpointHealthy === false ? 0 : WEIGHTS.liveness;
+      const reputationAvailable = typeof agent.reputation === "number" && Number.isFinite(agent.reputation);
+      const completionAvailable = typeof agent.completionRate === "number" && Number.isFinite(agent.completionRate);
+      const livenessAvailable = typeof agent.endpointHealthy === "boolean";
+      const reputation = reputationAvailable
+        ? Math.round((Math.max(0, Math.min(100, agent.reputation!)) / 100) * WEIGHTS.reputation)
+        : 0;
+      const completion = completionAvailable
+        ? Math.round((Math.max(0, Math.min(100, agent.completionRate!)) / 100) * WEIGHTS.completion)
+        : 0;
+      const liveness = livenessAvailable
+        ? (agent.endpointHealthy ? WEIGHTS.liveness : 0)
+        : 0;
 
       const score = capability + availability + verification + reputation + completion + liveness;
+      const scoreMax = capability + availability + verification
+        + (reputationAvailable ? WEIGHTS.reputation : 0)
+        + (completionAvailable ? WEIGHTS.completion : 0)
+        + (livenessAvailable ? WEIGHTS.liveness : 0);
+      const evidenceCount = [reputationAvailable, completionAvailable, livenessAvailable].filter(Boolean).length;
+      const scoreConfidence: AgentMatch["scoreConfidence"] = evidenceCount >= 2 ? "high" : evidenceCount === 1 ? "medium" : "low";
+      const normalizedScore = scoreMax > 0 ? Math.round((score / scoreMax) * 100) : 0;
       const reasons: string[] = [];
 
       if (matchedTerms.length) reasons.push(`Matches ${matchedTerms.join(", ")} intent`);
       if (agent.status === "online") reasons.push("Agent is online");
       if (agent.isFirstParty) reasons.push("Verified first-party agent");
-      if ((agent.reputation ?? 0) >= 80) reasons.push("Strong reputation");
-      if ((agent.completionRate ?? 0) >= 90) reasons.push("High completion rate");
-      if (agent.endpointHealthy !== false) reasons.push("Endpoint is healthy");
+      if (reputationAvailable && agent.reputation! >= 80) reasons.push("Strong verified reputation evidence");
+      if (completionAvailable && agent.completionRate! >= 90) reasons.push("High verified completion rate");
+      if (livenessAvailable && agent.endpointHealthy) reasons.push("Endpoint is healthy");
+      if (!reputationAvailable) reasons.push("Reputation history is not yet available");
+      if (!completionAvailable) reasons.push("Completion history is not yet available");
 
       return {
         ...agent,
-        score,
+        score: normalizedScore,
+        scoreMax,
+        scoreConfidence,
         reasons: reasons.slice(0, 4),
         breakdown: { capability, availability, verification, reputation, completion, liveness },
+        evidence: { reputationAvailable, completionAvailable, livenessAvailable },
       };
     })
     .sort((a, b) => b.score - a.score);

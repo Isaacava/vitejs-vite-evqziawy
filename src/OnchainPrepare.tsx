@@ -1,149 +1,288 @@
 import { useEffect, useState } from "react";
-import "./onchain-prepare.css";
+import { getCurrentUser, type AuthUser } from "./lib/walletAuth";
+import { readPaymentState, type PaymentState } from "./lib/bscTestnet";
+import "./mission-console.css";
 
-type PrepareResponse = {
+type Preparation = {
   ok: boolean;
   network: string;
   mission: { id: string; status: string };
-  agent: {
-    agent_id: string;
-    name: string | null;
-    provider: string;
-    status: string | null;
-    verification_status: string | null;
-  };
+  agent: { agent_id: string; name: string | null; provider: string; status: string; verification_status: string };
   commerce: { address: string; evaluator: string; hook: string; default_policy: string };
   payment: { token: string; symbol: string; decimals: number; budget_raw: string };
   expiry: string;
   wallet_steps: string[];
-  transactions: {
-    createJob: { to: string; value: string; data: string };
-    registerJob: { to: string; value: string; data_builder: string; policy: string };
-    setBudget: { to: string; value: string; data_builder: string };
-    approve: { to: string; value: string; data_builder: string };
-    fund: { to: string; value: string; data_builder: string };
-  };
+  transactions: Record<string, { to?: string; value?: string; data?: string; policy?: string; data_builder?: string }>;
   note: string;
 };
 
-function compact(value?: string) {
-  if (!value) return "—";
-  return `${value.slice(0, 8)}…${value.slice(-6)}`;
-}
+type ReceiptResult = {
+  ok: boolean;
+  phase: string;
+  tx_hash: string;
+  block_number: string;
+  receipt_status: string;
+  job?: { id: string; mission_task_id: string; status: string; chain_job_id: number | null; chain_status: string; updated_at: string };
+  onchain_job?: { id: string; status: number; budget: string; provider: string; client: string } | null;
+  note?: string;
+};
+
+const compact = (value?: string | null) => value ? `${value.slice(0, 8)}…${value.slice(-6)}` : "—";
+const validAddress = (value?: string | null) => /^0x[a-fA-F0-9]{40}$/.test(value || "");
 
 export default function OnchainPrepare() {
-  const params = new URLSearchParams(window.location.search);
-  const missionId = params.get("mission") || "";
+  const missionId = new URLSearchParams(window.location.search).get("mission") || "";
   const [budget, setBudget] = useState("1");
-  const [wallet, setWallet] = useState<string | null>(null);
-  const [result, setResult] = useState<PrepareResponse | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [livePayment, setLivePayment] = useState<PaymentState | null>(null);
+  const [data, setData] = useState<Preparation | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [readingChain, setReadingChain] = useState(false);
+  const [preparing, setPreparing] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [receiptPhase, setReceiptPhase] = useState("create");
+  const [txHash, setTxHash] = useState("");
+  const [receiptResult, setReceiptResult] = useState<ReceiptResult | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    const provider = (window as Window & { ethereum?: { request?: (args: { method: string }) => Promise<unknown> } }).ethereum;
-    if (!provider?.request) return;
-    void provider.request({ method: "eth_accounts" }).then((accounts) => {
-      const first = Array.isArray(accounts) ? accounts[0] : null;
-      if (typeof first === "string") setWallet(first);
-    });
+    let mounted = true;
+    async function loadUser() {
+      try {
+        const current = await getCurrentUser();
+        if (!mounted) return;
+        if (!current) {
+          window.location.href = `/dashboard?return=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+          return;
+        }
+        setUser(current);
+      } catch (cause) {
+        if (mounted) setError(cause instanceof Error ? cause.message : "Unable to load your wallet session");
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    void loadUser();
+    return () => {
+      mounted = false;
+    };
   }, []);
+
+  useEffect(() => {
+    if (!validAddress(user?.wallet_address)) return;
+    let mounted = true;
+    async function loadPaymentState() {
+      setReadingChain(true);
+      try {
+        const state = await readPaymentState(user!.wallet_address as `0x${string}`);
+        if (mounted) setLivePayment(state);
+      } catch (cause) {
+        if (mounted) setError(cause instanceof Error ? cause.message : "Unable to read BSC Testnet payment state");
+      } finally {
+        if (mounted) setReadingChain(false);
+      }
+    }
+    void loadPaymentState();
+    return () => {
+      mounted = false;
+    };
+  }, [user?.wallet_address]);
 
   async function prepare() {
     if (!missionId) {
-      setError("Open this page with a mission id.");
+      setError("No mission selected.");
       return;
     }
-    if (!wallet) {
-      setError("Connect a wallet first. No transaction will be signed on this page.");
+    if (!user?.wallet_address) {
+      setError("Connect and sign in before preparing the mission.");
       return;
     }
-    setLoading(true);
+
+    const requested = Number(budget);
+    if (!Number.isFinite(requested) || requested <= 0) {
+      setError("Enter a valid positive mission budget.");
+      return;
+    }
+
+    if (livePayment) {
+      const balance = Number(livePayment.balanceFormatted);
+      if (Number.isFinite(balance) && requested > balance) {
+        setError(`Wallet balance is ${livePayment.balanceFormatted} ${livePayment.symbol}; the requested mission budget is ${budget} ${livePayment.symbol}.`);
+        return;
+      }
+    }
+
+    setPreparing(true);
     setError("");
     try {
       const response = await fetch("/api/erc8183/prepare", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mission_id: missionId, client_address: wallet, budget }),
+        body: JSON.stringify({
+          mission_id: missionId,
+          client_address: user.wallet_address,
+          budget,
+        }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data?.error || "Unable to prepare mission");
-      setResult(data as PrepareResponse);
+      const body = await response.json();
+      if (!response.ok) throw new Error(body?.error || "Unable to prepare mission");
+      setData(body as Preparation);
     } catch (cause) {
-      setResult(null);
       setError(cause instanceof Error ? cause.message : "Unable to prepare mission");
     } finally {
-      setLoading(false);
+      setPreparing(false);
     }
   }
 
+  async function syncReceipt() {
+    const jobId = data?.mission?.id ? new URLSearchParams(window.location.search).get("job") || "" : "";
+    if (!missionId || !jobId || !txHash.startsWith("0x") || txHash.length !== 66) {
+      setError("Receipt verification needs the mission, marketplace job ID, and a 66-character transaction hash.");
+      return;
+    }
+    setSyncing(true);
+    setError("");
+    setReceiptResult(null);
+    try {
+      const response = await fetch("/api/erc8183/prepare", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "sync_receipt",
+          mission_id: missionId,
+          job_id: jobId,
+          phase: receiptPhase,
+          tx_hash: txHash,
+          chain_job_id: data?.transactions?.create_job && receiptPhase === "create" ? undefined : (data?.mission?.id ? new URLSearchParams(window.location.search).get("chainJob") || undefined : undefined),
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body?.error || "Receipt verification failed");
+      setReceiptResult(body as ReceiptResult);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Receipt verification failed");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  if (!missionId) {
+    return (
+      <main className="console-page">
+        <div className="console-shell">
+          <section className="console-card">
+            <span className="console-kicker">ERC-8183 / PREPARE</span>
+            <h1>No mission selected.</h1>
+            <p>Return to the marketplace and choose a mission before preparing on-chain.</p>
+            <a className="console-dark-button" href="/app">Back to marketplace →</a>
+          </section>
+        </div>
+      </main>
+    );
+  }
+
+  const allowanceEnough = livePayment && Number(livePayment.allowanceFormatted) >= Number(budget);
+
   return (
-    <main className="prepare-page">
-      <div className="prepare-orbit prepare-orbit-a" />
-      <div className="prepare-orbit prepare-orbit-b" />
-      <header className="prepare-nav">
-        <a href="/" className="prepare-brand">AgentMarket</a>
-        <span>MISSION / ON-CHAIN PREP</span>
-        <a href="/app">Back to marketplace →</a>
-      </header>
+    <main className="console-page">
+      <div className="console-curve console-curve-a" aria-hidden="true" />
+      <div className="console-curve console-curve-b" aria-hidden="true" />
+      <div className="console-shell">
+        <header className="console-nav">
+          <a href="/" className="console-brand">AgentMarket</a>
+          <span>MISSION / ON-CHAIN PREPARATION</span>
+          <a href="/app">Back to marketplace →</a>
+        </header>
 
-      <section className="prepare-hero">
-        <div>
-          <span className="prepare-kicker">ERC-8183 · WALLET-READY</span>
-          <h1>Turn the mission into a real job.</h1>
-          <p>AgentMarket prepares the transaction sequence. Your wallet remains the signer, and the mission is not marked funded until the blockchain receipts confirm it.</p>
-        </div>
-        <div className="prepare-note">
-          <small>IMPORTANT</small>
-          <strong>Prepare ≠ Fund</strong>
-          <span>No private key is stored or used by the server.</span>
-        </div>
-      </section>
+        {error && <div className="console-alert console-alert-error">{error}</div>}
 
-      <section className="prepare-card">
-        <div className="prepare-form-head"><span>01 / MISSION</span><b>{missionId ? compact(missionId) : "Missing mission"}</b></div>
-        <div className="prepare-form">
-          <label>
-            <span>Budget in payment-token units</span>
-            <input value={budget} onChange={(event) => setBudget(event.target.value)} inputMode="decimal" min="0" step="0.01" />
-          </label>
-          <div className="wallet-state">
-            <span>Wallet</span>
-            <b>{wallet ? compact(wallet) : "Not connected"}</b>
+        <section className="console-hero">
+          <div>
+            <span className="console-kicker">ERC-8183 / BSC TESTNET</span>
+            <h1>Review the job before the wallet signs.</h1>
+            <p>AgentMarket reads the live testnet payment state first. The server never receives your private key, and no transaction is sent automatically.</p>
           </div>
-          <button type="button" className="prepare-button" onClick={() => void prepare()} disabled={loading}>
-            {loading ? "Preparing…" : "Prepare ERC-8183 sequence →"}
-          </button>
-        </div>
-      </section>
-
-      {error && <div className="prepare-alert error">{error}</div>}
-
-      {result && (
-        <section className="prepare-result">
-          <div className="prepare-result-head"><span>02 / TRANSACTION PLAN</span><b>{result.network}</b></div>
-          <div className="prepare-summary">
-            <div><small>Agent</small><strong>{result.agent.name || `Agent #${result.agent.agent_id}`}</strong></div>
-            <div><small>Payment token</small><strong>{result.payment.symbol}</strong></div>
-            <div><small>Budget</small><strong>{result.payment.budget_raw}</strong></div>
-            <div><small>Provider</small><strong>{compact(result.agent.provider)}</strong></div>
-          </div>
-          <div className="prepare-steps">
-            {result.wallet_steps.map((step, index) => (
-              <div className="prepare-step" key={step}>
-                <span>{String(index + 1).padStart(2, "0")}</span>
-                <div><strong>{step}</strong><p>{index === 0 ? "Creates the on-chain ERC-8183 job." : index === 1 ? "Attaches the evaluation policy before funding." : index === 2 ? "Sets the job escrow budget." : index === 3 ? "Approves the commerce contract only when needed." : "Moves the defined budget into the job escrow."}</p></div>
-              </div>
-            ))}
-          </div>
-          <div className="prepare-proof">
-            <div><small>Create Job</small><code>{compact(result.transactions.createJob.to)}</code></div>
-            <div><small>Policy</small><code>{compact(result.transactions.registerJob.policy)}</code></div>
-            <div><small>Token</small><code>{compact(result.payment.token)}</code></div>
-          </div>
-          <div className="prepare-footnote">{result.note}</div>
+          <div className="console-state"><small>CHAIN</small><strong>BSC TESTNET / 97</strong><span>{readingChain ? "Reading live payment state…" : "Live balance and allowance checked."}</span></div>
         </section>
-      )}
+
+        {loading ? (
+          <section className="console-card"><div className="console-section-head"><span>SESSION</span><b>LOADING</b></div><p className="console-evidence">Checking your signed AgentMarket session…</p></section>
+        ) : (
+          <>
+            <div className="console-grid">
+              <section className="console-card">
+                <div className="console-section-head"><span>01 / JOB TERMS</span><b>{data?.agent?.name || "Selected agent"}</b></div>
+                <div className="console-stat"><span>Mission</span><strong>{compact(missionId)}</strong></div>
+                <div className="console-stat"><span>Client wallet</span><strong>{compact(user?.wallet_address)}</strong></div>
+                <div className="console-stat"><span>Provider wallet</span><strong>{compact(data?.agent?.provider)}</strong></div>
+                <div className="console-stat"><span>Identity</span><strong>{data?.agent?.verification_status || "indexed"}</strong></div>
+                <div className="console-stat"><span>Endpoint</span><strong>{data?.agent?.status || "unknown"}</strong></div>
+                <div className="console-stat"><span>Payment asset</span><strong>{livePayment?.symbol || data?.payment?.symbol || "—"}</strong></div>
+                <label className="console-field-label" htmlFor="mission-budget">MISSION BUDGET</label>
+                <input id="mission-budget" className="console-input" value={budget} onChange={(event) => { setBudget(event.target.value); setData(null); }} inputMode="decimal" />
+                <button className="console-brass-button" disabled={preparing || readingChain || !user?.wallet_address} onClick={() => void prepare()}>{preparing ? "Preparing…" : "Build transaction plan →"}</button>
+              </section>
+
+              <aside className="console-card">
+                <div className="console-section-head"><span>02 / LIVE PREFLIGHT</span><b>{readingChain ? "READING" : livePayment ? "CONNECTED" : "WAITING"}</b></div>
+                <div className="console-stat"><span>Payment token</span><strong>{livePayment ? compact(livePayment.token) : "—"}</strong></div>
+                <div className="console-stat"><span>Wallet balance</span><strong>{livePayment ? `${livePayment.balanceFormatted} ${livePayment.symbol}` : "—"}</strong></div>
+                <div className="console-stat"><span>Allowance to Commerce</span><strong>{livePayment ? `${livePayment.allowanceFormatted} ${livePayment.symbol}` : "—"}</strong></div>
+                <div className="console-stat"><span>Approval required</span><strong>{livePayment ? (allowanceEnough ? "No" : "Yes") : "—"}</strong></div>
+                <p className="console-evidence">The payment token is resolved from Commerce at runtime. Approval is only needed when the existing allowance is insufficient.</p>
+              </aside>
+            </div>
+
+            <section className="console-card console-plan-card">
+              <div className="console-section-head"><span>03 / TRANSACTION PLAN</span><b>{data ? "INSPECTABLE" : "NOT LOADED"}</b></div>
+              {!data ? (
+                <ol className="console-sequence">
+                  {["createJob", "registerJob", "setBudget", "approve payment token if needed", "fund"].map((step, index) => (
+                    <li key={step}><span>{String(index + 1).padStart(2, "0")}</span><strong>{step}</strong><small>{index === 4 ? "Moves the approved payment into ERC-8183 escrow." : "Preparation only; wallet confirmation is required."}</small></li>
+                  ))}
+                </ol>
+              ) : (
+                <>
+                  <div className="console-plan-list">
+                    {Object.entries(data.transactions).map(([name, tx]) => (
+                      <article className="console-plan-row" key={name}>
+                        <div><small>{name.replace(/_/g, " ")}</small><strong>{tx.to ? compact(tx.to) : tx.policy ? compact(tx.policy) : "builder"}</strong></div>
+                        <p>{tx.data ? "Encoded transaction data ready." : tx.data_builder || "No data generated yet."}</p>
+                      </article>
+                    ))}
+                  </div>
+                  <div className="console-evidence"><small>IMPORTANT</small><p>{data.note}</p></div>
+                </>
+              )}
+            </section>
+
+            <section className="console-card console-plan-card">
+              <div className="console-section-head"><span>04 / RECEIPT CONFIRMATION</span><b>{receiptResult ? "CONFIRMED" : "WAITING FOR HASH"}</b></div>
+              <p className="console-evidence">After your wallet confirms a transaction, enter its hash here. AgentMarket verifies the actual BSC Testnet receipt and contract target before advancing the marketplace job state.</p>
+              <div className="console-grid">
+                <div>
+                  <label className="console-field-label" htmlFor="receipt-phase">CONFIRMED PHASE</label>
+                  <select id="receipt-phase" className="console-input" value={receiptPhase} onChange={(event) => setReceiptPhase(event.target.value)}>
+                    <option value="create">createJob</option>
+                    <option value="register">registerJob</option>
+                    <option value="set_budget">setBudget</option>
+                    <option value="approve">approve</option>
+                    <option value="fund">fund</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="console-field-label" htmlFor="tx-hash">TRANSACTION HASH</label>
+                  <input id="tx-hash" className="console-input" value={txHash} onChange={(event) => setTxHash(event.target.value.trim())} placeholder="0x…" autoComplete="off" spellCheck={false} />
+                </div>
+              </div>
+              <button className="console-dark-button" disabled={syncing || !txHash} onClick={() => void syncReceipt()}>{syncing ? "Verifying receipt…" : "Verify on-chain receipt →"}</button>
+              {receiptResult && <div className="console-evidence"><small>VERIFIED</small><p>{receiptResult.phase} confirmed in block {receiptResult.block_number}. Chain state: {receiptResult.job?.chain_status || "verified"}. Tx: {compact(receiptResult.tx_hash)}.</p></div>}
+            </section>
+          </>
+        )}
+      </div>
     </main>
   );
 }
