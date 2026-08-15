@@ -4,8 +4,8 @@ import type { Address, Chain } from "viem";
 export type BscNetworkName = "testnet";
 export type AppEnvironment = "testnet";
 
-// This branch is the marketplace's complete development environment.
-// It is intentionally hard-locked to BSC Testnet so production/mainnet
+// marketplace-testnet is the complete development environment.
+// It is intentionally hard-locked to BSC Testnet so production/Mainnet
 // contracts, balances, and transactions cannot be used accidentally.
 export const APP_ENV: AppEnvironment = "testnet";
 export const BSC_NETWORK: BscNetworkName = "testnet";
@@ -18,35 +18,18 @@ export const BSC_RPC_URL =
 
 export const BSC_EXPLORER_URL = "https://testnet.bscscan.com";
 
-function requireAddress(name: string, value: string | undefined): Address {
-  if (!value || !/^0x[a-fA-F0-9]{40}$/.test(value)) {
-    throw new Error(
-      `${name} is required for the marketplace testnet build. Set the corresponding VITE_* environment variable.`
-    );
-  }
-  return value as Address;
-}
+const TESTNET_CONTRACTS = {
+  commerce: "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de",
+  router: "0xd7d36d66d2f1b608a0f943f722d27e3744f66f25",
+  policy: "0x4f4678d4439fec812ac7674bb3efb4c8f5fb78a6",
+  registry: "0x8004A818BFB912233c491871b3d84c89A494BD9e",
+} as const;
 
-// Testnet contract addresses are deliberately environment-provided so the
-// test marketplace can follow the current BNB Agent SDK/APEX testnet presets
-// without ever sharing production addresses.
 export const NETWORK_CONTRACTS = {
-  commerce: requireAddress(
-    "VITE_ERC8183_COMMERCE_ADDRESS",
-    import.meta.env.VITE_ERC8183_COMMERCE_ADDRESS,
-  ),
-  router: requireAddress(
-    "VITE_ERC8183_ROUTER_ADDRESS",
-    import.meta.env.VITE_ERC8183_ROUTER_ADDRESS,
-  ),
-  policy: requireAddress(
-    "VITE_ERC8183_POLICY_ADDRESS",
-    import.meta.env.VITE_ERC8183_POLICY_ADDRESS,
-  ),
-  registry: requireAddress(
-    "VITE_ERC8004_REGISTRY_ADDRESS",
-    import.meta.env.VITE_ERC8004_REGISTRY_ADDRESS,
-  ),
+  commerce: TESTNET_CONTRACTS.commerce as Address,
+  router: TESTNET_CONTRACTS.router as Address,
+  policy: TESTNET_CONTRACTS.policy as Address,
+  registry: TESTNET_CONTRACTS.registry as Address,
 } as const;
 
 export function assertExpectedChain(actualChainId: number) {
