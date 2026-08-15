@@ -1,3 +1,5 @@
+import { EthereumProvider } from "@walletconnect/ethereum-provider";
+
 type Eip1193Provider = {
   request(args: { method: string; params?: unknown[] }): Promise<unknown>;
 };
@@ -17,10 +19,37 @@ export type AuthUser = {
   updated_at: string;
 };
 
-export async function connectWalletAndSignIn() {
-  if (!window.ethereum) throw new Error("No browser wallet was detected. Install a compatible EVM wallet to continue.");
+export const WALLETCONNECT_PROJECT_ID = "1dbe8fd5e4974ae7c80d074c4082b5a0";
+export const AUTH_CHAIN_ID = 97;
 
-  const accounts = (await window.ethereum.request({ method: "eth_requestAccounts" })) as string[];
+let walletProvider: Eip1193Provider | null = null;
+
+async function getWalletProvider(): Promise<Eip1193Provider> {
+  if (walletProvider) return walletProvider;
+
+  const provider = await EthereumProvider.init({
+    projectId: WALLETCONNECT_PROJECT_ID,
+    chains: [AUTH_CHAIN_ID],
+    showQrModal: true,
+    metadata: {
+      name: "AgentMarket",
+      description: "Agent-to-agent marketplace on BNB Smart Chain",
+      url: window.location.origin,
+      icons: [],
+    },
+  });
+
+  if (!provider.connected) {
+    await provider.connect();
+  }
+
+  walletProvider = provider as unknown as Eip1193Provider;
+  return walletProvider;
+}
+
+export async function connectWalletAndSignIn() {
+  const provider = await getWalletProvider();
+  const accounts = (await provider.request({ method: "eth_accounts" })) as string[];
   const wallet = accounts?.[0];
   if (!wallet) throw new Error("No wallet account was selected.");
 
@@ -32,7 +61,7 @@ export async function connectWalletAndSignIn() {
   const challenge = await challengeResponse.json();
   if (!challengeResponse.ok) throw new Error(challenge?.error || "Unable to start wallet sign-in");
 
-  const signature = await window.ethereum.request({
+  const signature = await provider.request({
     method: "personal_sign",
     params: [challenge.message, wallet],
   });
@@ -57,4 +86,5 @@ export async function getCurrentUser() {
 
 export async function signOut() {
   await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+  walletProvider = null;
 }
