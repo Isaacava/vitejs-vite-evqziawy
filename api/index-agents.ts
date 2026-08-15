@@ -156,7 +156,7 @@ async function syncAgent(supabase: ReturnType<typeof supabaseServer>, agentId: s
     description: registration.description || null,
     image: registration.image || null,
     chain: "bsc",
-    indexed_at: now,
+    indexed_at: existing?.indexed_at || now,
     last_indexed_at: now,
     ...(existing?.source && existing.source !== "indexed"
       ? {}
@@ -226,6 +226,8 @@ async function syncAgent(supabase: ReturnType<typeof supabaseServer>, agentId: s
 }
 
 const readContract = publicClient.readContract.bind(publicClient) as unknown as (args: Record<string, unknown>) => Promise<any>;
+const OWNER_OF_ABI = [{ type: "function", name: "ownerOf", stateMutability: "view", inputs: [{ name: "tokenId", type: "uint256" }], outputs: [{ type: "address" }] }] as const;
+const TOKEN_URI_ABI = [{ type: "function", name: "tokenURI", stateMutability: "view", inputs: [{ name: "tokenId", type: "uint256" }], outputs: [{ type: "string" }] }] as const;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET" && req.method !== "POST") {
@@ -250,21 +252,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .from("agent_registry_syncs")
       .select("to_block")
       .eq("network", "bsc")
-      .eq("status", "completed")
+      .in("status", ["completed", "completed_with_errors"])
       .order("completed_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
     const configuredStart = process.env.ERC8004_INDEX_START_BLOCK;
+    const bootstrapStart = configuredStart ? BigInt(configuredStart) : 0n;
     const start = previous?.to_block != null
       ? BigInt(previous.to_block) + 1n
-      : configuredStart
-        ? BigInt(configuredStart)
-        : latest > 50_000n ? latest - 50_000n : 0n;
+      : bootstrapStart;
     const end = start + BLOCKS_PER_RUN - 1n > latest ? latest : start + BLOCKS_PER_RUN - 1n;
 
     if (start > latest) {
-      return res.status(200).json({ ok: true, message: "Indexer already caught up", latest: latest.toString() });
+      return res.status(200).json({ ok: true, message: "Indexer already caught up", latest: latest.toString(), discovered_source: "erc8004_transfer_events" });
     }
 
     const { data: sync, error: syncError } = await supabase.from("agent_registry_syncs").insert({
@@ -304,18 +305,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       try {
         const tokenId = BigInt(agentId);
         const [owner, uri] = await Promise.all([
-          readContract({
-            address: ERC8004_REGISTRY_ADDRESS,
-            abi: [{ type: "function", name: "ownerOf", stateMutability: "view", inputs: [{ name: "tokenId", type: "uint256" }], outputs: [{ type: "address" }] }] as const,
-            functionName: "ownerOf",
-            args: [tokenId],
-          }),
-          readContract({
-            address: ERC8004_REGISTRY_ADDRESS,
-            abi: [{ type: "function", name: "tokenURI", stateMutability: "view", inputs: [{ name: "tokenId", type: "uint256" }], outputs: [{ type: "string" }] }] as const,
-            functionName: "tokenURI",
-            args: [tokenId],
-          }),
+          readContract({ address: ERC8004_REGISTRY_ADDRESS, abi: OWNER_OF_ABI, functionName: "ownerOf", args: [tokenId] }),
+          readContract({ address: ERC8004_REGISTRY_ADDRESS, abi: TOKEN_URI_ABI, functionName: "tokenURI", args: [tokenId] }),
         ]);
         await syncAgent(supabase, agentId, String(owner), String(uri));
         upserted += 1;
@@ -342,6 +333,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       agents_upserted: upserted,
       errors,
       next_run_from_block: end < latest ? (end + 1n).toString() : null,
+      discovered_source: "erc8004_transfer_events",
+      inventory_policy: "automatic_discovery_first",
     });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Indexer failed" });
