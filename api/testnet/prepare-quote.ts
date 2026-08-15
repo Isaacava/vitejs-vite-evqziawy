@@ -14,7 +14,6 @@ const COMMERCE_ABI = [
     { name: "expiredAt", type: "uint256" }, { name: "description", type: "string" }, { name: "hook", type: "address" },
   ], outputs: [{ name: "jobId", type: "uint256" }] },
   { type: "function", name: "paymentToken", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] },
-  { type: "function", name: "balanceOf", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
 ] as const;
 const ERC20_ABI = [
   { type: "function", name: "balanceOf", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
@@ -25,6 +24,7 @@ const ERC20_ABI = [
 const ROUTER_ABI = [{ type: "function", name: "registerJob", stateMutability: "nonpayable", inputs: [{ name: "jobId", type: "uint256" }, { name: "policy", type: "address" }], outputs: [] }] as const;
 
 const client = createPublicClient({ chain: bscTestnet, transport: http() });
+const READ_OPTIONS = { authorizationList: [] } as const;
 
 function validAddress(value: unknown): value is Address {
   return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value);
@@ -94,22 +94,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (endpoint.error) throw new Error(endpoint.error.message);
     if (!endpoint.data || endpoint.data.status !== "online") return res.status(409).json({ error: "Provider is no longer healthy on Testnet" });
 
-    const token = await client.readContract({ address: COMMERCE, abi: COMMERCE_ABI, functionName: "paymentToken" });
+    const token = await client.readContract({ address: COMMERCE, abi: COMMERCE_ABI, functionName: "paymentToken", ...READ_OPTIONS });
     const [decimals, symbol, balance, allowance] = await Promise.all([
-      client.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" }),
-      client.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol" }),
-      client.readContract({ address: token, abi: ERC20_ABI, functionName: "balanceOf", args: [clientAddress] }),
-      client.readContract({ address: token, abi: ERC20_ABI, functionName: "allowance", args: [clientAddress, COMMERCE] }),
+      client.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals", ...READ_OPTIONS }),
+      client.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol", ...READ_OPTIONS }),
+      client.readContract({ address: token, abi: ERC20_ABI, functionName: "balanceOf", args: [clientAddress], ...READ_OPTIONS }),
+      client.readContract({ address: token, abi: ERC20_ABI, functionName: "allowance", args: [clientAddress, COMMERCE], ...READ_OPTIONS }),
     ]);
 
     const rawBudget = parseUnits(String(quote.price), Number(decimals));
     if (rawBudget <= 0n) return res.status(409).json({ error: "Accepted provider quote has a non-positive price" });
     if (BigInt(balance) < rawBudget) return res.status(409).json({ error: `Insufficient Testnet settlement-token balance. Required ${formatUnits(rawBudget, Number(decimals))} ${symbol}.`, required_raw: rawBudget.toString(), balance_raw: String(balance) });
 
-    const expiryUnix = Math.min(
-      Math.floor(new Date(quote.expires_at).getTime() / 1000),
-      Math.floor(Date.now() / 1000) + 60 * 60,
-    );
+    const expiryUnix = Math.min(Math.floor(new Date(quote.expires_at).getTime() / 1000), Math.floor(Date.now() / 1000) + 60 * 60);
     const description = JSON.stringify({
       marketplace: "AgentMarket",
       network: "bsc-testnet",
@@ -123,42 +120,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       params: quote.request_metadata,
     });
 
-    const createJobData = encodeFunctionData({
-      abi: COMMERCE_ABI,
-      functionName: "createJob",
-      args: [agent.owner, ROUTER, BigInt(expiryUnix), description, ROUTER],
-    });
+    const createJobData = encodeFunctionData({ abi: COMMERCE_ABI, functionName: "createJob", args: [agent.owner, ROUTER, BigInt(expiryUnix), description, ROUTER] });
     const registerTemplate = encodeFunctionData({ abi: ROUTER_ABI, functionName: "registerJob", args: [0n, POLICY] });
 
     return res.status(200).json({
-      ok: true,
-      network: "bsc-testnet",
-      chain_id: CHAIN_ID,
-      environment: "testnet",
+      ok: true, network: "bsc-testnet", chain_id: CHAIN_ID, environment: "testnet",
       mission: { id: mission.id, status: mission.status, goal: mission.goal },
       quote: { quote_id: quote.quote_id, price: String(quote.price), currency: quote.currency, quote_hash: quote.quote_hash, expires_at: quote.expires_at, status: quote.status },
       agent: { agent_id: agent.agent_id, name: agent.name, provider: agent.owner, status: agent.status, verification_status: agent.verification_status },
       commerce: { address: COMMERCE, evaluator: ROUTER, hook: ROUTER, default_policy: POLICY },
-      payment: {
-        token,
-        symbol,
-        decimals: Number(decimals),
-        budget_raw: rawBudget.toString(),
-        balance_raw: String(balance),
-        allowance_raw: String(allowance),
-        balance_formatted: formatUnits(BigInt(balance), Number(decimals)),
-        allowance_formatted: formatUnits(BigInt(allowance), Number(decimals)),
-      },
+      payment: { token, symbol, decimals: Number(decimals), budget_raw: rawBudget.toString(), balance_raw: String(balance), allowance_raw: String(allowance), balance_formatted: formatUnits(BigInt(balance), Number(decimals)), allowance_formatted: formatUnits(BigInt(allowance), Number(decimals)) },
       job_description: description,
       wallet_steps: ["createJob", "registerJob with confirmed jobId", "setBudget with confirmed jobId and quoted budget", "approve payment token if allowance is insufficient", "fund with the same quoted budget"],
       transactions: {
         create_job: { to: COMMERCE, data: createJobData },
-        register_job: { to: ROUTER, data: registerTemplate, data_builder: `Replace placeholder jobId 0 with the confirmed createJob receipt jobId.` },
+        register_job: { to: ROUTER, data: registerTemplate, data_builder: "Replace placeholder jobId 0 with the confirmed createJob receipt jobId." },
         set_budget: { to: COMMERCE, data_builder: `encode setBudget(jobId, ${rawBudget.toString()}, 0x)` },
         approve: BigInt(allowance) < rawBudget ? { to: token, data_builder: `encode approve(${COMMERCE}, ${rawBudget.toString()})` } : { data_builder: "No approval transaction required; current allowance covers the accepted quote." },
         fund: { to: COMMERCE, data_builder: `encode fund(jobId, ${rawBudget.toString()}, 0x)` },
       },
-      note: "This plan is quote-gated. The on-chain description, budget, and provider are derived from the accepted Testnet provider quote and cannot be replaced with a client-supplied arbitrary price.",
+      note: "This plan is quote-gated. The on-chain description, budget, and provider are derived from the accepted Testnet provider quote.",
     });
   } catch (error) {
     return res.status(400).json({ error: error instanceof Error ? error.message : "Unable to prepare the accepted Testnet quote" });
