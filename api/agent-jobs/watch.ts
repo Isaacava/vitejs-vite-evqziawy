@@ -27,6 +27,8 @@ function asAddress(value: unknown, field: string): Address {
   return getAddress(value);
 }
 
+const readContract = publicClient.readContract.bind(publicClient) as unknown as (args: Record<string, unknown>) => Promise<any>;
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!authorized(req)) return res.status(401).json({ error: "Agent runtime unauthorized" });
   if (req.method !== "GET") {
@@ -50,7 +52,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!agent.owner) return res.status(409).json({ error: "Agent has no provider wallet" });
 
     const provider = asAddress(agent.owner, "agent.owner");
-    const counter = await publicClient.readContract({
+    const counter = await readContract({
       address: ERC8183_ADDRESSES.commerce,
       abi: COMMERCE_ABI,
       functionName: "jobCounter",
@@ -58,12 +60,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const requested = Number(req.query.scan || DEFAULT_SCAN);
     const scan = Math.max(1, Math.min(Number.isFinite(requested) ? requested : DEFAULT_SCAN, MAX_SCAN));
-    const latest = counter;
+    const latest = BigInt(counter);
     const first = latest > BigInt(scan) ? latest - BigInt(scan) + 1n : 1n;
 
-    const jobs = [];
+    const jobs: Array<Record<string, unknown>> = [];
     for (let jobId = latest; jobId >= first; jobId -= 1n) {
-      const job = await publicClient.readContract({
+      const job = await readContract({
         address: ERC8183_ADDRESSES.commerce,
         abi: COMMERCE_ABI,
         functionName: "getJob",
@@ -94,7 +96,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const dbByChainId = new Map((dbJobs || []).map((job) => [String(job.chain_job_id), job]));
       for (const job of jobs) {
-        const existing = dbByChainId.get(job.id);
+        const existing = dbByChainId.get(String(job.id));
         if (existing) continue;
 
         await supabase.from("notifications").insert({
