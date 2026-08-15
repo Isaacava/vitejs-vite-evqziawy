@@ -14,9 +14,15 @@ export type PreparedTransaction = {
   value?: string;
 };
 
+export type ReceiptLog = {
+  address: string;
+  topics: string[];
+};
+
 export type ConfirmedTransaction = {
   hash: string;
   blockNumber: string;
+  logs: ReceiptLog[];
 };
 
 const TX_HASH = /^0x[a-fA-F0-9]{64}$/;
@@ -55,14 +61,20 @@ export async function waitForTransaction(hash: string, timeoutMs = 180_000, poll
     }) as null | {
       status?: string;
       blockNumber?: string;
+      logs?: Array<{ address?: string; topics?: string[] }>;
     };
     if (receipt) {
       const status = receipt.status?.toLowerCase();
       if (status !== "0x1") throw new Error(`Transaction ${hash.slice(0, 10)}… failed or was reverted.`);
       if (!receipt.blockNumber) throw new Error("Confirmed transaction is missing a block number.");
+      const logs: ReceiptLog[] = (receipt.logs || []).map((log) => ({
+        address: log.address || "",
+        topics: log.topics || [],
+      }));
       return {
         hash,
         blockNumber: BigInt(receipt.blockNumber).toString(),
+        logs,
       } satisfies ConfirmedTransaction;
     }
     await new Promise((resolve) => window.setTimeout(resolve, pollMs));
