@@ -1,11 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import OnchainTransactionRunner, { type TransactionStep } from "./OnchainTransactionRunner";
+import OnchainTransactionRunner, { type ConfirmedRunnerReceipt, type TransactionStep } from "./OnchainTransactionRunner";
 import { getCurrentUser, type AuthUser } from "./lib/walletAuth";
 import { buildErc8183Plan, type Erc8183PreparedResponse } from "./lib/erc8183TransactionPlan";
 import { extractCreatedJobId } from "./lib/erc8183Events";
 import "./mission-console.css";
-
-type Receipt = { hash: string; blockNumber: string; logs: Array<{ topics: readonly `0x${string}`[]; data: `0x${string}` }> };
 
 export default function OnchainExecute() {
   const params = new URLSearchParams(window.location.search);
@@ -13,7 +11,7 @@ export default function OnchainExecute() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [prepared, setPrepared] = useState<Erc8183PreparedResponse | null>(null);
   const [chainJobId, setChainJobId] = useState("");
-  const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [receipt, setReceipt] = useState<ConfirmedRunnerReceipt | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -28,7 +26,8 @@ export default function OnchainExecute() {
 
   useEffect(() => {
     if (!missionId || !user) return;
-    void fetch("/api/erc8183/prepare", {
+    let active = true;
+    fetch("/api/erc8183/prepare", {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -37,19 +36,19 @@ export default function OnchainExecute() {
       .then(async (response) => {
         const body = await response.json();
         if (!response.ok) throw new Error(body?.error || "Unable to prepare ERC-8183 job");
-        setPrepared(body as Erc8183PreparedResponse);
+        if (active) setPrepared(body as Erc8183PreparedResponse);
       })
-      .catch((cause) => setError(cause instanceof Error ? cause.message : "Unable to prepare ERC-8183 job"));
+      .catch((cause) => {
+        if (active) setError(cause instanceof Error ? cause.message : "Unable to prepare ERC-8183 job");
+      });
+    return () => {
+      active = false;
+    };
   }, [missionId, user]);
 
   const plan = useMemo(() => {
     if (!prepared) return [];
-    try {
-      return buildErc8183Plan(prepared, chainJobId || undefined);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to build transaction plan");
-      return [];
-    }
+    return buildErc8183Plan(prepared, chainJobId || undefined);
   }, [prepared, chainJobId]);
 
   const steps: TransactionStep[] = useMemo(() => plan.map((step) => ({
@@ -59,6 +58,18 @@ export default function OnchainExecute() {
     tx: step.transaction || undefined,
     disabled: step.id !== "create" && !chainJobId,
   })), [plan, chainJobId]);
+
+  function handleConfirmed(step: TransactionStep, confirmed: ConfirmedRunnerReceipt) {
+    if (step.id !== "create") return;
+    setReceipt(confirmed);
+    try {
+      const created = extractCreatedJobId(confirmed.logs || [], prepared?.transactions.create_job?.to || "");
+      setChainJobId(created.jobId);
+      setError("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to decode the JobCreated event");
+    }
+  }
 
   return (
     <main className="console-page">
@@ -79,28 +90,19 @@ export default function OnchainExecute() {
             <h1>Fund the mission from your own wallet.</h1>
             <p>Each state-changing transaction requires an explicit wallet confirmation. AgentMarket never receives or stores your private key.</p>
           </div>
-          <div className="console-state"><small>SESSION</small><strong>{user ? `${user.wallet_address.slice(0, 8)}…${user.wallet_address.slice(-6)}` : "CHECKING"}</strong><span>Wallet signs every transaction.</span></div>
+          <div className="console-state"><small>JOB</small><strong>{chainJobId ? `#${chainJobId}` : "AWAITING createJob"}</strong><span>{chainJobId ? "Confirmed on-chain job ID." : "createJob must confirm before later steps are enabled."}</span></div>
         </section>
 
         <section className="console-card console-plan-card">
-          <div className="console-section-head"><span>EXECUTION STATE</span><b>{chainJobId ? `JOB ${chainJobId}` : "AWAITING createJob"}</b></div>
-          <p className="console-evidence">The first confirmed receipt is decoded for the real ERC-8183 <code>JobCreated</code> event. Later calls are then encoded with that confirmed job ID.</p>
-          <OnchainTransactionRunner steps={steps} />
+          <div className="console-section-head"><span>EXECUTION STATE</span><b>{prepared ? (chainJobId ? "JOB READY" : "PLAN READY") : "PREPARING"}</b></div>
+          <p className="console-evidence">Once createJob confirms, AgentMarket decodes the real <code>JobCreated</code> event and automatically re-encodes registerJob, setBudget, and fund with that exact job ID.</p>
+          <OnchainTransactionRunner steps={steps} onConfirmed={handleConfirmed} />
         </section>
 
-        {receipt && (
+        {receipt && chainJobId && (
           <section className="console-card console-plan-card">
-            <div className="console-section-head"><span>CREATE RECEIPT</span><b>CONFIRMED</b></div>
-            <p className="console-evidence">Transaction {receipt.hash.slice(0, 10)}… confirmed in block {receipt.blockNumber}.</p>
-            <button className="console-dark-button" onClick={() => {
-              try {
-                if (!prepared) return;
-                const created = extractCreatedJobId(receipt.logs, prepared.transactions.create_job?.to || "");
-                setChainJobId(created.jobId);
-              } catch (cause) {
-                setError(cause instanceof Error ? cause.message : "Unable to decode JobCreated event");
-              }
-            }}>Extract confirmed job ID →</button>
+            <div className="console-section-head"><span>CHAIN EVIDENCE</span><b>JOB #{chainJobId}</b></div>
+            <p className="console-evidence">createJob transaction {receipt.hash.slice(0, 10)}… confirmed in block {receipt.blockNumber}. The job ID was decoded directly from the receipt.</p>
           </section>
         )}
       </div>
