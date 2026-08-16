@@ -19,7 +19,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const agentIds = (agents ?? []).map((agent) => agent.id);
     const { data: endpoints, error: endpointError } = agentIds.length
       ? await supabase.from("agent_endpoints")
-          .select("id,agent_id,endpoint_url,protocol,version,status,status_code,latency_ms,last_checked_at,updated_at")
+          .select("id,agent_id,endpoint_url,protocol,version,status,status_code,latency_ms,last_checked_at,updated_at,metadata")
           .in("agent_id", agentIds)
           .order("last_checked_at", { ascending: false })
       : { data: [], error: null };
@@ -34,6 +34,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const endpoint = endpointByAgent.get(agent.id);
       const identityReady = Boolean(agent.agent_id && agent.owner && agent.verification_status !== "revoked");
       const serviceReady = endpoint?.status === "online";
+      const verificationReady = agent.verification_status !== "revoked";
+      const marketplaceReady = identityReady && verificationReady && serviceReady && agent.status !== "offline";
+      const blockingReasons: string[] = [];
+      if (!agent.agent_id) blockingReasons.push("ERC-8004 identity is missing");
+      if (!agent.owner) blockingReasons.push("Provider wallet is missing");
+      if (!verificationReady) blockingReasons.push("Agent identity is revoked");
+      if (!endpoint) blockingReasons.push("No provider endpoint is registered");
+      else if (endpoint.status !== "online") blockingReasons.push(`Provider service is ${endpoint.status || "not checked"}`);
+      if (agent.status === "offline") blockingReasons.push("Marketplace status is offline");
       return {
         id: agent.id,
         agent_id: agent.agent_id,
@@ -43,8 +52,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         verification_status: agent.verification_status,
         chain: agent.chain,
         identity_ready: identityReady,
+        verification_ready: verificationReady,
         service_ready: serviceReady,
-        marketplace_ready: identityReady && serviceReady && agent.status !== "offline",
+        marketplace_ready: marketplaceReady,
+        blocking_reasons: blockingReasons,
         endpoint: endpoint ? {
           url: endpoint.endpoint_url,
           protocol: endpoint.protocol,
@@ -53,6 +64,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           status_code: endpoint.status_code,
           latency_ms: endpoint.latency_ms,
           last_checked_at: endpoint.last_checked_at,
+          checked_url: typeof endpoint.metadata === "object" && endpoint.metadata ? (endpoint.metadata as Record<string, unknown>).checked_url ?? null : null,
         } : null,
         updated_at: agent.updated_at,
       };
@@ -71,7 +83,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (provider.verification_status === "revoked") acc.revoked += 1;
         return acc;
       }, { total: 0, ready: 0, online: 0, revoked: 0 }),
-      note: "Readiness is based on Testnet identity and the latest stored service health check. No server-side endpoint probing is performed by this user-facing route.",
+      note: "Readiness is based on Testnet identity and the latest stored server-side service health check. Browser clients never probe provider URLs directly.",
     });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to load Testnet provider readiness" });
