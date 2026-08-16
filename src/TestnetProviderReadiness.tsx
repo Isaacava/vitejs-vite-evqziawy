@@ -10,9 +10,20 @@ type Provider = {
   verification_status: string | null;
   chain: string;
   identity_ready: boolean;
+  verification_ready: boolean;
   service_ready: boolean;
   marketplace_ready: boolean;
-  endpoint: { url: string; protocol: string | null; version: string | null; status: string | null; status_code: number | null; latency_ms: number | null; last_checked_at: string | null } | null;
+  blocking_reasons: string[];
+  endpoint: {
+    url: string;
+    protocol: string | null;
+    version: string | null;
+    status: string | null;
+    status_code: number | null;
+    latency_ms: number | null;
+    last_checked_at: string | null;
+    checked_url: string | null;
+  } | null;
   updated_at: string | null;
 };
 
@@ -57,13 +68,13 @@ export default function TestnetProviderReadiness() {
           <div>
             <span className="console-kicker">ERC-8004 / ERC-8183 / BSC TESTNET / 97</span>
             <h1>Provider readiness before hiring.</h1>
-            <p>Only providers with a valid Testnet identity and a recent online service check should be eligible for the marketplace hire path.</p>
+            <p>Only providers with a valid Testnet identity, non-revoked status and a recent online service check should be eligible for the hire path.</p>
           </div>
           <div className="console-state"><small>READY</small><strong>{summary.ready}/{summary.total}</strong><span>{summary.online} services online</span></div>
         </section>
         <section className="console-grid">
           <div className="console-card"><div className="console-section-head"><span>IDENTITIES</span><b>{summary.total}</b></div><p className="console-evidence">Agents indexed on BSC Testnet.</p></div>
-          <div className="console-card"><div className="console-section-head"><span>MARKETPLACE READY</span><b>{summary.ready}</b></div><p className="console-evidence">Identity + service health + non-revoked status.</p></div>
+          <div className="console-card"><div className="console-section-head"><span>MARKETPLACE READY</span><b>{summary.ready}</b></div><p className="console-evidence">Identity + verification + service health + active status.</p></div>
           <div className="console-card"><div className="console-section-head"><span>REVOKED</span><b>{summary.revoked}</b></div><p className="console-evidence">Excluded from hiring.</p></div>
         </section>
         <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
@@ -77,11 +88,23 @@ export default function TestnetProviderReadiness() {
                 <h2 style={{ marginTop: 0 }}>{provider.name || "Unnamed agent"}</h2>
                 <div className="console-stat"><span>ERC-8004 agent</span><strong>{compact(provider.agent_id)}</strong></div>
                 <div className="console-stat"><span>Owner</span><strong>{compact(provider.owner)}</strong></div>
-                <div className="console-stat"><span>Identity</span><strong>{provider.identity_ready ? "Ready" : "Missing / revoked"}</strong></div>
+                <div className="console-stat"><span>Identity</span><strong>{provider.identity_ready ? "Ready" : "Missing"}</strong></div>
+                <div className="console-stat"><span>Verification</span><strong>{provider.verification_ready ? provider.verification_status || "Ready" : "Revoked"}</strong></div>
                 <div className="console-stat"><span>Service</span><strong>{provider.service_ready ? "Online" : provider.endpoint?.status || "Not checked"}</strong></div>
-                <div className="console-stat"><span>Last health check</span><strong>{time(provider.endpoint?.last_checked_at)}</strong></div>
+                <div className="console-stat"><span>HTTP check</span><strong>{provider.endpoint?.status_code != null ? String(provider.endpoint.status_code) : "—"}</strong></div>
                 <div className="console-stat"><span>Latency</span><strong>{provider.endpoint?.latency_ms != null ? `${provider.endpoint.latency_ms} ms` : "—"}</strong></div>
-                <p className="console-evidence">This view does not probe provider URLs from the browser. It uses the latest server-side health record and Testnet identity data.</p>
+                <div className="console-stat"><span>Last health check</span><strong>{time(provider.endpoint?.last_checked_at)}</strong></div>
+                {!provider.marketplace_ready && provider.blocking_reasons.length > 0 && (
+                  <div className="console-alert console-alert-error" style={{ marginTop: 16 }}>
+                    <strong>Why it cannot be hired</strong>
+                    <div style={{ marginTop: 6 }}>{provider.blocking_reasons.join(" · ")}</div>
+                  </div>
+                )}
+                {provider.marketplace_ready && (
+                  <p className="console-evidence">Provider identity and service health passed the Testnet hireability gate.</p>
+                )}
+                {provider.endpoint?.checked_url && <p className="console-evidence"><small>CHECKED</small> {provider.endpoint.checked_url}</p>}
+                <p className="console-evidence">Health is recorded server-side. The browser never probes the provider endpoint directly.</p>
               </article>
             ))}
           </section>
