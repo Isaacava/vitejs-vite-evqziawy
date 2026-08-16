@@ -1,17 +1,17 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-import testnetErc8183Settlement from "./_testnet/erc8183-settlement.js";
-import testnetErc8183 from "./_testnet/erc8183.js";
-import testnetJobStatus from "./_testnet/job-status.js";
-import testnetJobsHistory from "./_testnet/jobs-history.js";
-import testnetMatch from "./_testnet/match.js";
-import testnetPrepareQuote from "./_testnet/prepare-quote.js";
-import testnetProviders from "./_testnet/providers.js";
-import testnetQuotes from "./_testnet/quotes.js";
-import testnetRecoverJob from "./_testnet/recover-job.js";
-import testnetSettlePlan from "./_testnet/settle-plan.js";
-import testnetSyncAgent from "./_testnet/sync-agent.js";
-import testnetTransactionPreflight from "./_testnet/transaction-preflight.js";
+import testnetErc8183Settlement from "../server/_testnet/erc8183-settlement.js";
+import testnetErc8183 from "../server/_testnet/erc8183.js";
+import testnetJobStatus from "../server/_testnet/job-status.js";
+import testnetJobsHistory from "../server/_testnet/jobs-history.js";
+import testnetMatch from "../server/_testnet/match.js";
+import testnetPrepareQuote from "../server/_testnet/prepare-quote.js";
+import testnetProviders from "../server/_testnet/providers.js";
+import testnetQuotes from "../server/_testnet/quotes.js";
+import testnetRecoverJob from "../server/_testnet/recover-job.js";
+import testnetSettlePlan from "../server/_testnet/settle-plan.js";
+import testnetSyncAgent from "../server/_testnet/sync-agent.js";
+import testnetTransactionPreflight from "../server/_testnet/transaction-preflight.js";
 
 const handlers: Record<string, (req: VercelRequest, res: VercelResponse) => unknown> = {
   "erc8183-settlement": testnetErc8183Settlement,
