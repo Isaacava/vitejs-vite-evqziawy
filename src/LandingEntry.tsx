@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import LandingPage from "./LandingPage";
 import { connectWalletAndSignIn } from "./lib/walletAuth";
+import "./landing-auth.css";
 
 const ENTRY_SELECTOR = '.landing a[href="/dashboard"]';
 
