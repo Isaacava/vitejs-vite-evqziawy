@@ -11,6 +11,12 @@ from typing import Any
 from bnbagent.erc8183.server import create_erc8183_app
 
 from app.agent.main import fulfill_grid_job
+from app.service.config import validate_runtime_config
+
+
+# Fail closed at process startup. This service is deliberately Testnet-only.
+# The BNB Agent SDK consumes the same environment for its ERC-8183 server.
+validate_runtime_config()
 
 
 def execute_job(job: dict[str, Any]) -> str:
