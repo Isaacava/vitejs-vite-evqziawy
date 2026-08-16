@@ -3,8 +3,15 @@ import { createClient } from "@supabase/supabase-js";
 
 function serverClient() {
   const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error("Supabase server configuration is missing");
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY;
+
+  if (!url) {
+    throw new Error("Supabase server configuration is missing: SUPABASE_URL");
+  }
+  if (!key) {
+    throw new Error("Supabase server configuration is missing: SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SECRET_KEY");
+  }
+
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
