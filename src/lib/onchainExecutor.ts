@@ -26,7 +26,7 @@ function provider() {
 
 function transaction(tx: PreparedTransaction) {
   if (!/^0x[a-fA-F0-9]{40}$/.test(tx.to)) throw new Error("Transaction target is not a valid EVM address.");
-  if (tx.data && !/^0x[0-9a-F-]*$/.test(tx.data)) throw new Error("Transaction calldata is invalid.");
+  if (tx.data && !/^0x[0-9a-fA-F]*$/.test(tx.data)) throw new Error("Transaction calldata is invalid.");
   return {
     to: tx.to,
     ...(tx.data ? { data: tx.data } : {}),
