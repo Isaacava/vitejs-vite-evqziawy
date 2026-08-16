@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 
 import LandingEntry from "./LandingEntry";
@@ -22,6 +22,7 @@ import AgentInbox from "./AgentInbox";
 import DashboardShell from "./DashboardShell";
 import SessionPermissions from "./SessionPermissions";
 import AgentEvidence from "./AgentEvidence";
+import { ensureWalletConnectedProvider } from "./lib/walletAuth";
 import "./index.css";
 
 const params = new URLSearchParams(window.location.search);
@@ -48,10 +49,54 @@ const lifecycleMode = window.location.pathname === "/lifecycle";
 const registerMode = window.location.pathname === "/agents/register";
 const inboxMode = window.location.pathname === "/agent/inbox";
 
+function WalletExecutionGate() {
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    async function restore() {
+      try {
+        await ensureWalletConnectedProvider();
+        if (active) setReady(true);
+      } catch (cause) {
+        if (active) setError(cause instanceof Error ? cause.message : "Unable to restore WalletConnect");
+      }
+    }
+    void restore();
+    return () => { active = false; };
+  }, []);
+
+  if (ready) return <TestnetQuoteExecution />;
+
+  return (
+    <main className="console-page">
+      <div className="console-shell">
+        <header className="console-nav">
+          <a href="/" className="console-brand">AgentMarket</a>
+          <span>TESTNET / WALLET</span>
+          <a href="/app">Back to marketplace →</a>
+        </header>
+        <section className="console-card">
+          <span className="console-kicker">WALLETCONNECT · BSC TESTNET / 97</span>
+          <h1 style={{ marginTop: 8 }}>Reconnect your Testnet wallet.</h1>
+          <p className="console-evidence">
+            AgentMarket is restoring the same WalletConnect session used for authentication. No transaction is signed until you review each step.
+          </p>
+          {error && <div className="console-alert console-alert-error">{error}</div>}
+          <button className="console-brass-button" type="button" onClick={() => window.location.reload()}>
+            Retry WalletConnect →
+          </button>
+        </section>
+      </div>
+    </main>
+  );
+}
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     {testnetQuoteExecuteMode && missionId && quoteId ? (
-      <TestnetQuoteExecution />
+      <WalletExecutionGate />
     ) : testnetQuoteGateMode && missionId && quoteId ? (
       <TestnetQuoteGate />
     ) : testnetRecoveryMode ? (
