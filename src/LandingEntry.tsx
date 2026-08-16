@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import LandingPage from "./LandingPage";
 import { connectWalletAndSignIn } from "./lib/walletAuth";
 
-const ENTRY_SELECTOR = '.landing a[href="/dashboard"], .landing a[href="/app"]';
+const ENTRY_SELECTOR = '.landing a[href="/dashboard"]';
 
 export default function LandingEntry() {
   const [connecting, setConnecting] = useState(false);
@@ -10,19 +10,6 @@ export default function LandingEntry() {
   const handled = useRef(false);
 
   useEffect(() => {
-    const anchors = Array.from(document.querySelectorAll<HTMLAnchorElement>(ENTRY_SELECTOR));
-    anchors.forEach((anchor) => {
-      const text = anchor.textContent?.trim().toLowerCase() || "";
-      if (
-        text.includes("launch") ||
-        text.includes("try the live") ||
-        text.includes("explore the live") ||
-        text.includes("open registry")
-      ) {
-        anchor.textContent = "Connect wallet";
-      }
-    });
-
     const onClick = async (event: MouseEvent) => {
       const target = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>(ENTRY_SELECTOR) : null;
       if (!target || handled.current) return;
@@ -52,48 +39,17 @@ export default function LandingEntry() {
     <>
       <LandingPage />
       {(connecting || error) && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 1000,
-            display: "grid",
-            placeItems: "center",
-            background: "rgba(23,23,20,.45)",
-            padding: 20,
-          }}
-        >
-          <div
-            style={{
-              width: "min(420px, 100%)",
-              background: "#fbfaf5",
-              border: "1px solid #d5cfbf",
-              borderRadius: 24,
-              padding: 24,
-              boxShadow: "0 30px 80px rgba(0,0,0,.2)",
-            }}
-          >
-            <strong style={{ display: "block", fontSize: 20, marginBottom: 8 }}>
-              {connecting ? "Connect your wallet" : "Sign-in could not be completed"}
-            </strong>
-            <p style={{ margin: 0, color: "#6d6a61", lineHeight: 1.6 }}>
+        <div className="landing-auth-overlay" role="dialog" aria-modal="true" aria-live="polite">
+          <div className="landing-auth-modal">
+            <div className="landing-auth-kicker">AGENTMARKET AUTHENTICATION</div>
+            <strong>{connecting ? "Connect your wallet" : "Sign-in could not be completed"}</strong>
+            <p>
               {connecting
-                ? "Approve the wallet connection, then sign the AgentMarket authentication message. The signature does not move funds."
+                ? "WalletConnect will open now. Connect your wallet, then sign the AgentMarket authentication message. The signature does not authorize a transaction or move funds."
                 : error}
             </p>
             {!connecting && (
-              <button
-                onClick={() => setError("")}
-                style={{
-                  marginTop: 18,
-                  border: 0,
-                  background: "#171714",
-                  color: "#fbfaf5",
-                  borderRadius: 12,
-                  padding: "11px 15px",
-                  cursor: "pointer",
-                }}
-              >
+              <button type="button" onClick={() => setError("")} className="landing-auth-close">
                 Close
               </button>
             )}
