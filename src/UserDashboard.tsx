@@ -40,6 +40,8 @@ type DashboardData = {
   notifications: Array<{ id: string; title: string; body: string | null; created_at: string }>;
 };
 
+type DashboardTab = "overview" | "missions" | "activity" | "payments";
+
 const human = (value: string) => value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 const compact = (value?: string | null) => value ? `${value.slice(0, 6)}…${value.slice(-4)}` : "—";
 const timeAgo = (value: string) => {
@@ -52,6 +54,11 @@ const timeAgo = (value: string) => {
   return `${Math.floor(hours / 24)}d ago`;
 };
 
+function parseTab(): DashboardTab {
+  const value = new URLSearchParams(window.location.search).get("tab");
+  return value === "missions" || value === "activity" || value === "payments" ? value : "overview";
+}
+
 function Status({ value }: { value: string }) {
   const state = value === "completed" || value === "terminal" ? "green" : value === "cancelled" || value === "disputed" ? "rust" : "brass";
   return <span className={`dashboard-status ${state}`}>{human(value)}</span>;
@@ -63,7 +70,21 @@ export default function UserDashboard() {
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState<"overview" | "missions" | "activity" | "payments">("overview");
+  const [tab, setTab] = useState<DashboardTab>(parseTab);
+
+  function navigateTab(nextTab: DashboardTab) {
+    setTab(nextTab);
+    const url = new URL(window.location.href);
+    if (nextTab === "overview") url.searchParams.delete("tab");
+    else url.searchParams.set("tab", nextTab);
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  }
+
+  useEffect(() => {
+    const onPopState = () => setTab(parseTab());
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   async function loadDashboard() {
     setLoading(true);
@@ -163,7 +184,7 @@ export default function UserDashboard() {
             </section>
 
             <nav className="dashboard-tabs" aria-label="Dashboard sections">
-              {(["overview", "missions", "activity", "payments"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}
+              {(["overview", "missions", "activity", "payments"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => navigateTab(item)}>{item}</button>)}
             </nav>
 
             {loading && <div className="dashboard-loading">Loading your mission state…</div>}
@@ -179,7 +200,7 @@ export default function UserDashboard() {
 
                 <div className="dashboard-grid">
                   <section className="dashboard-card dashboard-missions-card">
-                    <div className="dashboard-card-head"><span>02 / CURRENT WORK</span><button onClick={() => setTab("missions")}>View all →</button></div>
+                    <div className="dashboard-card-head"><span>02 / CURRENT WORK</span><button onClick={() => navigateTab("missions")}>View all →</button></div>
                     {activeMissions.length === 0 ? <div className="dashboard-empty"><strong>No active missions.</strong><p>Describe a goal and hire an agent from the marketplace to create your first mission.</p><a href="/app">Discover agents →</a></div> : activeMissions.slice(0, 3).map((mission) => {
                       const job = mission.jobs[0];
                       return <article className="mission-row" key={mission.id}>
@@ -190,13 +211,13 @@ export default function UserDashboard() {
                   </section>
 
                   <aside className="dashboard-card dashboard-activity-card">
-                    <div className="dashboard-card-head"><span>03 / ACTIVITY</span><button onClick={() => setTab("activity")}>Full log →</button></div>
+                    <div className="dashboard-card-head"><span>03 / ACTIVITY</span><button onClick={() => navigateTab("activity")}>Full log →</button></div>
                     {data.activity.length === 0 ? <div className="dashboard-empty compact"><strong>No activity yet.</strong><p>Your signed-in actions and mission events will appear here.</p></div> : data.activity.slice(0, 7).map((event) => <div className="activity-row" key={event.id}><i /><div><strong>{event.title}</strong><p>{event.description || human(event.type)}</p><small>{timeAgo(event.created_at)}</small></div></div>)}
                   </aside>
                 </div>
 
                 <section className="dashboard-card dashboard-evidence-card">
-                  <div className="dashboard-card-head"><span>04 / RECENT MISSIONS</span><button onClick={() => setTab("missions")}>Mission log →</button></div>
+                  <div className="dashboard-card-head"><span>04 / RECENT MISSIONS</span><button onClick={() => navigateTab("missions")}>Mission log →</button></div>
                   {recentMissions.length === 0 ? <div className="dashboard-empty"><strong>Your mission history will live here.</strong><p>Every mission keeps its task, provider, chain job, evaluation and evidence trail.</p></div> : recentMissions.map((mission) => <div className="history-row" key={mission.id}><div><strong>{mission.title}</strong><span>{mission.category.replace(/_/g, " ")}</span></div><Status value={mission.status} /><small>{new Date(mission.updated_at).toLocaleString()}</small></div>)}
                 </section>
               </>

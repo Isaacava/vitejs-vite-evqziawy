@@ -1,5 +1,9 @@
+import { EthereumProvider } from "@walletconnect/ethereum-provider";
+
 type Eip1193Provider = {
   request(args: { method: string; params?: unknown[] }): Promise<unknown>;
+  on?: (event: string, handler: (...args: unknown[]) => void) => void;
+  removeListener?: (event: string, handler: (...args: unknown[]) => void) => void;
 };
 
 declare global {
@@ -17,12 +21,52 @@ export type AuthUser = {
   updated_at: string;
 };
 
-export async function connectWalletAndSignIn() {
-  if (!window.ethereum) throw new Error("No browser wallet was detected. Install a compatible EVM wallet to continue.");
+export const WALLETCONNECT_PROJECT_ID = "1dbe8fd5e4974ae7c80d074c4082b5a0";
+export const AUTH_CHAIN_ID = 97;
 
-  const accounts = (await window.ethereum.request({ method: "eth_requestAccounts" })) as string[];
-  const wallet = accounts?.[0];
-  if (!wallet) throw new Error("No wallet account was selected.");
+let walletProvider: Eip1193Provider | null = null;
+
+async function getWalletProvider(): Promise<Eip1193Provider> {
+  if (walletProvider) return walletProvider;
+
+  const provider = await EthereumProvider.init({
+    projectId: WALLETCONNECT_PROJECT_ID,
+    chains: [AUTH_CHAIN_ID],
+    showQrModal: true,
+    metadata: {
+      name: "AgentMarket",
+      description: "Agent-to-agent marketplace on BNB Smart Chain",
+      url: window.location.origin,
+      icons: [],
+    },
+  });
+
+  if (!provider.connected) {
+    await provider.connect();
+  }
+
+  walletProvider = provider as unknown as Eip1193Provider;
+
+  window.ethereum = walletProvider;
+
+  return walletProvider;
+}
+
+export async function ensureWalletConnectedProvider() {
+  const provider = await getWalletProvider();
+  const accounts = (await provider.request({ method: "eth_accounts" })) as string[];
+  if (!accounts?.[0]) throw new Error("No wallet account is connected. Connect your wallet first.");
+  window.ethereum = provider;
+  return { provider, address: accounts[0] };
+}
+
+export function getConnectedWalletProvider() {
+  if (!walletProvider) throw new Error("WalletConnect is not connected. Connect your wallet first.");
+  return walletProvider;
+}
+
+export async function connectWalletAndSignIn() {
+  const { provider, address: wallet } = await ensureWalletConnectedProvider();
 
   const challengeResponse = await fetch("/api/auth/nonce", {
     method: "POST",
@@ -32,7 +76,7 @@ export async function connectWalletAndSignIn() {
   const challenge = await challengeResponse.json();
   if (!challengeResponse.ok) throw new Error(challenge?.error || "Unable to start wallet sign-in");
 
-  const signature = await window.ethereum.request({
+  const signature = await provider.request({
     method: "personal_sign",
     params: [challenge.message, wallet],
   });
@@ -44,6 +88,8 @@ export async function connectWalletAndSignIn() {
   });
   const verified = await verifyResponse.json();
   if (!verifyResponse.ok) throw new Error(verified?.error || "Wallet signature verification failed");
+
+  window.ethereum = provider;
 
   return verified.user as AuthUser;
 }
@@ -57,4 +103,6 @@ export async function getCurrentUser() {
 
 export async function signOut() {
   await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+  walletProvider = null;
+  delete window.ethereum;
 }

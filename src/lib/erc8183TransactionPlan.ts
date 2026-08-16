@@ -5,7 +5,16 @@ export type Erc8183PreparedResponse = {
   network: string;
   chain_id: number;
   transactions: Record<string, { to?: string; data?: string; value?: string; data_builder?: string }>;
-  payment: { token: string; budget_raw: string; allowance_raw: string };
+  payment: {
+    token: string;
+    budget_raw: string;
+    allowance_raw: string;
+    symbol: string;
+    decimals?: number;
+    balance_raw?: string;
+    balance_formatted: string;
+    allowance_formatted: string;
+  };
 };
 
 export type Erc8183PlanStep = {

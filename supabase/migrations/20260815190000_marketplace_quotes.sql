@@ -8,6 +8,9 @@ create table if not exists public.marketplace_quotes (
   price text not null default '',
   currency text not null default '',
   provider_quote jsonb not null default '{}'::jsonb,
+  quote_hash text,
+  chain_id integer not null default 97,
+  environment text not null default 'testnet' check (environment = 'testnet'),
   status text not null default 'offered' check (status in ('requested','offered','accepted','rejected','expired','superseded')),
   provider_status_code integer,
   requested_at timestamptz not null default now(),
@@ -18,6 +21,11 @@ create table if not exists public.marketplace_quotes (
   updated_at timestamptz not null default now()
 );
 
+alter table public.marketplace_quotes
+  add column if not exists quote_hash text,
+  add column if not exists chain_id integer not null default 97,
+  add column if not exists environment text not null default 'testnet';
+
 create index if not exists marketplace_quotes_agent_idx
   on public.marketplace_quotes(agent_id, created_at desc);
 
@@ -26,6 +34,10 @@ create index if not exists marketplace_quotes_requester_idx
 
 create index if not exists marketplace_quotes_status_idx
   on public.marketplace_quotes(status, expires_at);
+
+create unique index if not exists marketplace_quotes_hash_idx
+  on public.marketplace_quotes(quote_hash)
+  where quote_hash is not null;
 
 alter table public.marketplace_quotes enable row level security;
 

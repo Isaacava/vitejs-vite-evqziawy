@@ -11,7 +11,7 @@ import {
   BSC_CHAIN,
   BSC_RPC_URL,
   NETWORK_CONTRACTS,
-} from "./network";
+} from "./network.js";
 
 /*
  * ============================================================

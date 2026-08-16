@@ -33,7 +33,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const receipt = await client.getTransactionReceipt({ hash: txHash as Hex });
   if (receipt.status !== "success") return res.status(409).json({ error: "Settlement transaction reverted", tx_hash: txHash, status: receipt.status });
   if (!receipt.to || receipt.to.toLowerCase() !== ROUTER.toLowerCase()) return res.status(409).json({ error: "Transaction target is not the testnet ERC-8183 router", expected_target: ROUTER, actual_target: receipt.to });
-  const chainJob = await client.readContract({ address: COMMERCE, abi: COMMERCE_ABI, functionName: "getJob", args: [BigInt(chainJobId)] });
+  const chainJob = await client.readContract({ address: COMMERCE, abi: COMMERCE_ABI, functionName: "getJob", args: [BigInt(chainJobId)], authorizationList: [] });
   if (!chainJob || chainJob.id === 0n) return res.status(409).json({ error: "Chain job was not found" });
   if (chainJob.client.toLowerCase() !== auth.user.wallet_address.toLowerCase()) return res.status(403).json({ error: "Chain job client does not match the authenticated wallet" });
   const status = Number(chainJob.status);

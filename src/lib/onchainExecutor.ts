@@ -1,12 +1,4 @@
-type Eip1193Provider = {
-  request(args: { method: string; params?: unknown[] }): Promise<unknown>;
-};
-
-declare global {
-  interface Window {
-    ethereum?: Eip1193Provider;
-  }
-}
+import { getConnectedWalletProvider } from "./walletAuth";
 
 export type PreparedTransaction = {
   to: string;
@@ -29,8 +21,7 @@ export type ConfirmedTransaction = {
 const TX_HASH = /^0x[a-fA-F0-9]{64}$/;
 
 function provider() {
-  if (!window.ethereum) throw new Error("No compatible browser wallet was detected.");
-  return window.ethereum;
+  return getConnectedWalletProvider();
 }
 
 function transaction(tx: PreparedTransaction) {

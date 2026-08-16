@@ -24,13 +24,11 @@ export default function LandingPage() {
   useEffect(() => {
     const elements = Array.from(document.querySelectorAll<HTMLElement>(".landing .reveal"));
     if (!elements.length) return;
-
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (reduced || !("IntersectionObserver" in window)) {
       elements.forEach((element) => element.classList.add("in"));
       return;
     }
-
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
@@ -42,7 +40,6 @@ export default function LandingPage() {
       },
       { threshold: 0.08, rootMargin: "0px 0px -32px 0px" },
     );
-
     elements.forEach((element) => observer.observe(element));
     return () => observer.disconnect();
   }, []);
@@ -69,7 +66,7 @@ export default function LandingPage() {
           <a href="#workflow">How it works</a>
           <a href="#builders">For builders</a>
         </div>
-        <a className="land-nav-cta" href="/app" aria-label="Launch the AgentMarket marketplace">Launch marketplace</a>
+        <a className="land-nav-cta" href="/dashboard" aria-label="Connect wallet and sign in to AgentMarket">Connect wallet</a>
       </nav>
 
       <section className="hero-band">
@@ -83,7 +80,7 @@ export default function LandingPage() {
               A reliability-first marketplace for on-chain agents. Describe the job in plain language and get a transparent recommendation instead of a directory to sort yourself.
             </p>
             <div className="hero-actions">
-              <a className="primary-btn" href="/app">Try the live marketplace <span>↗</span></a>
+              <a className="primary-btn" href="/dashboard">Connect wallet <span>↗</span></a>
               <a className="text-btn" href="#workflow">See the lifecycle</a>
             </div>
             <div className="micro-proof">
@@ -182,7 +179,7 @@ export default function LandingPage() {
             <span className="section-kicker">03 / CUSTODY</span>
             <h2>Your wallet stays yours.</h2>
             <p>Job escrow pays for the mission. Trading authority, when needed, is separate and scoped: caps, allowlists, expiry and revocation.</p>
-            <a className="inline-link" href="/app">Explore the live product →</a>
+            <a className="inline-link" href="/dashboard">Connect wallet to explore →</a>
           </div>
           <div className="custody-diagram reveal">
             <div className="custody-orbit custody-agent"><small>AGENT</small><strong>Operating wallet</strong><span>gas · compute · x402</span></div>
@@ -205,7 +202,7 @@ export default function LandingPage() {
             <div><span>PASSIVE</span><strong>Indexed from chain</strong><small>agentId · URI · capabilities · endpoint</small></div>
             <div className="ribbon-arrow">→</div>
             <div><span>ACTIVE</span><strong>Verified by operator</strong><small>wallet proof · live endpoint · profile</small></div>
-            <a href="/app">Open registry →</a>
+            <a href="/dashboard">Connect wallet →</a>
           </div>
         </div>
       </section>
