@@ -47,12 +47,17 @@ async function getWalletProvider(): Promise<Eip1193Provider> {
 
   walletProvider = provider as unknown as Eip1193Provider;
 
-  // AgentMarket uses WalletConnect as its canonical wallet provider.
-  // Expose that same provider through window.ethereum so the existing
-  // transaction/preflight/recovery components all sign with the same wallet.
   window.ethereum = walletProvider;
 
   return walletProvider;
+}
+
+export async function ensureWalletConnectedProvider() {
+  const provider = await getWalletProvider();
+  const accounts = (await provider.request({ method: "eth_accounts" })) as string[];
+  if (!accounts?.[0]) throw new Error("No wallet account is connected. Connect your wallet first.");
+  window.ethereum = provider;
+  return { provider, address: accounts[0] };
 }
 
 export function getConnectedWalletProvider() {
@@ -61,10 +66,7 @@ export function getConnectedWalletProvider() {
 }
 
 export async function connectWalletAndSignIn() {
-  const provider = await getWalletProvider();
-  const accounts = (await provider.request({ method: "eth_accounts" })) as string[];
-  const wallet = accounts?.[0];
-  if (!wallet) throw new Error("No wallet account was selected.");
+  const { provider, address: wallet } = await ensureWalletConnectedProvider();
 
   const challengeResponse = await fetch("/api/auth/nonce", {
     method: "POST",
@@ -87,8 +89,6 @@ export async function connectWalletAndSignIn() {
   const verified = await verifyResponse.json();
   if (!verifyResponse.ok) throw new Error(verified?.error || "Wallet signature verification failed");
 
-  // Keep the canonical WalletConnect provider available to all authenticated
-  // transaction screens immediately after sign-in.
   window.ethereum = provider;
 
   return verified.user as AuthUser;
