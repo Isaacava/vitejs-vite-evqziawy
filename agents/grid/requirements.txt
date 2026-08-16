@@ -1,0 +1,2 @@
+bnbagent[server]
+pytest
