@@ -1,2 +1,3 @@
 bnbagent[server]
+uvicorn
 pytest
