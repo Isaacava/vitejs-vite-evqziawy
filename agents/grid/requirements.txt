@@ -1,2 +1,4 @@
 bnbagent[server]
+fastapi
+uvicorn
 pytest
