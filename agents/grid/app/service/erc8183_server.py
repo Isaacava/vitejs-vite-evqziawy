@@ -9,7 +9,7 @@ from typing import Any, Callable
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
-from bnbagent import EVMWalletProvider
+from bnbagent.wallets import EVMWalletProvider
 from bnbagent.erc8183 import ERC8183JobOps
 from bnbagent.erc8183.negotiation import NegotiationHandler
 from bnbagent.storage import LocalStorageProvider
