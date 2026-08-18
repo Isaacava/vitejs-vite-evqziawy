@@ -27,7 +27,7 @@ export default function OnchainExecute() {
   useEffect(() => {
     if (!missionId || !user) return;
     let active = true;
-    fetch("/api/erc8183/prepare", {
+    fetch("/api/testnet/erc8183", {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -35,11 +35,11 @@ export default function OnchainExecute() {
     })
       .then(async (response) => {
         const body = await response.json();
-        if (!response.ok) throw new Error(body?.error || "Unable to prepare ERC-8183 job");
+        if (!response.ok) throw new Error(body?.error || "Unable to prepare Testnet ERC-8183 job");
         if (active) setPrepared(body as Erc8183PreparedResponse);
       })
       .catch((cause) => {
-        if (active) setError(cause instanceof Error ? cause.message : "Unable to prepare ERC-8183 job");
+        if (active) setError(cause instanceof Error ? cause.message : "Unable to prepare Testnet ERC-8183 job");
       });
     return () => {
       active = false;
