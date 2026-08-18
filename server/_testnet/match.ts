@@ -16,14 +16,24 @@ type AgentRow = {
   source: string;
   verification_status: string;
   is_first_party: boolean;
+  metadata?: Record<string, unknown> | null;
 };
 
 type EndpointRow = { agent_id: string; status: string; latency_ms: number | null; last_checked_at: string | null };
 type ReputationRow = { agent_id: string; score: number; source: string };
 
 const WEIGHTS = { capability: 35, verification: 20, endpointLiveness: 15, completion: 10, jobVolume: 5, reputation: 15 } as const;
+const TESTNET_CHAIN = "bsc-testnet";
+const TESTNET_CHAIN_ID = 97;
+const TESTNET_ENVIRONMENT = "testnet";
+const GRID_AGENT_ID = "grid-strategy";
 
 function clamp(value: number) { return Math.max(0, Math.min(100, value)); }
+
+function isTestnetAgent(agent: AgentRow) {
+  const metadata = agent.metadata ?? {};
+  return agent.chain === TESTNET_CHAIN && metadata.environment === TESTNET_ENVIRONMENT;
+}
 
 function scoreAgent(agent: AgentRow, intent: ReturnType<typeof parseMarketplaceIntent>, endpoint: EndpointRow | undefined, reputationRows: ReputationRow[]) {
   const capability = agent.category === intent.category ? 100 : intent.category === "other" ? 60 : 25;
@@ -43,16 +53,25 @@ function scoreAgent(agent: AgentRow, intent: ReturnType<typeof parseMarketplaceI
   const scoreConfidence = evidenceCount >= 2 ? "high" : evidenceCount === 1 ? "medium" : "low";
   const normalizedScore = scoreMax > 0 ? Math.round((score / scoreMax) * 10000) / 100 : 0;
   const reasons: string[] = [];
-  if (capability === 100) reasons.push("Strong capability match"); else if (intent.category === "other") reasons.push("General DeFi capability match");
-  if (verification >= 70) reasons.push(`ERC-8004 identity ${agent.verification_status}`);
-  if (endpoint?.status === "online") reasons.push("Endpoint is healthy");
+  if (capability === 100) reasons.push("Strong capability match"); else if (intent.category === "other") reasons.push("General Testnet DeFi capability match");
+  if (verification >= 70) reasons.push(`ERC-8004 Testnet identity ${agent.verification_status}`);
+  if (endpoint?.status === "online") reasons.push("Testnet endpoint is healthy");
   if (reputationAvailable) reasons.push("On-chain reputation evidence available"); else reasons.push("Reputation history not yet available");
   if (completionAvailable) reasons.push("Verified outcome history available"); else reasons.push("Completion history not yet available");
-  const hireability = endpoint?.status === "online"
-    ? { status: "ready" as const, canCreateJob: true, reason: "A live Testnet provider endpoint is currently reporting healthy." }
-    : endpoint?.status === "degraded"
-      ? { status: "degraded" as const, canCreateJob: false, reason: "The Testnet provider endpoint is reachable but degraded; do not fund a job yet." }
-      : { status: "discoverable_only" as const, canCreateJob: false, reason: "The agent is discoverable on BSC Testnet, but no healthy Testnet provider endpoint is available." };
+
+  const ownerValid = /^0x[a-f-fA-F0-9]{40}$/.test(agent.owner);
+  const isGrid = agent.agent_id === GRID_AGENT_ID;
+  const gridIdentityReady = !isGrid || (agent.is_first_party && ownerValid);
+  const hireability = !isTestnetAgent(agent)
+    ? { status: "discoverable_only" as const, canCreateJob: false, reason: "Blocked: provider is not explicitly tagged for the isolated BSC Testnet environment." }
+    : isGrid && !gridIdentityReady
+      ? { status: "discoverable_only" as const, canCreateJob: false, reason: "Grid Agent endpoint is healthy, but its BSC Testnet ERC-8004 owner identity has not been synced. No job can be created until the real Testnet owner is verified on-chain." }
+      : endpoint?.status === "online"
+        ? { status: "ready" as const, canCreateJob: true, reason: "A live BSC Testnet provider endpoint and verified Testnet identity are currently available." }
+        : endpoint?.status === "degraded"
+          ? { status: "degraded" as const, canCreateJob: false, reason: "The Testnet provider endpoint is reachable but degraded; do not fund a job yet." }
+          : { status: "discoverable_only" as const, canCreateJob: false, reason: "The agent is discoverable on BSC Testnet, but no healthy Testnet provider endpoint is available." };
+
   return {
     score: normalizedScore,
     scoreMax,
@@ -85,7 +104,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const supabase = serverClient();
     const intent = parseMarketplaceIntent(input);
-    let agentsQuery = supabase.from("agents").select("id,agent_id,owner,uri,name,description,image,chain,category,status,source,verification_status,is_first_party").eq("chain", "bsc-testnet").limit(100);
+    let agentsQuery = supabase.from("agents").select("id,agent_id,owner,uri,name,description,image,chain,category,status,source,verification_status,is_first_party,metadata").eq("chain", TESTNET_CHAIN).limit(100);
     if (intent.category !== "other") agentsQuery = agentsQuery.eq("category", intent.category);
     const [{ data: agents, error: agentsError }, { data: endpoints, error: endpointsError }, { data: reputation, error: reputationError }] = await Promise.all([
       agentsQuery,
@@ -101,6 +120,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     for (const row of (reputation ?? []) as ReputationRow[]) reputationByAgent.set(row.agent_id, [...(reputationByAgent.get(row.agent_id) ?? []), row]);
     const matches = ((agents ?? []) as AgentRow[])
       .filter((agent) => agent.verification_status !== "revoked")
+      .filter(isTestnetAgent)
       .map((agent) => ({ agent, ...scoreAgent(agent, intent, endpointByAgent.get(agent.id), reputationByAgent.get(agent.id) ?? []) }))
       .sort((a, b) => a.hireability.canCreateJob !== b.hireability.canCreateJob ? (a.hireability.canCreateJob ? -1 : 1) : b.score - a.score)
       .slice(0, 10);
@@ -110,8 +130,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       bestMatch: matches[0] ?? null,
       bestHireableMatch,
       alternatives: matches.slice(1),
-      network: { environment: "testnet", chain: "bsc-testnet", chain_id: 97 },
-      scoring: { weights: WEIGHTS, hireabilityPolicy: "Only BSC Testnet agents with a currently healthy Testnet provider endpoint are hireable." },
+      network: { environment: TESTNET_ENVIRONMENT, chain: TESTNET_CHAIN, chain_id: TESTNET_CHAIN_ID },
+      scoring: { weights: WEIGHTS, hireabilityPolicy: "Only explicitly Testnet-tagged BSC Testnet agents with a healthy Testnet endpoint and verified identity are hireable." },
     });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Testnet matching failed" });
