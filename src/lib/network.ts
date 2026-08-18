@@ -4,13 +4,14 @@ import type { Address, Chain } from "viem";
 export type BscNetworkName = "mainnet" | "testnet";
 export type AppEnvironment = "production" | "testnet";
 
-const configuredEnvironment = (import.meta.env.VITE_APP_ENV || "production").toLowerCase();
+type ViteRuntimeEnv = Record<string, string | undefined>;
+const runtimeEnv = (import.meta as unknown as { env?: ViteRuntimeEnv }).env ?? {};
+
+const configuredEnvironment = (runtimeEnv.VITE_APP_ENV || "production").toLowerCase();
 export const APP_ENV: AppEnvironment = configuredEnvironment === "testnet" ? "testnet" : "production";
 
-const configuredNetwork = (import.meta.env.VITE_BSC_NETWORK || "mainnet").toLowerCase();
+const configuredNetwork = (runtimeEnv.VITE_BSC_NETWORK || "mainnet").toLowerCase();
 
-// Production AgentMarket is permanently mainnet. Testnet is only allowed in an
-// explicitly testnet build, preventing an accidental production -> testnet switch.
 if (APP_ENV === "production" && configuredNetwork === "testnet") {
   throw new Error("Production AgentMarket cannot run against BSC Testnet. Use a dedicated VITE_APP_ENV=testnet build.");
 }
@@ -23,7 +24,7 @@ const DEFAULT_MAINNET_RPC = "https://bsc-dataseed.bnbchain.org";
 const DEFAULT_TESTNET_RPC = "https://data-seed-prebsc-1-s1.bnbchain.org:8545";
 
 export const BSC_RPC_URL =
-  import.meta.env.VITE_BSC_RPC_URL ||
+  runtimeEnv.VITE_BSC_RPC_URL ||
   (BSC_NETWORK === "testnet" ? DEFAULT_TESTNET_RPC : DEFAULT_MAINNET_RPC);
 
 export const BSC_EXPLORER_URL =
@@ -48,10 +49,10 @@ const MAINNET_ADDRESSES = {
 export const NETWORK_CONTRACTS = BSC_NETWORK === "mainnet"
   ? MAINNET_ADDRESSES
   : {
-      commerce: requireAddress("VITE_ERC8183_COMMERCE_ADDRESS", import.meta.env.VITE_ERC8183_COMMERCE_ADDRESS),
-      router: requireAddress("VITE_ERC8183_ROUTER_ADDRESS", import.meta.env.VITE_ERC8183_ROUTER_ADDRESS),
-      policy: requireAddress("VITE_ERC8183_POLICY_ADDRESS", import.meta.env.VITE_ERC8183_POLICY_ADDRESS),
-      registry: requireAddress("VITE_ERC8004_REGISTRY_ADDRESS", import.meta.env.VITE_ERC8004_REGISTRY_ADDRESS),
+      commerce: requireAddress("VITE_ERC8183_COMMERCE_ADDRESS", runtimeEnv.VITE_ERC8183_COMMERCE_ADDRESS),
+      router: requireAddress("VITE_ERC8183_ROUTER_ADDRESS", runtimeEnv.VITE_ERC8183_ROUTER_ADDRESS),
+      policy: requireAddress("VITE_ERC8183_POLICY_ADDRESS", runtimeEnv.VITE_ERC8183_POLICY_ADDRESS),
+      registry: requireAddress("VITE_ERC8004_REGISTRY_ADDRESS", runtimeEnv.VITE_ERC8004_REGISTRY_ADDRESS),
     };
 
 export function assertExpectedChain(actualChainId: number) {
