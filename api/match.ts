@@ -31,6 +31,12 @@ type ReputationRow = {
   source: string;
 };
 
+type JobRow = {
+  provider_agent_id: string;
+  status: string | null;
+  chain_status: string | null;
+};
+
 const WEIGHTS = {
   capability: 35,
   verification: 20,
@@ -39,6 +45,9 @@ const WEIGHTS = {
   jobVolume: 5,
   reputation: 15,
 } as const;
+
+const TERMINAL_STATES = new Set(["completed", "settled", "rejected", "expired", "refunded"]);
+const SUCCESSFUL_STATES = new Set(["completed", "settled"]);
 
 function clamp(value: number) {
   return Math.max(0, Math.min(100, value));
@@ -49,6 +58,7 @@ function scoreAgent(
   intent: ReturnType<typeof parseMarketplaceIntent>,
   endpoint: EndpointRow | undefined,
   reputationRows: ReputationRow[],
+  jobRows: JobRow[],
 ) {
   const capability = agent.category === intent.category
     ? 100
@@ -73,6 +83,7 @@ function scoreAgent(
         ? 15
         : 0;
 
+  // Protocol reputation is kept separate from marketplace execution outcomes.
   const onChainScores = reputationRows
     .filter((row) => row.source !== "platform")
     .map((row) => clamp(Number(row.score)))
@@ -83,12 +94,25 @@ function scoreAgent(
     ? onChainScores.reduce((sum, score) => sum + score, 0) / onChainScores.length
     : 0;
 
-  const volumeAvailable = onChainScores.length > 0;
-  const volume = volumeAvailable ? clamp(Math.log10(onChainScores.length + 1) * 60) : 0;
+  // ERC-8183-backed marketplace history comes from actual jobs, not reputation rows.
+  const terminalJobs = jobRows.filter((job) => {
+    const state = String(job.chain_status || job.status || "").toLowerCase();
+    return TERMINAL_STATES.has(state);
+  });
+  const successfulTerminalJobs = terminalJobs.filter((job) => {
+    const state = String(job.chain_status || job.status || "").toLowerCase();
+    return SUCCESSFUL_STATES.has(state);
+  });
 
-  // Until ERC-8183 terminal outcomes are available, completion is unavailable rather than neutral.
-  const completionAvailable = reputationAvailable;
-  const completion = completionAvailable ? reputation : 0;
+  const completionAvailable = terminalJobs.length > 0;
+  const completion = completionAvailable
+    ? (successfulTerminalJobs.length / terminalJobs.length) * 100
+    : 0;
+
+  const volumeAvailable = jobRows.length > 0;
+  const volume = volumeAvailable
+    ? clamp(Math.log10(jobRows.length + 1) * 60)
+    : 0;
 
   const score =
     capability * (WEIGHTS.capability / 100) +
@@ -115,10 +139,11 @@ function scoreAgent(
   else if (intent.category === "other") reasons.push("General DeFi capability match");
   if (verification >= 70) reasons.push(`ERC-8004 identity ${agent.verification_status}`);
   if (endpoint?.status === "online") reasons.push("Endpoint is healthy");
+  if (completionAvailable) reasons.push(`${terminalJobs.length} verified terminal outcome${terminalJobs.length === 1 ? "" : "s"}`);
+  if (volumeAvailable) reasons.push(`${jobRows.length} marketplace job${jobRows.length === 1 ? "" : "s"} recorded`);
   if (reputationAvailable) reasons.push("On-chain reputation evidence available");
-  if (completionAvailable) reasons.push("Verified outcome history available");
   if (!reputationAvailable) reasons.push("Reputation history not yet available");
-  if (!completionAvailable) reasons.push("Completion history not yet available");
+  if (!completionAvailable) reasons.push("Verified outcome history not yet available");
 
   // Discovery and hireability are deliberately separate. An ERC-8004 identity
   // may be discoverable even when there is no live provider service behind it.
@@ -185,15 +210,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (intent.category !== "other") agentsQuery = agentsQuery.eq("category", intent.category);
 
-  const [{ data: agents, error: agentsError }, { data: endpoints, error: endpointsError }, { data: reputation, error: reputationError }] = await Promise.all([
+  const [{ data: agents, error: agentsError }, { data: endpoints, error: endpointsError }, { data: reputation, error: reputationError }, { data: jobs, error: jobsError }] = await Promise.all([
     agentsQuery,
     supabase.from("agent_endpoints").select("agent_id,status,latency_ms,last_checked_at").order("last_checked_at", { ascending: false }),
     supabase.from("reputation").select("agent_id,score,source").limit(500),
+    supabase.from("jobs").select("provider_agent_id,status,chain_status").limit(5000),
   ]);
 
   if (agentsError) return res.status(500).json({ error: agentsError.message });
   if (endpointsError) return res.status(500).json({ error: endpointsError.message });
   if (reputationError) return res.status(500).json({ error: reputationError.message });
+  if (jobsError) return res.status(500).json({ error: jobsError.message });
 
   const endpointByAgent = new Map<string, EndpointRow>();
   for (const endpoint of (endpoints ?? []) as EndpointRow[]) {
@@ -207,35 +234,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     reputationByAgent.set(row.agent_id, current);
   }
 
-  const matches = ((agents ?? []) as AgentRow[])
+  const jobsByAgent = new Map<string, JobRow[]>();
+  for (const row of (jobs ?? []) as JobRow[]) {
+    const current = jobsByAgent.get(row.provider_agent_id) ?? [];
+    current.push(row);
+    jobsByAgent.set(row.provider_agent_id, current);
+  }
+
+  const scoredMatches = ((agents ?? []) as AgentRow[])
     .filter((agent) => agent.verification_status !== "revoked")
     .map((agent) => ({
       agent,
-      ...scoreAgent(agent, intent, endpointByAgent.get(agent.id), reputationByAgent.get(agent.id) ?? []),
+      ...scoreAgent(
+        agent,
+        intent,
+        endpointByAgent.get(agent.id),
+        reputationByAgent.get(agent.id) ?? [],
+        jobsByAgent.get(agent.id) ?? [],
+      ),
     }))
-    .sort((a, b) => {
-      if (a.hireability.canCreateJob !== b.hireability.canCreateJob) {
-        return a.hireability.canCreateJob ? -1 : 1;
-      }
-      return b.score - a.score;
-    })
-    .slice(0, 10);
+    .sort((a, b) => b.score - a.score);
 
-  const bestDiscoveryMatch = matches[0] ?? null;
-  const bestHireableMatch = matches.find((match) => match.hireability.canCreateJob) ?? null;
+  const bestDiscoveryMatch = scoredMatches[0] ?? null;
+  const bestHireableMatch = scoredMatches.find((match) => match.hireability.canCreateJob) ?? null;
   const bestMatch = bestHireableMatch ?? bestDiscoveryMatch;
+  const topMatches = scoredMatches.slice(0, 10);
 
   return res.status(200).json({
     intent,
     bestMatch,
     bestDiscoveryMatch,
     bestHireableMatch,
-    alternatives: matches.filter((match) => match !== bestMatch),
+    alternatives: topMatches.filter((match) => match !== bestMatch),
     scoring: {
       weights: WEIGHTS,
       historyPolicy: "Missing reputation, completion, and liveness evidence contributes no points and reduces the available-score ceiling. New agents remain matchable on capability, availability and identity evidence.",
+      evidencePolicy: "Protocol reputation, endpoint health, and AgentMarket ERC-8183 terminal outcomes are independent evidence sources. Reputation rows never count as completed jobs.",
       hireabilityPolicy: "Discovery is separate from hireability. Only agents with a currently healthy provider endpoint are marked ready for job creation.",
-      selectionPolicy: "A healthy hireable agent is preferred over a stronger discovery-only result. The strongest discovery result remains available as bestDiscoveryMatch.",
+      selectionPolicy: "Discovery ranking is score-first. Hiring prefers the highest-scoring healthy provider when the discovery leader is not currently hireable.",
     },
   });
 }
