@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import "./mission-console.css";
+import { connectWalletAndSignIn, ensureWalletConnectedProvider, getConnectedWalletProvider, getCurrentUser } from "./lib/walletAuth";
 
 const TESTNET_CHAIN_ID = "0x61";
 const TESTNET_CONTRACTS = {
@@ -20,13 +21,14 @@ export default function TestnetSandbox() {
   const [wallet, setWallet] = useState<WalletState>({ connected: false, address: "", chainId: "checking" });
   const [authState, setAuthState] = useState<"checking" | "ready" | "missing">("checking");
   const [error, setError] = useState("");
+  const [connecting, setConnecting] = useState(false);
 
   const networkReady = wallet.chainId === TESTNET_CHAIN_ID;
   const walletReady = wallet.connected && networkReady;
   const explorerBase = "https://testnet.bscscan.com";
 
   const checks = useMemo(() => [
-    { label: "Wallet connected", ok: wallet.connected },
+    { label: "WalletConnect session", ok: wallet.connected },
     { label: "BSC Testnet / chain 97", ok: networkReady },
     { label: "Marketplace authentication", ok: authState === "ready" },
   ], [wallet.connected, networkReady, authState]);
@@ -34,61 +36,48 @@ export default function TestnetSandbox() {
   async function refresh() {
     setError("");
     try {
-      const ethereum = window.ethereum;
-      if (!ethereum) {
-        setWallet({ connected: false, address: "", chainId: "missing" });
-      } else {
-        const chainId = String(await ethereum.request({ method: "eth_chainId" })).toLowerCase();
-        const accounts = (await ethereum.request({ method: "eth_accounts" })) as string[];
-        setWallet({ connected: accounts.length > 0, address: accounts[0] || "", chainId });
-      }
+      const provider = getConnectedWalletProvider();
+      const chainId = String(await provider.request({ method: "eth_chainId" })).toLowerCase();
+      const accounts = (await provider.request({ method: "eth_accounts" })) as string[];
+      setWallet({ connected: accounts.length > 0, address: accounts[0] || "", chainId });
 
-      const auth = await fetch("/api/auth/me", { credentials: "include" });
-      setAuthState(auth.ok ? "ready" : "missing");
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to inspect Testnet environment");
-      setAuthState("missing");
+      const auth = await getCurrentUser();
+      setAuthState(auth ? "ready" : "missing");
+    } catch {
+      setWallet({ connected: false, address: "", chainId: "missing" });
+      try {
+        const auth = await getCurrentUser();
+        setAuthState(auth ? "ready" : "missing");
+      } catch {
+        setAuthState("missing");
+      }
     }
   }
 
   async function connect() {
     setError("");
+    setConnecting(true);
     try {
-      const ethereum = window.ethereum;
-      if (!ethereum) throw new Error("Install or open a compatible browser wallet first.");
-      await ethereum.request({ method: "eth_requestAccounts" });
+      await ensureWalletConnectedProvider();
+      const authenticated = await getCurrentUser();
+      if (!authenticated) {
+        await connectWalletAndSignIn();
+      }
       await refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Wallet connection failed");
+      setError(cause instanceof Error ? cause.message : "WalletConnect connection failed");
+    } finally {
+      setConnecting(false);
     }
   }
 
   async function switchToTestnet() {
     setError("");
     try {
-      const ethereum = window.ethereum;
-      if (!ethereum) throw new Error("No compatible browser wallet detected.");
-      try {
-        await ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: TESTNET_CHAIN_ID }] });
-      } catch (switchError: unknown) {
-        const code = typeof switchError === "object" && switchError !== null && "code" in switchError
-          ? (switchError as { code?: number }).code
-          : undefined;
-        if (code !== 4902) throw switchError;
-        await ethereum.request({
-          method: "wallet_addEthereumChain",
-          params: [{
-            chainId: TESTNET_CHAIN_ID,
-            chainName: "BNB Smart Chain Testnet",
-            nativeCurrency: { name: "tBNB", symbol: "tBNB", decimals: 18 },
-            rpcUrls: ["https://data-seed-prebsc-1-s1.bnbchain.org:8545"],
-            blockExplorerUrls: [explorerBase],
-          }],
-        });
-      }
+      await ensureWalletConnectedProvider();
       await refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to switch to BSC Testnet");
+      setError(cause instanceof Error ? cause.message : "Unable to switch WalletConnect to BSC Testnet");
     }
   }
 
@@ -100,18 +89,18 @@ export default function TestnetSandbox() {
     <main className="console-page">
       <div className="console-shell">
         <header className="console-nav">
-          <a href="/" className="console-brand">AgentMarket</a>
+          <a href="/testnet" className="console-brand">AgentMarket Testnet</a>
           <span>TESTNET SANDBOX</span>
-          <a href="/app">Open marketplace →</a>
+          <a href="/app">Open Testnet marketplace →</a>
         </header>
 
         {error && <div className="console-alert console-alert-error">{error}</div>}
 
         <section className="console-hero">
           <div>
-            <span className="console-kicker">DEVELOPMENT ENVIRONMENT / CHAIN 97</span>
+            <span className="console-kicker">DEVELOPMENT ENVIRONMENT / CHAIN 97 / WALLETCONNECT</span>
             <h1>Test the entire marketplace safely.</h1>
-            <p>This sandbox is isolated to BSC Testnet. It never switches the production marketplace to Testnet and never sends Testnet transactions through the Mainnet execution routes.</p>
+            <p>This is the dedicated BSC Testnet preview. It uses WalletConnect, only accepts chain 97, and does not expose the production Mainnet marketplace routes.</p>
           </div>
           <div className="console-state">
             <small>ENVIRONMENT</small>
@@ -122,12 +111,13 @@ export default function TestnetSandbox() {
 
         <section className="console-grid">
           <div className="console-card">
-            <div className="console-section-head"><span>WALLET</span><b>{walletReady ? "READY" : "ACTION NEEDED"}</b></div>
+            <div className="console-section-head"><span>WALLETCONNECT</span><b>{walletReady ? "READY" : "ACTION NEEDED"}</b></div>
             <div className="console-stat"><span>Account</span><strong>{compact(wallet.address)}</strong></div>
+            <div className="console-stat"><span>Connection</span><strong>{wallet.connected ? "WalletConnect" : "Not connected"}</strong></div>
             <div className="console-stat"><span>Chain</span><strong>{wallet.chainId === "checking" ? "Checking…" : wallet.chainId}</strong></div>
             <div className="console-stat"><span>Required</span><strong>BSC Testnet / 97</strong></div>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button className="console-brass-button" type="button" onClick={() => void connect()}>Connect wallet</button>
+              <button className="console-brass-button" type="button" disabled={connecting} onClick={() => void connect()}>{connecting ? "Connecting…" : "Connect with WalletConnect"}</button>
               {!networkReady && <button className="console-brass-button" type="button" onClick={() => void switchToTestnet()}>Switch to Testnet</button>}
               <button className="console-brass-button" type="button" onClick={() => void refresh()}>Refresh checks</button>
             </div>
@@ -138,7 +128,7 @@ export default function TestnetSandbox() {
             {checks.map((check) => (
               <div className="console-stat" key={check.label}><span>{check.label}</span><strong>{check.ok ? "PASS" : "PENDING"}</strong></div>
             ))}
-            <p className="console-evidence">Authentication is verified through the marketplace session endpoint. The wallet chain is checked again before every signing operation.</p>
+            <p className="console-evidence">The preview reads the WalletConnect EIP-1193 provider directly. A restored session is re-checked and forced onto BSC Testnet before authentication or signing.</p>
           </div>
         </section>
 
