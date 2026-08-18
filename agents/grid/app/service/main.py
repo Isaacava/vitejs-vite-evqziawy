@@ -1,9 +1,15 @@
 """Public ERC-8183 service adapter for the first-party Grid Agent test runtime.
 
-Runs a lightweight FastAPI app (so Railway's HTTP healthcheck has something to
-hit) and, in the background, the BNB Agent SDK's funded-job poll loop, which
-watches for FUNDED jobs assigned to this agent's wallet and forwards each one
-to fulfill_grid_job().
+Runs a lightweight FastAPI app and, in the background, the BNB Agent SDK's
+funded-job poll loop, which watches for FUNDED jobs assigned to this agent's
+wallet and forwards each one to fulfill_grid_job().
+
+Also serves submitted deliverables back to verifiers/voters at
+GET /erc8183/job/{job_id}/response, matching the contract LocalStorageProvider
+expects from ERC8183_AGENT_URL (see ERC8183JobOps._public_deliverable_url in
+the bnbagent SDK): the exact manifest JSON bytes written by submit_result must
+be servable at "{agent_url}/job/{job_id}/response" so verifiers can refetch
+and re-hash them against the on-chain manifest hash.
 """
 
 from __future__ import annotations
@@ -12,9 +18,11 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import Response
 
 from bnbagent import EVMWalletProvider
 from bnbagent.erc8183 import ERC8183JobOps, funded_job_watcher
@@ -28,6 +36,10 @@ logger = logging.getLogger("grid_agent")
 # Fail closed at process startup. This service is deliberately Testnet-only.
 config = validate_runtime_config()
 
+# Same base dir LocalStorageProvider.from_env() would use, so the serving
+# route below reads from exactly where submit_result wrote deliverables.
+_STORAGE_DIR = Path(os.getenv("STORAGE_LOCAL_PATH") or ".agent-data")
+
 _wallet = EVMWalletProvider(
     password=os.environ["WALLET_PASSWORD"],
     # Only required on first run to import a key; a wallet is auto-generated
@@ -35,10 +47,12 @@ _wallet = EVMWalletProvider(
     private_key=os.environ.get("PRIVATE_KEY"),
 )
 
+_storage = LocalStorageProvider(base_dir=str(_STORAGE_DIR))
+
 _ops = ERC8183JobOps(
     _wallet,
     network=config["network"],
-    storage_provider=LocalStorageProvider(),
+    storage_provider=_storage,
     service_price=config["service_price"],
     agent_url=config["endpoint"],
 )
@@ -71,3 +85,15 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/erc8183/job/{job_id}/response")
+async def job_response(job_id: int) -> Response:
+    """Serve back the exact deliverable manifest bytes submit_result wrote,
+    so on-chain verifiers can refetch and re-hash them."""
+    filepath = _STORAGE_DIR / f"erc8183-job-{job_id}.json"
+    try:
+        content = filepath.read_bytes()
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="No deliverable found for this job")
+    return Response(content=content, media_type="application/json")
