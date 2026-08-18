@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createPublicClient, encodeFunctionData, formatUnits, http, parseEventLogs, parseUnits, type Address, type Hex } from "viem";
 import { bscTestnet } from "viem/chains";
-import { getAuthenticatedUser, serverClient } from "../../server/authHandlers.js";
+import { getAuthenticatedUser, serverClient } from "../../authHandlers.js";
 
 const COMMERCE = "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address;
 const ROUTER = "0xd7d36d66d2f1b608a0f943f722d27e3744f66f25" as Address;
@@ -19,7 +19,7 @@ function readContract(args: Record<string, unknown>) {
 
 const phaseTarget: Record<string, Address | "payment_token"> = { create: COMMERCE, register: ROUTER, set_budget: COMMERCE, fund: COMMERCE, approve: "payment_token" };
 
-async function syncReceipt(req: VercelRequest, res: VercelResponse, auth: Awaited<ReturnType<typeof getAuthenticatedUser>>) {
+async function syncReceipt(req: VercelRequest, res: VercelResponse, auth: NonNullable<Awaited<ReturnType<typeof getAuthenticatedUser>>>) {
   const missionId = typeof req.body?.mission_id === "string" ? req.body.mission_id.trim() : "";
   const jobId = typeof req.body?.job_id === "string" ? req.body.job_id.trim() : "";
   const phase = typeof req.body?.phase === "string" ? req.body.phase.trim().toLowerCase() : "";
@@ -104,6 +104,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const registerTemplate = encodeFunctionData({ abi: ROUTER_ABI, functionName: "registerJob", args: [0n, POLICY] });
     const setBudgetTemplate = encodeFunctionData({ abi: COMMERCE_ABI, functionName: "setBudget", args: [0n, rawBudget, "0x"] });
     const fundTemplate = encodeFunctionData({ abi: COMMERCE_ABI, functionName: "fund", args: [0n, rawBudget, "0x"] });
-    return res.status(200).json({ ok: true, network: "bsc-testnet", chain_id: 97, mission: { id: mission.id, status: mission.status }, agent: { agent_id: agent.agent_id, name: agent.name, provider: agent.owner, status: agent.status, verification_status: agent.verification_status }, commerce: { address: COMMERCE, evaluator: ROUTER, hook: ROUTER, default_policy: POLICY }, payment: { token, symbol, decimals, budget_raw: rawBudget.toString(), balance_raw: String(balance), allowance_raw: String(allowance), balance_formatted: formatUnits(BigInt(balance), Number(decimals)), allowance_formatted: formatUnits(BigInt(allowance), Number(decimals)) }, expiry: new Date(Number(expiresAt) * 1000).toISOString(), wallet_steps: ["createJob", "registerJob using the returned jobId", "setBudget using the returned jobId", BigInt(allowance) < rawBudget ? "approve payment token to Commerce" : "approval already sufficient", "fund using the returned jobId"], transactions: { create_job: { to: COMMERCE, data: createJobData }, register_job: { to: ROUTER, data: registerTemplate, data_builder: "Replace placeholder jobId 0 with the confirmed createJob receipt jobId." }, set_budget: { to: COMMERCE, data: setBudgetTemplate, data_builder: "Replace placeholder jobId 0 with the confirmed createJob receipt jobId." }, approve: BigInt(allowance) < rawBudget ? { to: token, data_builder: "Encode ERC-20 approve(Commerce, budgetRaw) in the user wallet." } : { data_builder: "No approval transaction required." }, fund: { to: COMMERCE, data: fundTemplate, data_builder: "Replace placeholder jobId 0 with the confirmed createJob receipt jobId." } }, note: "Testnet-only preparation for isolated Grid Agent validation. This endpoint does not share production Mainnet contracts." });
-  } catch (error) { return res.status(400).json({ error: error instanceof Error ? error.message : "Unable to prepare testnet ERC-8183 job" }); }
+    return res.status(200).json({ ok: true, network: "bsc-testnet", chain_id: 97, mission: { id: mission.id, status: mission.status }, agent: { agent_id: agent.agent_id, name: agent.name, provider: agent.owner, status: agent.status, verification_status: agent.verification_status }, commerce: { address: COMMERCE, evaluator: ROUTER, hook: ROUTER, default_policy: POLICY }, payment: { token, symbol, decimals, budget_raw: rawBudget.toString(), balance_raw: String(balance), allowance_raw: String(allowance), balance_formatted: formatUnits(BigInt(balance), Number(decimals)), allowance_formatted: formatUnits(BigInt(allowance), Number(decimals)) }, expiry: new Date(Number(expiresAt) * 1000).toISOString(), wallet_steps: ["createJob", "registerJob using the returned jobId", "setBudget using the returned jobId", BigInt(allowance) < rawBudget ? "approve payment token to Commerce" : "approval already sufficient", "fund using the returned jobId"], transactions: { create_job: { to: COMMERCE, data: createJobData }, register_job: { to: ROUTER, data: registerTemplate, data_builder: "Replace placeholder jobId 0 with the confirmed createJob receipt jobId." }, set_budget: { to: COMMERCE, data: setBudgetTemplate, data_builder: "Replace placeholder jobId 0 with the confirmed createJob receipt jobId." }, approve: BigInt(allowance) < rawBudget ? { to: token, data_builder: "Encode ERC-20 approve(Commerce, budgetRaw) in the user wallet." } : { data_builder: "No approval transaction required." }, fund: { to: COMMERCE, data: fundTemplate, data_builder: "Replace placeholder jobId 0 with the confirmed createJob receipt jobId." } }, note: "Testnet-only preparation endpoint. The user's wallet signs every state-changing transaction and the marketplace never receives a private key." });
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : "Unable to prepare Testnet ERC-8183 job" });
+  }
 }
