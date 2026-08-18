@@ -13,4 +13,5 @@ COPY agents/grid/app ./app
 ENV PORT=8000
 EXPOSE 8000
 
-CMD ["sh", "-c", "python -m uvicorn app.service.main:app --host 0.0.0.0 --port ${PORT}"]
+# Use the absolute interpreter path so the container does not depend on PATH resolution.
+CMD ["sh", "-c", "/usr/local/bin/python3 -m uvicorn app.service.main:app --host 0.0.0.0 --port ${PORT}"]
