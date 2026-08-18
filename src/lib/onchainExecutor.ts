@@ -1,12 +1,8 @@
+import { getWalletProvider } from "./walletAuth";
+
 type Eip1193Provider = {
   request(args: { method: string; params?: unknown[] }): Promise<unknown>;
 };
-
-declare global {
-  interface Window {
-    ethereum?: Eip1193Provider;
-  }
-}
 
 export type PreparedTransaction = {
   to: string;
@@ -28,9 +24,8 @@ export type ConfirmedTransaction = {
 
 const TX_HASH = /^0x[a-fA-F0-9]{64}$/;
 
-function provider() {
-  if (!window.ethereum) throw new Error("No compatible browser wallet was detected.");
-  return window.ethereum;
+async function provider(): Promise<Eip1193Provider> {
+  return getWalletProvider();
 }
 
 function transaction(tx: PreparedTransaction) {
@@ -44,7 +39,8 @@ function transaction(tx: PreparedTransaction) {
 }
 
 export async function sendPreparedTransaction(tx: PreparedTransaction) {
-  const hash = String(await provider().request({
+  const activeProvider = await provider();
+  const hash = String(await activeProvider.request({
     method: "eth_sendTransaction",
     params: [transaction(tx)],
   }));
@@ -54,9 +50,10 @@ export async function sendPreparedTransaction(tx: PreparedTransaction) {
 
 export async function waitForTransaction(hash: string, timeoutMs = 180_000, pollMs = 2_500) {
   if (!TX_HASH.test(hash)) throw new Error("Invalid transaction hash.");
+  const activeProvider = await provider();
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const receipt = await provider().request({
+    const receipt = await activeProvider.request({
       method: "eth_getTransactionReceipt",
       params: [hash],
     }) as null | {
