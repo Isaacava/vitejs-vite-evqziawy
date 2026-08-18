@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createPublicClient, http, type Address, type Hex } from "viem";
 import { bsc } from "viem/chains";
-import { getAuthenticatedUser, serverClient } from "../src/server/authHandlers.js";
+import { getAuthenticatedUser, serverClient } from "../../server/authHandlers.js";
 
 const COMMERCE = "0xea4daa3100a767e86fded867729ae7446476eba6" as Address;
 const ROUTER = "0x51895229e12f9876011789b04f8698af06ccd6da" as Address;

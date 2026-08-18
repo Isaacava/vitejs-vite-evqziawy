@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { dashboard, createMission } from "../src/server/userHandlers.js";
-import { evidence } from "../src/server/evidenceHandlers.js";
+import { dashboard, createMission } from "../../server/userHandlers.js";
+import { evidence } from "../../server/evidenceHandlers.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const route = typeof req.query.route === "string" ? req.query.route : "dashboard";

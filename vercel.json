@@ -1,26 +1,11 @@
 {
   "crons": [
-    {
-      "path": "/api/index-agents",
-      "schedule": "0 2 * * *"
-    },
-    {
-      "path": "/api/check-agent-endpoints",
-      "schedule": "15 2 * * *"
-    }
+    { "path": "/api/index-agents", "schedule": "0 2 * * *" },
+    { "path": "/api/check-agent-endpoints", "schedule": "15 2 * * *" }
   ],
   "rewrites": [
-    { "source": "/api/auth/nonce", "destination": "/api/auth?action=nonce" },
-    { "source": "/api/auth/verify", "destination": "/api/auth?action=verify" },
-    { "source": "/api/auth/me", "destination": "/api/auth?action=me" },
-    { "source": "/api/auth/logout", "destination": "/api/auth?action=logout" },
-    { "source": "/api/agent-actions", "destination": "/api/agent?route=actions" },
-    { "source": "/api/agent-jobs/watch", "destination": "/api/agent?route=watch" },
-    { "source": "/api/agent-runtimes/risk-guardian", "destination": "/api/agent?route=risk-runtime" },
-    { "source": "/api/agent/heartbeat", "destination": "/api/agent?route=heartbeat" },
-    { "source": "/api/risk-guardian", "destination": "/api/agent?route=risk-policy" },
-    { "source": "/api/missions", "destination": "/api/dashboard?route=missions" },
-    { "source": "/api/erc8183/prepare", "destination": "/api/erc8183" },
+    { "source": "/api", "destination": "/api/index" },
+    { "source": "/api/:path*", "destination": "/api/index?__path=:path*" },
     { "source": "/app", "destination": "/index.html" },
     { "source": "/dashboard", "destination": "/index.html" },
     { "source": "/permissions", "destination": "/index.html" },

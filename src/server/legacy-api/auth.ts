@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { logout, me, nonce, verify } from "../src/server/authHandlers.js";
+import { logout, me, nonce, verify } from "../../server/authHandlers.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const action = typeof req.query.action === "string" ? req.query.action : "";

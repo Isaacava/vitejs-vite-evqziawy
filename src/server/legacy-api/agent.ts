@@ -1,9 +1,9 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { actions, heartbeat, riskRuntime, watch } from "../src/server/agentHandlers.js";
-import { history } from "../src/server/agentEvidence.js";
-import { riskPolicyHandler } from "../src/server/riskGuardianPolicy.js";
-import { proposalHandler } from "../src/server/proposalGuard.js";
-import { quoteHandler } from "../src/server/quoteHandler.js";
+import { actions, heartbeat, riskRuntime, watch } from "../../server/agentHandlers.js";
+import { history } from "../../server/agentEvidence.js";
+import { riskPolicyHandler } from "../../server/riskGuardianPolicy.js";
+import { proposalHandler } from "../../server/proposalGuard.js";
+import { quoteHandler } from "../../server/quoteHandler.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const route = typeof req.query.route === "string" ? req.query.route : "";

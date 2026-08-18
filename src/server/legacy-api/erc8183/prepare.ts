@@ -1,13 +1,13 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 import { encodeFunctionData, type Address } from "viem";
-import { getAuthenticatedUser } from "../../src/server/authHandlers.js";
+import { getAuthenticatedUser } from "../../server/authHandlers.js";
 import {
   COMMERCE_ABI,
   ERC20_ABI,
   ERC8183_ADDRESSES,
   publicClient,
-} from "../../src/lib/erc8183.js";
+} from "../../lib/erc8183.js";
 
 function supabaseServer() {
   const url = process.env.SUPABASE_URL;

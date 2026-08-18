@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 import { getAddress, parseAbiItem, type Address, type Hex } from "viem";
-import { ERC8004_REGISTRY_ADDRESS, publicClient } from "../src/lib/erc8183.js";
+import { ERC8004_REGISTRY_ADDRESS, publicClient } from "../../lib/erc8183.js";
 
 const TRANSFER_EVENT = parseAbiItem(
   "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
