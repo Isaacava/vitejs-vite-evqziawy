@@ -4,12 +4,9 @@ Runs a lightweight FastAPI app and, in the background, the BNB Agent SDK's
 funded-job poll loop, which watches for FUNDED jobs assigned to this agent's
 wallet and forwards each one to fulfill_grid_job().
 
-Also serves submitted deliverables back to verifiers/voters at
-GET /erc8183/job/{job_id}/response, matching the contract LocalStorageProvider
-expects from ERC8183_AGENT_URL (see ERC8183JobOps._public_deliverable_url in
-the bnbagent SDK): the exact manifest JSON bytes written by submit_result must
-be servable at "{agent_url}/job/{job_id}/response" so verifiers can refetch
-and re-hash them against the on-chain manifest hash.
+The service exposes the minimal public ERC-8183 provider contract used by
+AgentMarket for Testnet readiness and quote negotiation, while keeping the
+funded-job watcher and deliverable response flow intact.
 """
 
 from __future__ import annotations
@@ -21,7 +18,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response
 
 from bnbagent import EVMWalletProvider
@@ -36,14 +33,10 @@ logger = logging.getLogger("grid_agent")
 # Fail closed at process startup. This service is deliberately Testnet-only.
 config = validate_runtime_config()
 
-# Same base dir LocalStorageProvider.from_env() would use, so the serving
-# route below reads from exactly where submit_result wrote deliverables.
 _STORAGE_DIR = Path(os.getenv("STORAGE_LOCAL_PATH") or ".agent-data")
 
 _wallet = EVMWalletProvider(
     password=os.environ["WALLET_PASSWORD"],
-    # Only required on first run to import a key; a wallet is auto-generated
-    # otherwise and persisted by the SDK's keystore.
     private_key=os.environ.get("PRIVATE_KEY"),
 )
 
@@ -56,6 +49,17 @@ _ops = ERC8183JobOps(
     service_price=config["service_price"],
     agent_url=config["endpoint"],
 )
+
+
+def _provider_address() -> str:
+    return str(_ops.agent_address)
+
+
+def _payment_token() -> str | None:
+    try:
+        return str(_ops.erc8183_client.payment_token)
+    except Exception:
+        return None
 
 
 async def _on_funded(job: dict[str, Any]) -> None:
@@ -77,9 +81,14 @@ async def lifespan(_: FastAPI):
     finally:
         if _watcher_task is not None:
             _watcher_task.cancel()
+            await asyncio.gather(_watcher_task, return_exceptions=True)
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+    title="AgentMarket Grid Agent",
+    description="Testnet-only ERC-8183 Grid Agent provider service",
+    lifespan=lifespan,
+)
 
 
 @app.get("/health")
@@ -87,10 +96,103 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/erc8183")
+async def erc8183_root() -> dict[str, Any]:
+    """Public provider root used for ERC-8183 endpoint health discovery."""
+    return {
+        "status": "ok",
+        "service": "AgentMarket Grid ERC-8183",
+        "network": "bsc-testnet",
+        "chain_id": 97,
+        "agent_address": _provider_address(),
+        "endpoints": {
+            "health": "/erc8183/health",
+            "status": "/erc8183/status",
+            "negotiate": "/erc8183/negotiate",
+        },
+    }
+
+
+@app.get("/erc8183/health")
+async def erc8183_health() -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "service": "AgentMarket Grid ERC-8183",
+        "network": "bsc-testnet",
+        "chain_id": 97,
+    }
+
+
+@app.get("/erc8183/status")
+async def erc8183_status() -> dict[str, Any]:
+    payment_token = _payment_token()
+    return {
+        "status": "ok",
+        "network": "bsc-testnet",
+        "chain_id": 97,
+        "agent_address": _provider_address(),
+        "commerce_address": str(_ops.erc8183_client.commerce.address),
+        "router_address": str(_ops.erc8183_client.router.address),
+        "policy_address": str(_ops.erc8183_client.policy.address),
+        "service_price": config["service_price"],
+        "payment_token": payment_token,
+        "poll_interval": config["poll_interval"],
+    }
+
+
+@app.post("/erc8183/negotiate")
+async def negotiate(request: Request) -> dict[str, Any]:
+    """Return the provider's current deterministic Testnet quote.
+
+    The provider price is sourced directly from the running ERC-8183 service
+    configuration. No user wallet transaction happens during negotiation.
+    """
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON") from exc
+
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Request body must be an object")
+
+    terms = body.get("terms")
+    if terms is not None and not isinstance(terms, dict):
+        raise HTTPException(status_code=400, detail="terms must be an object")
+
+    task_description = body.get("task_description")
+    if task_description is not None and not isinstance(task_description, str):
+        raise HTTPException(status_code=400, detail="task_description must be a string")
+
+    try:
+        import time
+        import uuid
+
+        expires_at = int(time.time()) + 300
+        quote_id = str(uuid.uuid4())
+        price = str(config["service_price"])
+        currency = _payment_token() or "testnet-settlement-token"
+
+        return {
+            "accepted": True,
+            "quote_id": quote_id,
+            "price": price,
+            "currency": currency,
+            "quote_expires_at": expires_at,
+            "chain_id": 97,
+            "network": "bsc-testnet",
+            "environment": "testnet",
+            "provider_address": _provider_address(),
+            "task_description": task_description or "",
+            "terms": terms or {},
+        }
+    except Exception as exc:
+        logger.exception("Negotiation failed")
+        raise HTTPException(status_code=500, detail="Negotiation failed") from exc
+
+
 @app.get("/erc8183/job/{job_id}/response")
 async def job_response(job_id: int) -> Response:
-    """Serve back the exact deliverable manifest bytes submit_result wrote,
-    so on-chain verifiers can refetch and re-hash them."""
+    """Serve back the exact deliverable manifest bytes submit_result wrote."""
     filepath = _STORAGE_DIR / f"erc8183-job-{job_id}.json"
     try:
         content = filepath.read_bytes()
