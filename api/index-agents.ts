@@ -143,7 +143,7 @@ async function syncAgent(supabase: ReturnType<typeof supabaseServer>, agentId: s
 
   const { data: existing, error: existingError } = await supabase
     .from("agents")
-    .select("id,agent_id,source,verification_status,category,is_first_party,status")
+    .select("id,agent_id,source,verification_status,category,is_first_party,status,indexed_at,last_indexed_at")
     .eq("agent_id", agentId)
     .maybeSingle();
   if (existingError) throw new Error(existingError.message);
