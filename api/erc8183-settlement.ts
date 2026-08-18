@@ -31,6 +31,19 @@ const COMMERCE_ABI = [
   },
 ] as const;
 
+type ChainJob = {
+  id: bigint;
+  client: Address;
+  provider: Address;
+  evaluator: Address;
+  expiredAt: bigint;
+  description: string;
+  budget: bigint;
+  status: number | bigint;
+  deliverable: string;
+  hook: Address;
+};
+
 const client = createPublicClient({ chain: bsc, transport: http() });
 const CHAIN_STATUS: Record<number, "open" | "funded" | "submitted" | "completed" | "rejected" | "expired"> = {
   0: "open",
@@ -95,12 +108,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(409).json({ error: "Transaction target is not the production ERC-8183 router", expected_target: ROUTER, actual_target: receipt.to });
   }
 
-  const chainJob = await client.readContract({
+  const chainJob = (await client.readContract({
     address: COMMERCE,
     abi: COMMERCE_ABI,
     functionName: "getJob",
     args: [BigInt(chainJobId)],
-  });
+  } as never)) as unknown as ChainJob;
   if (!chainJob || chainJob.id === 0n) return res.status(409).json({ error: "Chain job was not found" });
   if (chainJob.client.toLowerCase() !== auth.user.wallet_address.toLowerCase()) {
     return res.status(403).json({ error: "Chain job client does not match the authenticated wallet" });
@@ -128,15 +141,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (txError) throw new Error(txError.message);
   }
 
+  const now = new Date().toISOString();
   const { error: jobUpdateError } = await supabase
     .from("jobs")
     .update({
       chain_status: chainStatus,
-      chain_last_synced_at: new Date().toISOString(),
+      chain_last_synced_at: now,
       chain_tx_hash: txHash,
       deliverable: chainJob.deliverable || null,
-      terminal_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      terminal_at: now,
+      updated_at: now,
     })
     .eq("id", job.id);
   if (jobUpdateError) throw new Error(jobUpdateError.message);
@@ -159,7 +173,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         deliverable: chainJob.deliverable || null,
         chain_id: 56,
       },
-      updated_at: new Date().toISOString(),
+      updated_at: now,
     }).eq("id", evaluation.id);
   } else {
     await supabase.from("evaluations").insert({
@@ -182,7 +196,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const paymentStatus = chainStatus === "completed" ? "released" : "refunded";
   const { data: payment } = await supabase.from("payments").select("id").eq("job_id", job.id).maybeSingle();
   if (payment?.id) {
-    await supabase.from("payments").update({ status: paymentStatus, tx_hash: txHash, updated_at: new Date().toISOString() }).eq("id", payment.id);
+    await supabase.from("payments").update({ status: paymentStatus, tx_hash: txHash, updated_at: now }).eq("id", payment.id);
   }
 
   if (job.provider_agent_id) {
