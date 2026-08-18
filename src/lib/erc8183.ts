@@ -11,16 +11,7 @@ import {
   BSC_CHAIN,
   BSC_RPC_URL,
   NETWORK_CONTRACTS,
-} from "./network";
-
-/*
- * ============================================================
- * BNB AGENTIC COMMERCE CONTRACTS (ERC-8183)
- * Network is selected by src/lib/network.ts.
- * Production defaults to BSC mainnet; preview/testing can use
- * BSC testnet with VITE_BSC_NETWORK=testnet plus contract overrides.
- * ============================================================
- */
+} from "./network.js";
 
 export const ERC8183_ADDRESSES = {
   commerce: NETWORK_CONTRACTS.commerce as Address,
