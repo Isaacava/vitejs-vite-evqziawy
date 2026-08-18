@@ -1,4 +1,4 @@
-import { getWalletProvider } from "./walletAuth";
+import { connectWallet } from "./walletAuth";
 
 type Eip1193Provider = {
   request(args: { method: string; params?: unknown[] }): Promise<unknown>;
@@ -25,7 +25,7 @@ export type ConfirmedTransaction = {
 const TX_HASH = /^0x[a-fA-F0-9]{64}$/;
 
 async function provider(): Promise<Eip1193Provider> {
-  return getWalletProvider();
+  return connectWallet();
 }
 
 function transaction(tx: PreparedTransaction) {
