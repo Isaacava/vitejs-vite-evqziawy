@@ -13,6 +13,7 @@ import indexAgentsHandler from "../src/server/legacy-api/index-agents.js";
 import jobsHandler from "../src/server/legacy-api/jobs.js";
 import matchHandler from "../src/server/legacy-api/match.js";
 import sessionPermissionsHandler from "../src/server/legacy-api/session-permissions.js";
+import testnetMatchHandler from "../src/server/legacy-api/testnet/match.js";
 import testnetErc8183Handler from "../src/server/legacy-api/testnet/erc8183.js";
 import testnetSettlementHandler from "../src/server/legacy-api/testnet/erc8183-settlement.js";
 
@@ -82,6 +83,7 @@ function routeHandler(req: VercelRequest): Handler | null {
   if (path === "jobs") return jobsHandler;
   if (path === "match") return matchHandler;
   if (path === "session-permissions") return sessionPermissionsHandler;
+  if (path === "testnet/match") return testnetMatchHandler;
   if (path === "testnet/erc8183") return testnetErc8183Handler;
   if (path === "testnet/erc8183-settlement") return testnetSettlementHandler;
 
