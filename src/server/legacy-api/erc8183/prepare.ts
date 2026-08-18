@@ -1,13 +1,13 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 import { encodeFunctionData, type Address } from "viem";
-import { getAuthenticatedUser } from "../../server/authHandlers.js";
+import { getAuthenticatedUser } from "../../authHandlers.js";
 import {
   COMMERCE_ABI,
   ERC20_ABI,
   ERC8183_ADDRESSES,
   publicClient,
-} from "../../lib/erc8183.js";
+} from "../../../lib/erc8183.js";
 
 function supabaseServer() {
   const url = process.env.SUPABASE_URL;
@@ -123,10 +123,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({
       ok: true,
       network: "bsc-mainnet",
-      mission: {
-        id: mission.id,
-        status: mission.status,
-      },
+      mission: { id: mission.id, status: mission.status },
       quote: {
         quote_id: quote.quote_id,
         status: quote.status,
@@ -155,13 +152,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         budget_raw: budget.toString(),
       },
       expiry: expiry.toString(),
-      wallet_steps: [
-        "createJob",
-        "registerJob",
-        "setBudget",
-        "approve payment token",
-        "fund",
-      ],
+      wallet_steps: ["createJob", "registerJob", "setBudget", "approve payment token", "fund"],
       transactions: {
         createJob: {
           to: ERC8183_ADDRESSES.commerce,
