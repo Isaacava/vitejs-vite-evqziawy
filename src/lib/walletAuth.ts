@@ -4,6 +4,7 @@ type Eip1193Provider = {
   request(args: { method: string; params?: unknown[] }): Promise<unknown>;
   on?: (event: string, handler: (...args: unknown[]) => void) => void;
   removeListener?: (event: string, handler: (...args: unknown[]) => void) => void;
+  disconnect?: () => Promise<void>;
 };
 
 declare global {
@@ -29,45 +30,37 @@ const TESTNET_EXPLORER_URL = "https://testnet.bscscan.com";
 
 let walletProvider: Eip1193Provider | null = null;
 
-async function ensureTestnetChain(provider: Eip1193Provider) {
-  const current = String(await provider.request({ method: "eth_chainId" })).toLowerCase();
-  if (current === AUTH_CHAIN_ID_HEX) return;
-
-  try {
-    await provider.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: AUTH_CHAIN_ID_HEX }],
-    });
-  } catch (switchError: unknown) {
-    const code = typeof switchError === "object" && switchError !== null && "code" in switchError
-      ? Number((switchError as { code?: unknown }).code)
-      : 0;
-    if (code !== 4902) throw new Error("WalletConnect is connected to the wrong network. Switch to BSC Testnet (chain 97) in your wallet.");
-
-    await provider.request({
-      method: "wallet_addEthereumChain",
-      params: [{
-        chainId: AUTH_CHAIN_ID_HEX,
-        chainName: "BNB Smart Chain Testnet",
-        nativeCurrency: { name: "tBNB", symbol: "tBNB", decimals: 18 },
-        rpcUrls: [TESTNET_RPC_URL],
-        blockExplorerUrls: [TESTNET_EXPLORER_URL],
-      }],
-    });
-  }
-
-  const verified = String(await provider.request({ method: "eth_chainId" })).toLowerCase();
-  if (verified !== AUTH_CHAIN_ID_HEX) {
-    throw new Error("WalletConnect could not switch to BSC Testnet (chain 97). Mainnet transactions are disabled in this preview.");
-  }
+function currentProviderChain(provider: Eip1193Provider): Promise<string> {
+  return provider.request({ method: "eth_chainId" }).then((value) => String(value).toLowerCase());
 }
 
-async function getWalletProvider(): Promise<Eip1193Provider> {
-  if (walletProvider) {
-    await ensureTestnetChain(walletProvider);
-    return walletProvider;
+async function disconnectWalletConnectSession(provider: Eip1193Provider) {
+  try {
+    await provider.disconnect?.();
+  } catch {
+    // A stale WalletConnect session can fail during disconnect; clearing the local reference
+    // still lets the next call create a fresh Testnet-only session.
   }
+  walletProvider = null;
+  delete window.ethereum;
+}
 
+async function ensureTestnetChain(provider: Eip1193Provider) {
+  const current = await currentProviderChain(provider);
+  if (current === AUTH_CHAIN_ID_HEX) return;
+
+  // WalletConnect sessions are persisted. If the saved session was approved for another
+  // chain (for example BSC Mainnet), switching the wallet app itself is not enough: the
+  // WC session namespace is still tied to the old chain. End that stale session and start
+  // a brand-new Testnet-only session instead of trying to reuse it.
+  await disconnectWalletConnectSession(provider);
+
+  throw new Error(
+    "Your WalletConnect session was connected to a different network. Please reconnect with WalletConnect and approve BSC Testnet (chain 97)."
+  );
+}
+
+async function createTestnetProvider(): Promise<Eip1193Provider> {
   const provider = await EthereumProvider.init({
     projectId: WALLETCONNECT_PROJECT_ID,
     chains: [AUTH_CHAIN_ID],
@@ -85,19 +78,45 @@ async function getWalletProvider(): Promise<Eip1193Provider> {
   }
 
   const eip1193 = provider as unknown as Eip1193Provider;
-  await ensureTestnetChain(eip1193);
+  const chainId = await currentProviderChain(eip1193);
+  if (chainId !== AUTH_CHAIN_ID_HEX) {
+    await disconnectWalletConnectSession(eip1193);
+    throw new Error(
+      "WalletConnect did not establish a BSC Testnet session. Reconnect and select BSC Testnet (chain 97)."
+    );
+  }
 
   walletProvider = eip1193;
   window.ethereum = eip1193;
   return eip1193;
 }
 
+async function getWalletProvider(): Promise<Eip1193Provider> {
+  if (walletProvider) {
+    const current = await currentProviderChain(walletProvider);
+    if (current === AUTH_CHAIN_ID_HEX) return walletProvider;
+    await disconnectWalletConnectSession(walletProvider);
+  }
+
+  return createTestnetProvider();
+}
+
 export async function ensureWalletConnectedProvider() {
-  const provider = await getWalletProvider();
-  await ensureTestnetChain(provider);
+  let provider = await getWalletProvider();
+  let chainId = await currentProviderChain(provider);
+
+  if (chainId !== AUTH_CHAIN_ID_HEX) {
+    await disconnectWalletConnectSession(provider);
+    provider = await createTestnetProvider();
+    chainId = await currentProviderChain(provider);
+  }
+
+  if (chainId !== AUTH_CHAIN_ID_HEX) {
+    throw new Error("WalletConnect is not on BSC Testnet (chain 97). Mainnet transactions are disabled in this preview.");
+  }
 
   const accounts = (await provider.request({ method: "eth_accounts" })) as string[];
-  if (!accounts?.[0]) throw new Error("No wallet account is connected. Connect with WalletConnect to continue.");
+  if (!accounts?.[0]) throw new Error("No Testnet wallet is connected. Connect with WalletConnect to continue.");
 
   window.ethereum = provider;
   return { provider, address: accounts[0] };
@@ -145,6 +164,7 @@ export async function getCurrentUser() {
 
 export async function signOut() {
   await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+  if (walletProvider) await disconnectWalletConnectSession(walletProvider);
   walletProvider = null;
   delete window.ethereum;
 }
