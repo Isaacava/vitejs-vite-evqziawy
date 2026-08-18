@@ -9,9 +9,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the grid agent application code
 COPY agents/grid/app ./app
 
-# Railway injects $PORT at runtime
-ENV PORT=8000
 EXPOSE 8000
 
-# Use the absolute interpreter path so the container does not depend on PATH resolution.
-CMD ["sh", "-c", "/usr/local/bin/python3 -m uvicorn app.service.main:app --host 0.0.0.0 --port ${PORT}"]
+# Exec form (no shell) - Python reads $PORT itself via os.environ at runtime,
+# so this never depends on shell/platform string interpolation of $PORT.
+CMD ["python", "-c", "import os, uvicorn; uvicorn.run('app.service.main:app', host='0.0.0.0', port=int(os.environ.get('PORT', 8000)))"]
