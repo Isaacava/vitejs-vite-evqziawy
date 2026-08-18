@@ -46,7 +46,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const supabase = serverClient();
     const { data: existing, error: existingError } = await supabase
       .from("agents")
-      .select("id,agent_id,source,verification_status,owner,name,description,category,uri")
+      .select("id,agent_id,source,verification_status,owner,name,description,category,uri,last_indexed_at")
       .eq("agent_id", agentId)
       .maybeSingle();
     if (existingError) throw new Error(existingError.message);
@@ -70,7 +70,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       name: nextName,
       description: nextDescription,
       category: nextCategory,
-      last_indexed_at: existing.source === "indexed" ? existing.last_indexed_at : now,
+      last_indexed_at: existing.source === "indexed" ? existing.last_indexed_at || now : now,
       metadata: {
         claim: "self_service",
         claimed_at: now,
