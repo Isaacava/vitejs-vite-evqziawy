@@ -31,11 +31,14 @@ const compact = (value?: string | null) => value ? `${value.slice(0, 8)}…${val
 const validAddress = (value?: string | null) => /^0x[a-fA-F0-9]{40}$/.test(value || "");
 
 export default function OnchainPrepare() {
-  const missionId = new URLSearchParams(window.location.search).get("mission") || "";
+  const params = new URLSearchParams(window.location.search);
+  const missionId = params.get("mission") || "";
+  const marketJobId = params.get("job") || "";
   const [budget, setBudget] = useState("1");
   const [user, setUser] = useState<AuthUser | null>(null);
   const [livePayment, setLivePayment] = useState<PaymentState | null>(null);
   const [data, setData] = useState<Preparation | null>(null);
+  const [chainJobId, setChainJobId] = useState("");
   const [loading, setLoading] = useState(true);
   const [readingChain, setReadingChain] = useState(false);
   const [preparing, setPreparing] = useState(false);
@@ -97,6 +100,10 @@ export default function OnchainPrepare() {
       setError("Connect and sign in before preparing the mission.");
       return;
     }
+    if (!marketJobId) {
+      setError("This preparation flow is missing the marketplace job ID. Return to the mission console and open preparation again.");
+      return;
+    }
 
     const requested = Number(budget);
     if (!Number.isFinite(requested) || requested <= 0) {
@@ -114,8 +121,10 @@ export default function OnchainPrepare() {
 
     setPreparing(true);
     setError("");
+    setChainJobId("");
+    setReceiptResult(null);
     try {
-      const response = await fetch("/api/erc8183/prepare", {
+      const response = await fetch("/api/testnet/erc8183", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -126,43 +135,50 @@ export default function OnchainPrepare() {
         }),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body?.error || "Unable to prepare mission");
+      if (!response.ok) throw new Error(body?.error || "Unable to prepare Testnet mission");
       setData(body as Preparation);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to prepare mission");
+      setError(cause instanceof Error ? cause.message : "Unable to prepare Testnet mission");
     } finally {
       setPreparing(false);
     }
   }
 
   async function syncReceipt() {
-    const jobId = data?.mission?.id ? new URLSearchParams(window.location.search).get("job") || "" : "";
-    if (!missionId || !jobId || !txHash.startsWith("0x") || txHash.length !== 66) {
+    if (!missionId || !marketJobId || !txHash.startsWith("0x") || txHash.length !== 66) {
       setError("Receipt verification needs the mission, marketplace job ID, and a 66-character transaction hash.");
+      return;
+    }
+    if (receiptPhase !== "create" && !chainJobId) {
+      setError("Confirm createJob first so AgentMarket has the real ERC-8183 chain job ID.");
       return;
     }
     setSyncing(true);
     setError("");
     setReceiptResult(null);
     try {
-      const response = await fetch("/api/erc8183/prepare", {
+      const response = await fetch("/api/testnet/erc8183", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "sync_receipt",
           mission_id: missionId,
-          job_id: jobId,
+          job_id: marketJobId,
           phase: receiptPhase,
           tx_hash: txHash,
-          chain_job_id: data?.transactions?.create_job && receiptPhase === "create" ? undefined : (data?.mission?.id ? new URLSearchParams(window.location.search).get("chainJob") || undefined : undefined),
+          chain_job_id: receiptPhase === "create" ? undefined : chainJobId,
         }),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body?.error || "Receipt verification failed");
-      setReceiptResult(body as ReceiptResult);
+      if (!response.ok) throw new Error(body?.error || "Testnet receipt verification failed");
+      const next = body as ReceiptResult;
+      setReceiptResult(next);
+      if (next.onchain_job?.id) setChainJobId(next.onchain_job.id);
+      if (next.job?.chain_job_id) setChainJobId(String(next.job.chain_job_id));
+      setTxHash("");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Receipt verification failed");
+      setError(cause instanceof Error ? cause.message : "Testnet receipt verification failed");
     } finally {
       setSyncing(false);
     }
@@ -215,14 +231,15 @@ export default function OnchainPrepare() {
               <section className="console-card">
                 <div className="console-section-head"><span>01 / JOB TERMS</span><b>{data?.agent?.name || "Selected agent"}</b></div>
                 <div className="console-stat"><span>Mission</span><strong>{compact(missionId)}</strong></div>
+                <div className="console-stat"><span>Marketplace job</span><strong>{compact(marketJobId)}</strong></div>
                 <div className="console-stat"><span>Client wallet</span><strong>{compact(user?.wallet_address)}</strong></div>
                 <div className="console-stat"><span>Provider wallet</span><strong>{compact(data?.agent?.provider)}</strong></div>
                 <div className="console-stat"><span>Identity</span><strong>{data?.agent?.verification_status || "indexed"}</strong></div>
                 <div className="console-stat"><span>Endpoint</span><strong>{data?.agent?.status || "unknown"}</strong></div>
                 <div className="console-stat"><span>Payment asset</span><strong>{livePayment?.symbol || data?.payment?.symbol || "—"}</strong></div>
                 <label className="console-field-label" htmlFor="mission-budget">MISSION BUDGET</label>
-                <input id="mission-budget" className="console-input" value={budget} onChange={(event) => { setBudget(event.target.value); setData(null); }} inputMode="decimal" />
-                <button className="console-brass-button" disabled={preparing || readingChain || !user?.wallet_address} onClick={() => void prepare()}>{preparing ? "Preparing…" : "Build transaction plan →"}</button>
+                <input id="mission-budget" className="console-input" value={budget} onChange={(event) => { setBudget(event.target.value); setData(null); setChainJobId(""); setReceiptResult(null); }} inputMode="decimal" />
+                <button className="console-brass-button" disabled={preparing || readingChain || !user?.wallet_address || !marketJobId} onClick={() => void prepare()}>{preparing ? "Preparing…" : "Build transaction plan →"}</button>
               </section>
 
               <aside className="console-card">
@@ -264,7 +281,7 @@ export default function OnchainPrepare() {
               <div className="console-grid">
                 <div>
                   <label className="console-field-label" htmlFor="receipt-phase">CONFIRMED PHASE</label>
-                  <select id="receipt-phase" className="console-input" value={receiptPhase} onChange={(event) => setReceiptPhase(event.target.value)}>
+                  <select id="receipt-phase" className="console-input" value={receiptPhase} onChange={(event) => { setReceiptPhase(event.target.value); setReceiptResult(null); }}>
                     <option value="create">createJob</option>
                     <option value="register">registerJob</option>
                     <option value="set_budget">setBudget</option>
@@ -277,7 +294,8 @@ export default function OnchainPrepare() {
                   <input id="tx-hash" className="console-input" value={txHash} onChange={(event) => setTxHash(event.target.value.trim())} placeholder="0x…" autoComplete="off" spellCheck={false} />
                 </div>
               </div>
-              <button className="console-dark-button" disabled={syncing || !txHash} onClick={() => void syncReceipt()}>{syncing ? "Verifying receipt…" : "Verify on-chain receipt →"}</button>
+              <button className="console-dark-button" disabled={syncing || !txHash || !marketJobId || (receiptPhase !== "create" && !chainJobId)} onClick={() => void syncReceipt()}>{syncing ? "Verifying receipt…" : "Verify on-chain receipt →"}</button>
+              {chainJobId && <div className="console-evidence"><small>CHAIN JOB</small><p>Confirmed ERC-8183 Testnet job ID: #{chainJobId}. Subsequent receipt checks are bound to this job.</p></div>}
               {receiptResult && <div className="console-evidence"><small>VERIFIED</small><p>{receiptResult.phase} confirmed in block {receiptResult.block_number}. Chain state: {receiptResult.job?.chain_status || "verified"}. Tx: {compact(receiptResult.tx_hash)}.</p></div>}
             </section>
           </>
