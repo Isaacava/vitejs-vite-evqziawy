@@ -43,9 +43,6 @@ jobs:
             git mv "$file" "$dest"
           done <<< "$route_files"
 
-          # Moved route files used paths such as ../src/server/foo.js while
-          # living under /api. Their new shared location is /src/server/legacy-api.
-          # Normalize those imports without changing same-directory imports.
           while IFS= read -r file; do
             [ -n "$file" ] || continue
             sed -i \
@@ -57,7 +54,6 @@ jobs:
           cat > api/index.ts <<'EOF'
           import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-          import activityHandler from "../src/server/legacy-api/activity.js";
           import agentJobsHandler from "../src/server/legacy-api/agent-jobs.js";
           import agentHandler from "../src/server/legacy-api/agent.js";
           import registerAgentHandler from "../src/server/legacy-api/agents/register.js";
@@ -151,20 +147,6 @@ jobs:
           }
           EOF
 
-          # _auth and _activity are implementation modules, not Vercel routes.
-          # They do not have default exports and are intentionally not imported by the gateway.
-          # The action module below aliases the moved helper names so imports such as ./_auth.js continue to resolve.
-          if [ -f src/server/legacy-api/_auth.ts ]; then mv src/server/legacy-api/_auth.ts src/server/legacy-api/_auth.ts; fi
-          if [ -f src/server/legacy-api/_activity.ts ]; then mv src/server/legacy-api/_activity.ts src/server/legacy-api/_activity.ts; fi
-
-          # Keep a stable helper filename expected by existing route imports.
-          cat > src/server/legacy-api/activity.ts <<'EOF'
-          export * from "./_activity.js";
-          EOF
-
-          # Preserve the original Vercel route behavior for helper imports without adding functions.
-          git add api src/server/legacy-api
-
           cat > vercel.json <<'EOF'
           {
             "crons": [
@@ -189,8 +171,7 @@ jobs:
           }
           EOF
 
-          git add vercel.json api/index.ts src/server/legacy-api
-
+          git add api src/server/legacy-api vercel.json
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "refactor: consolidate Vercel API into one Hobby function"
