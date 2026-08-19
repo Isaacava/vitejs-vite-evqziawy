@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getCurrentUser, type AuthUser } from "./lib/walletAuth";
+import { getConnectedWalletProvider, getCurrentUser, type AuthUser } from "./lib/walletAuth";
 import { readPaymentState, type PaymentState } from "./lib/bscTestnet";
 import "./mission-console.css";
 
@@ -44,6 +44,8 @@ export default function OnchainPrepare() {
   const [readingChain, setReadingChain] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [addingToken, setAddingToken] = useState(false);
+  const [tokenNotice, setTokenNotice] = useState("");
   const [receiptPhase, setReceiptPhase] = useState("create");
   const [txHash, setTxHash] = useState("");
   const [receiptResult, setReceiptResult] = useState<ReceiptResult | null>(null);
@@ -91,6 +93,50 @@ export default function OnchainPrepare() {
       mounted = false;
     };
   }, [user?.wallet_address]);
+
+  async function addPaymentToken() {
+    const token = data?.payment.token || livePayment?.token;
+    const symbol = data?.payment.symbol || livePayment?.symbol;
+    const decimals = data?.payment.decimals ?? livePayment?.decimals;
+    if (!validAddress(token) || !symbol || decimals == null) {
+      setTokenNotice("The live Testnet payment token is not available yet. Build the Testnet transaction plan first.");
+      return;
+    }
+
+    setAddingToken(true);
+    setTokenNotice("");
+    setError("");
+    try {
+      const provider = getConnectedWalletProvider();
+      const result = await provider.request({
+        method: "wallet_watchAsset",
+        params: [{
+          type: "ERC20",
+          options: {
+            address: token,
+            symbol,
+            decimals,
+          },
+        }],
+      });
+
+      if (result === false) {
+        setTokenNotice(`Your wallet declined the ${symbol} import. Token: ${token}`);
+      } else {
+        setTokenNotice(`${symbol} import request sent to your connected wallet.`);
+      }
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Your wallet could not add the Testnet token";
+      try {
+        await navigator.clipboard.writeText(token);
+        setTokenNotice(`${message}. The token address was copied: ${token}`);
+      } catch {
+        setTokenNotice(`${message}. Token address: ${token}`);
+      }
+    } finally {
+      setAddingToken(false);
+    }
+  }
 
   async function prepare() {
     if (!missionId) {
@@ -175,6 +221,8 @@ export default function OnchainPrepare() {
   }
 
   const allowanceEnough = livePayment && Number(livePayment.allowanceFormatted) >= Number(budget);
+  const tokenAddress = data?.payment.token || livePayment?.token;
+  const tokenSymbol = data?.payment.symbol || livePayment?.symbol;
 
   return (
     <main className="console-page">
@@ -182,14 +230,15 @@ export default function OnchainPrepare() {
       <div className="console-shell">
         <header className="console-nav"><a href="/" className="console-brand">AgentMarket</a><span>TESTNET / ON-CHAIN PREPARATION</span><a href="/app">Back to marketplace →</a></header>
         {error && <div className="console-alert console-alert-error">{error}</div>}
+        {tokenNotice && <div className="console-alert console-alert-success">{tokenNotice}</div>}
         <section className="console-hero">
           <div><span className="console-kicker">ERC-8183 / BSC TESTNET</span><h1>Review the job before the wallet signs.</h1><p>This development environment is permanently on BSC Testnet. The server never receives your private key and no Mainnet transaction can be created from this screen.</p></div>
           <div className="console-state"><small>CHAIN</small><strong>BSC TESTNET / 97</strong><span>{readingChain ? "Reading live testnet payment state…" : "Live Testnet balance and allowance checked."}</span></div>
         </section>
         {loading ? <section className="console-card"><div className="console-section-head"><span>SESSION</span><b>LOADING</b></div><p className="console-evidence">Checking your signed AgentMarket session…</p></section> : <>
           <div className="console-grid">
-            <section className="console-card"><div className="console-section-head"><span>01 / JOB TERMS</span><b>{data?.agent?.name || "Selected agent"}</b></div><div className="console-stat"><span>Mission</span><strong>{compact(missionId)}</strong></div><div className="console-stat"><span>Client wallet</span><strong>{compact(user?.wallet_address)}</strong></div><div className="console-stat"><span>Provider wallet</span><strong>{compact(data?.agent?.provider)}</strong></div><div className="console-stat"><span>Identity</span><strong>{data?.agent?.verification_status || "indexed"}</strong></div><div className="console-stat"><span>Endpoint</span><strong>{data?.agent?.status || "unknown"}</strong></div><div className="console-stat"><span>Payment asset</span><strong>{livePayment?.symbol || data?.payment?.symbol || "—"}</strong></div><label className="console-field-label" htmlFor="mission-budget">TESTNET MISSION BUDGET</label><input id="mission-budget" className="console-input" value={budget} onChange={(event) => { setBudget(event.target.value); setData(null); }} inputMode="decimal" /><button className="console-brass-button" disabled={preparing || readingChain || !user?.wallet_address} onClick={() => void prepare()}>{preparing ? "Preparing…" : "Build Testnet transaction plan →"}</button></section>
-            <aside className="console-card"><div className="console-section-head"><span>02 / LIVE TESTNET PREFLIGHT</span><b>{readingChain ? "READING" : livePayment ? "CONNECTED" : "WAITING"}</b></div><div className="console-stat"><span>Payment token</span><strong>{livePayment ? compact(livePayment.token) : "—"}</strong></div><div className="console-stat"><span>Wallet balance</span><strong>{livePayment ? `${livePayment.balanceFormatted} ${livePayment.symbol}` : "—"}</strong></div><div className="console-stat"><span>Allowance to Testnet Commerce</span><strong>{livePayment ? `${livePayment.allowanceFormatted} ${livePayment.symbol}` : "—"}</strong></div><div className="console-stat"><span>Approval required</span><strong>{livePayment ? (allowanceEnough ? "No" : "Yes") : "—"}</strong></div><p className="console-evidence">The Testnet payment token is resolved from the Testnet Commerce contract. No Mainnet token or allowance is used here.</p></aside>
+            <section className="console-card"><div className="console-section-head"><span>01 / JOB TERMS</span><b>{data?.agent?.name || "Selected agent"}</b></div><div className="console-stat"><span>Mission</span><strong>{compact(missionId)}</strong></div><div className="console-stat"><span>Client wallet</span><strong>{compact(user?.wallet_address)}</strong></div><div className="console-stat"><span>Provider wallet</span><strong>{compact(data?.agent?.provider)}</strong></div><div className="console-stat"><span>Identity</span><strong>{data?.agent?.verification_status || "indexed"}</strong></div><div className="console-stat"><span>Endpoint</span><strong>{data?.agent?.status || "unknown"}</strong></div><div className="console-stat"><span>Payment asset</span><strong>{tokenSymbol || "—"}</strong></div><label className="console-field-label" htmlFor="mission-budget">TESTNET MISSION BUDGET</label><input id="mission-budget" className="console-input" value={budget} onChange={(event) => { setBudget(event.target.value); setData(null); }} inputMode="decimal" /><button className="console-brass-button" disabled={preparing || readingChain || !user?.wallet_address} onClick={() => void prepare()}>{preparing ? "Preparing…" : "Build Testnet transaction plan →"}</button></section>
+            <aside className="console-card"><div className="console-section-head"><span>02 / LIVE TESTNET PREFLIGHT</span><b>{readingChain ? "READING" : livePayment ? "CONNECTED" : "WAITING"}</b></div><div className="console-stat"><span>Payment token</span><strong>{livePayment ? compact(livePayment.token) : tokenAddress ? compact(tokenAddress) : "—"}</strong></div><div className="console-stat"><span>Wallet balance</span><strong>{livePayment ? `${livePayment.balanceFormatted} ${livePayment.symbol}` : "—"}</strong></div><div className="console-stat"><span>Allowance to Testnet Commerce</span><strong>{livePayment ? `${livePayment.allowanceFormatted} ${livePayment.symbol}` : "—"}</strong></div><div className="console-stat"><span>Approval required</span><strong>{livePayment ? (allowanceEnough ? "No" : "Yes") : "—"}</strong></div><button className="console-dark-button" type="button" onClick={() => void addPaymentToken()} disabled={addingToken || !validAddress(tokenAddress)}>{addingToken ? "Opening wallet…" : tokenSymbol ? `Add ${tokenSymbol} to wallet` : "Add payment token to wallet"}</button><p className="console-evidence">The token address is resolved from the live BSC Testnet Commerce contract. Mainnet tokens are never used in this preview.</p></aside>
           </div>
           <section className="console-card console-plan-card"><div className="console-section-head"><span>03 / TRANSACTION PLAN</span><b>{data ? "TESTNET READY" : "NOT LOADED"}</b></div>{!data ? <ol className="console-sequence">{["createJob", "registerJob", "setBudget", "approve payment token if needed", "fund"].map((step, index) => <li key={step}><span>{String(index + 1).padStart(2, "0")}</span><strong>{step}</strong><small>{index === 4 ? "Moves the approved Testnet payment into ERC-8183 escrow." : "Preparation only; wallet confirmation is required."}</small></li>)}</ol> : <><div className="console-plan-list">{Object.entries(data.transactions).map(([name, tx]) => <article className="console-plan-row" key={name}><div><small>{name.replace(/_/g, " ")}</small><strong>{tx.to ? compact(tx.to) : tx.policy ? compact(tx.policy) : "builder"}</strong></div><p>{tx.data ? "Encoded Testnet transaction data ready." : tx.data_builder || "No data generated yet."}</p></article>)}</div><div className="console-evidence"><small>TESTNET ONLY</small><p>{data.note}</p></div></>}</section>
           <section className="console-card console-plan-card"><div className="console-section-head"><span>04 / RECEIPT CONFIRMATION</span><b>{receiptResult ? "CONFIRMED" : "WAITING FOR HASH"}</b></div><p className="console-evidence">After your wallet confirms a transaction, enter its hash here. AgentMarket verifies the actual BSC Testnet receipt and contract target before advancing the marketplace job state.</p><div className="console-grid"><div><label className="console-field-label" htmlFor="receipt-phase">CONFIRMED PHASE</label><select id="receipt-phase" className="console-input" value={receiptPhase} onChange={(event) => setReceiptPhase(event.target.value)}><option value="create">createJob</option><option value="register">registerJob</option><option value="set_budget">setBudget</option><option value="approve">approve</option><option value="fund">fund</option></select></div><div><label className="console-field-label" htmlFor="tx-hash">TESTNET TRANSACTION HASH</label><input id="tx-hash" className="console-input" value={txHash} onChange={(event) => setTxHash(event.target.value.trim())} placeholder="0x…" autoComplete="off" spellCheck={false} /></div></div><button className="console-dark-button" disabled={syncing || !txHash} onClick={() => void syncReceipt()}>{syncing ? "Verifying Testnet receipt…" : "Verify Testnet receipt →"}</button>{receiptResult && <div className="console-evidence"><small>VERIFIED / BSC TESTNET</small><p>{receiptResult.phase} confirmed in block {receiptResult.block_number}. Chain state: {receiptResult.job?.chain_status || "verified"}. Tx: {compact(receiptResult.tx_hash)}.</p></div>}</section>
