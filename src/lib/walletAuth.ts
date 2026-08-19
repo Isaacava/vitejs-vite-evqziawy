@@ -25,6 +25,7 @@ export type AuthUser = {
 export const WALLETCONNECT_PROJECT_ID = "1dbe8fd5e4974ae7c80d074c4082b5a0";
 export const AUTH_CHAIN_ID = 97;
 const AUTH_CHAIN_ID_HEX = `0x${AUTH_CHAIN_ID.toString(16)}`;
+const TESTNET_WALLETCONNECT_STORAGE = "agentmarket-testnet-wc-v2";
 
 let walletProvider: Eip1193Provider | null = null;
 
@@ -50,6 +51,7 @@ async function createTestnetProvider(): Promise<Eip1193Provider> {
     projectId: WALLETCONNECT_PROJECT_ID,
     chains: [AUTH_CHAIN_ID],
     showQrModal: true,
+    customStoragePrefix: TESTNET_WALLETCONNECT_STORAGE,
     metadata: {
       name: "AgentMarket Testnet",
       description: "AgentMarket BSC Testnet marketplace",
@@ -59,7 +61,7 @@ async function createTestnetProvider(): Promise<Eip1193Provider> {
   });
 
   if (!provider.connected) {
-    await provider.connect();
+    await provider.connect({ chains: [AUTH_CHAIN_ID] });
   }
 
   const eip1193 = provider as unknown as Eip1193Provider;
@@ -67,7 +69,7 @@ async function createTestnetProvider(): Promise<Eip1193Provider> {
   if (chainId !== AUTH_CHAIN_ID_HEX) {
     await disconnectWalletConnectSession(eip1193);
     throw new Error(
-      "WalletConnect did not establish a BSC Testnet session. Reconnect and select BSC Testnet (chain 97)."
+      "WalletConnect did not establish a BSC Testnet session. The Testnet preview requires a fresh BSC Testnet approval (chain 97)."
     );
   }
 
