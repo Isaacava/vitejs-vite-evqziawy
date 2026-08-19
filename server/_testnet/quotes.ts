@@ -84,13 +84,15 @@ async function postJson(url: string, body: Record<string, unknown>) {
 }
 
 async function negotiate(endpointUrl: string, taskDescription: string, terms: Record<string, unknown>) {
-  const base = endpointUrl.replace(/\/+$/, "");
-  const paths = ["/apex/negotiate", "/erc8183/negotiate"];
+  const normalized = endpointUrl.replace(/\/+$/, "");
+  const candidates = normalized.toLowerCase().endsWith("/erc8183")
+    ? [`${normalized}/negotiate`, `${normalized}/apex/negotiate`]
+    : [`${normalized}/negotiate`, `${normalized}/erc8183/negotiate`, `${normalized}/apex/negotiate`];
   let lastError = "Provider negotiation failed";
 
-  for (const path of paths) {
+  for (const url of candidates) {
     try {
-      const { response, body } = await postJson(`${base}${path}`, {
+      const { response, body } = await postJson(url, {
         task_description: taskDescription,
         terms,
       });
@@ -101,7 +103,7 @@ async function negotiate(endpointUrl: string, taskDescription: string, terms: Re
     }
   }
 
-  throw new Error(lastError);
+  throw new Error(`${lastError}; tried ${candidates.join(", ")}`);
 }
 
 function normalizedPrice(value: unknown) {
