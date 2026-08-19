@@ -82,7 +82,7 @@ export default function TestnetGridRun() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ goal: GOAL, agent_id: match.agent.agent_id, budget: 0 }),
+        body: JSON.stringify({ goal: GOAL, agent_id: match.agent.id, budget: 0 }),
       });
       const missionBody = await missionResponse.json();
       if (!missionResponse.ok) throw new Error(missionBody?.error || "Unable to create the Testnet mission");
