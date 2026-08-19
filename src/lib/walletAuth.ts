@@ -36,11 +36,13 @@ async function disconnectWalletConnectSession(provider: Eip1193Provider) {
   try {
     await provider.disconnect?.();
   } catch {
-    // A stale WalletConnect session can fail during disconnect; clearing the local reference
-    // still lets the next call create a fresh Testnet-only session.
+    // A stale WalletConnect session can fail during disconnect. We can still clear our
+    // provider reference and let the next call create a fresh Testnet-only session.
   }
   walletProvider = null;
-  delete window.ethereum;
+  // Do not delete window.ethereum here. Wallet browsers can expose it as a non-configurable
+  // property, and deleting it can throw "Cannot delete property 'ethereum' of #<Window>".
+  // The next successful connection simply replaces the reference with the fresh WC provider.
 }
 
 async function createTestnetProvider(): Promise<Eip1193Provider> {
@@ -149,5 +151,5 @@ export async function signOut() {
   await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
   if (walletProvider) await disconnectWalletConnectSession(walletProvider);
   walletProvider = null;
-  delete window.ethereum;
+  // Do not delete window.ethereum; see disconnectWalletConnectSession above.
 }
