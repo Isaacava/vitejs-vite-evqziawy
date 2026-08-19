@@ -25,8 +25,6 @@ export type AuthUser = {
 export const WALLETCONNECT_PROJECT_ID = "1dbe8fd5e4974ae7c80d074c4082b5a0";
 export const AUTH_CHAIN_ID = 97;
 const AUTH_CHAIN_ID_HEX = `0x${AUTH_CHAIN_ID.toString(16)}`;
-const TESTNET_RPC_URL = "https://data-seed-prebsc-1-s1.bnbchain.org:8545";
-const TESTNET_EXPLORER_URL = "https://testnet.bscscan.com";
 
 let walletProvider: Eip1193Provider | null = null;
 
@@ -43,21 +41,6 @@ async function disconnectWalletConnectSession(provider: Eip1193Provider) {
   }
   walletProvider = null;
   delete window.ethereum;
-}
-
-async function ensureTestnetChain(provider: Eip1193Provider) {
-  const current = await currentProviderChain(provider);
-  if (current === AUTH_CHAIN_ID_HEX) return;
-
-  // WalletConnect sessions are persisted. If the saved session was approved for another
-  // chain (for example BSC Mainnet), switching the wallet app itself is not enough: the
-  // WC session namespace is still tied to the old chain. End that stale session and start
-  // a brand-new Testnet-only session instead of trying to reuse it.
-  await disconnectWalletConnectSession(provider);
-
-  throw new Error(
-    "Your WalletConnect session was connected to a different network. Please reconnect with WalletConnect and approve BSC Testnet (chain 97)."
-  );
 }
 
 async function createTestnetProvider(): Promise<Eip1193Provider> {
