@@ -1,4 +1,5 @@
 import { EthereumProvider } from "@walletconnect/ethereum-provider";
+import { BSC_RPC_URL } from "./network";
 
 type Eip1193Provider = {
   request(args: { method: string; params?: unknown[] }): Promise<unknown>;
@@ -27,12 +28,12 @@ export type AuthUser = {
 export const WALLETCONNECT_PROJECT_ID = "1dbe8fd5e4974ae7c80d074c4082b5a0";
 export const AUTH_CHAIN_ID = 97;
 const AUTH_CHAIN_ID_HEX = `0x${AUTH_CHAIN_ID.toString(16)}`;
-const TESTNET_WALLETCONNECT_STORAGE = "agentmarket-testnet-wc-v3";
+const TESTNET_WALLETCONNECT_STORAGE = "agentmarket-testnet-wc-v4";
 const TESTNET_CHAIN_CONFIG = {
   chainId: AUTH_CHAIN_ID_HEX,
   chainName: "BNB Smart Chain Testnet",
   nativeCurrency: { name: "BNB", symbol: "tBNB", decimals: 18 },
-  rpcUrls: ["https://data-seed-prebsc-1-s1.bnbchain.org:8545"],
+  rpcUrls: [BSC_RPC_URL],
   blockExplorerUrls: ["https://testnet.bscscan.com"],
 };
 
@@ -62,6 +63,7 @@ async function createTestnetProvider(forceFresh = false): Promise<Eip1193Provide
     chains: [AUTH_CHAIN_ID],
     showQrModal: true,
     customStoragePrefix: TESTNET_WALLETCONNECT_STORAGE,
+    rpcMap: { [AUTH_CHAIN_ID]: BSC_RPC_URL },
     metadata: {
       name: "AgentMarket Testnet",
       description: "AgentMarket BSC Testnet marketplace",
