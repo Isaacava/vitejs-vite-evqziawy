@@ -15,6 +15,10 @@ function nonNegativeNumber(value: unknown) {
   return 0;
 }
 
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -26,21 +30,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!auth) return res.status(401).json({ error: "Authenticated AgentMarket session required" });
 
     const goal = text(req.body?.goal, 4000);
-    const agentId = text(req.body?.agent_id, 128);
+    const requestedAgentId = text(req.body?.agent_id, 128);
     const budget = nonNegativeNumber(req.body?.budget);
 
     if (!goal) return res.status(400).json({ error: "goal is required" });
-    if (!agentId) return res.status(400).json({ error: "agent_id is required" });
+    if (!requestedAgentId) return res.status(400).json({ error: "agent_id is required" });
 
     const intent = parseMarketplaceIntent(goal);
     const supabase = serverClient();
     const now = new Date().toISOString();
 
-    const { data: agent, error: agentError } = await supabase
+    let agentQuery = supabase
       .from("agents")
-      .select("id,agent_id,name,owner,chain,status,verification_status")
-      .eq("id", agentId)
-      .maybeSingle();
+      .select("id,agent_id,name,owner,chain,status,verification_status");
+
+    agentQuery = isUuid(requestedAgentId)
+      ? agentQuery.eq("id", requestedAgentId)
+      : agentQuery.eq("agent_id", requestedAgentId);
+
+    const { data: agent, error: agentError } = await agentQuery.maybeSingle();
     if (agentError) throw new Error(agentError.message);
     if (!agent) return res.status(404).json({ error: "Selected agent was not found" });
     if (agent.chain !== "bsc-testnet") return res.status(409).json({ error: "Only BSC Testnet agents can be used from this marketplace" });
