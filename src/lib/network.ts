@@ -12,7 +12,7 @@ export const BSC_CHAIN_ID = 97;
 const runtimeEnv = (import.meta as unknown as { env?: { VITE_BSC_RPC_URL?: string } }).env;
 export const BSC_RPC_URL =
   runtimeEnv?.VITE_BSC_RPC_URL ||
-  "https://data-seed-prebsc-1-s1.bnbchain.org:8545";
+  "https://bsc-testnet-rpc.publicnode.com";
 
 export const BSC_EXPLORER_URL = "https://testnet.bscscan.com";
 
