@@ -5,7 +5,29 @@ import { getAuthenticatedUser, serverClient } from "../../src/server/authHandler
 
 const COMMERCE = "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address;
 const ROUTER = "0xd7d36d66d2f1b608a0f943f722d27e3744f66f25" as Address;
-const COMMERCE_ABI = [{ type: "function", name: "getJob", stateMutability: "view", inputs: [{ name: "jobId", type: "uint256" }], outputs: [{ name: "job", type: "tuple", components: [{ name: "id", type: "uint256" }, { name: "client", type: "address" }, { name: "provider", type: "address" }, { name: "evaluator", type: "address" }, { name: "expiredAt", type: "uint256" }, { name: "description", type: "string" }, { name: "budget", type: "uint256" }, { name: "status", type: "uint8" }, { name: "deliverable", type: "string" }, { name: "hook", type: "address" }] }] }] as const;
+const COMMERCE_ABI = [{
+  type: "function",
+  name: "getJob",
+  stateMutability: "view",
+  inputs: [{ name: "jobId", type: "uint256" }],
+  outputs: [{
+    name: "job",
+    type: "tuple",
+    components: [
+      { name: "id", type: "uint256" },
+      { name: "client", type: "address" },
+      { name: "provider", type: "address" },
+      { name: "evaluator", type: "address" },
+      { name: "description", type: "string" },
+      { name: "budget", type: "uint256" },
+      { name: "expiredAt", type: "uint256" },
+      { name: "status", type: "uint8" },
+      { name: "hook", type: "address" },
+      { name: "submittedAt", type: "uint256" },
+      { name: "deliverable", type: "bytes32" },
+    ],
+  }],
+}] as const;
 const client = createPublicClient({ chain: bscTestnet, transport: http() });
 const CHAIN_STATUS: Record<number, "open" | "funded" | "submitted" | "completed" | "rejected" | "expired"> = { 0: "open", 1: "funded", 2: "submitted", 3: "completed", 4: "rejected", 5: "expired" };
 function isTerminal(status: number) { return status === 3 || status === 4 || status === 5; }
@@ -33,7 +55,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const receipt = await client.getTransactionReceipt({ hash: txHash as Hex });
   if (receipt.status !== "success") return res.status(409).json({ error: "Settlement transaction reverted", tx_hash: txHash, status: receipt.status });
   if (!receipt.to || receipt.to.toLowerCase() !== ROUTER.toLowerCase()) return res.status(409).json({ error: "Transaction target is not the testnet ERC-8183 router", expected_target: ROUTER, actual_target: receipt.to });
-  const chainJob = await client.readContract({ address: COMMERCE, abi: COMMERCE_ABI, functionName: "getJob", args: [BigInt(chainJobId)], authorizationList: [] });
+  const chainJob = await client.readContract({ address: COMMERCE, abi: COMMERCE_ABI, functionName: "getJob", args: [BigInt(chainJobId)] });
   if (!chainJob || chainJob.id === 0n) return res.status(409).json({ error: "Chain job was not found" });
   if (chainJob.client.toLowerCase() !== auth.user.wallet_address.toLowerCase()) return res.status(403).json({ error: "Chain job client does not match the authenticated wallet" });
   const status = Number(chainJob.status);
@@ -50,8 +72,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (jobUpdateError) throw new Error(jobUpdateError.message);
   const verdict = chainStatus === "completed" ? "approve" : "reject";
   const { data: evaluation } = await supabase.from("evaluations").select("id").eq("job_id", job.id).maybeSingle();
-  if (evaluation?.id) await supabase.from("evaluations").update({ verdict, evidence: { source: "erc8183_chain", tx_hash: txHash, chain_job_id: chainJobId, chain_status: chainStatus, block_number: Number(receipt.blockNumber), deliverable: chainJob.deliverable || null, chain_id: 97, environment: "grid-agent-test" }, updated_at: now }).eq("id", evaluation.id);
-  else await supabase.from("evaluations").insert({ job_id: job.id, verdict, evaluator_address: chainJob.evaluator, evidence: { source: "erc8183_chain", tx_hash: txHash, chain_job_id: chainJobId, chain_status: chainStatus, block_number: Number(receipt.blockNumber), deliverable: chainJob.deliverable || null, chain_id: 97, environment: "grid-agent-test" }, notes: "Terminal outcome verified from the isolated BSC Testnet ERC-8183 Grid Agent job." });
+  const evidence = { source: "erc8183_chain", tx_hash: txHash, chain_job_id: chainJobId, chain_status: chainStatus, block_number: Number(receipt.blockNumber), deliverable: chainJob.deliverable || null, chain_id: 97, environment: "grid-agent-test" };
+  if (evaluation?.id) await supabase.from("evaluations").update({ verdict, evidence, updated_at: now }).eq("id", evaluation.id);
+  else await supabase.from("evaluations").insert({ job_id: job.id, verdict, evaluator_address: chainJob.evaluator, evidence, notes: "Terminal outcome verified from the isolated BSC Testnet ERC-8183 Grid Agent job." });
   const paymentStatus = chainStatus === "completed" ? "released" : "refunded";
   const { data: payment } = await supabase.from("payments").select("id").eq("job_id", job.id).maybeSingle();
   if (payment?.id) await supabase.from("payments").update({ status: paymentStatus, tx_hash: txHash, updated_at: now }).eq("id", payment.id);
