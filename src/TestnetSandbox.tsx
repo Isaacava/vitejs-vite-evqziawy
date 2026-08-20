@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import "./mission-console.css";
-import { connectWalletAndSignIn, ensureWalletConnectedProvider, getConnectedWalletProvider, getCurrentUser } from "./lib/walletAuth";
+import { connectWalletAndSignIn, connectWallet, getConnectedWalletProvider, getCurrentUser, resetWalletConnectSession } from "./lib/walletAuth";
 
 const TESTNET_CHAIN_ID = "0x61";
 const TESTNET_CONTRACTS = {
@@ -58,10 +58,11 @@ export default function TestnetSandbox() {
     setError("");
     setConnecting(true);
     try {
-      await ensureWalletConnectedProvider();
       const authenticated = await getCurrentUser();
       if (!authenticated) {
         await connectWalletAndSignIn();
+      } else {
+        await connectWallet();
       }
       await refresh();
     } catch (cause) {
@@ -73,11 +74,32 @@ export default function TestnetSandbox() {
 
   async function switchToTestnet() {
     setError("");
+    setConnecting(true);
     try {
-      await ensureWalletConnectedProvider();
+      await connectWallet();
       await refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to switch WalletConnect to BSC Testnet");
+    } finally {
+      setConnecting(false);
+    }
+  }
+
+  async function resetSession() {
+    setError("");
+    setConnecting(true);
+    try {
+      await resetWalletConnectSession();
+      setWallet({ connected: false, address: "", chainId: "checking" });
+      setAuthState("missing");
+      await connectWalletAndSignIn();
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to reset the Testnet WalletConnect session");
+      setWallet({ connected: false, address: "", chainId: "missing" });
+      setAuthState("missing");
+    } finally {
+      setConnecting(false);
     }
   }
 
@@ -100,7 +122,7 @@ export default function TestnetSandbox() {
           <div>
             <span className="console-kicker">DEVELOPMENT ENVIRONMENT / CHAIN 97 / WALLETCONNECT</span>
             <h1>Test the entire marketplace safely.</h1>
-            <p>This is the dedicated BSC Testnet preview. It uses WalletConnect, only accepts chain 97, and does not expose the production Mainnet marketplace routes.</p>
+            <p>This is the dedicated BSC Testnet preview. WalletConnect is isolated from Mainnet, stale sessions are recreated automatically, and authentication only starts after a verified chain-97 wallet is available.</p>
           </div>
           <div className="console-state">
             <small>ENVIRONMENT</small>
@@ -118,8 +140,9 @@ export default function TestnetSandbox() {
             <div className="console-stat"><span>Required</span><strong>BSC Testnet / 97</strong></div>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               <button className="console-brass-button" type="button" disabled={connecting} onClick={() => void connect()}>{connecting ? "Connecting…" : "Connect with WalletConnect"}</button>
-              {!networkReady && <button className="console-brass-button" type="button" onClick={() => void switchToTestnet()}>Switch to Testnet</button>}
-              <button className="console-brass-button" type="button" onClick={() => void refresh()}>Refresh checks</button>
+              {!networkReady && <button className="console-brass-button" type="button" disabled={connecting} onClick={() => void switchToTestnet()}>Switch to Testnet</button>}
+              <button className="console-brass-button" type="button" disabled={connecting} onClick={() => void resetSession()}>Reset Testnet WalletConnect</button>
+              <button className="console-brass-button" type="button" disabled={connecting} onClick={() => void refresh()}>Refresh checks</button>
             </div>
           </div>
 
@@ -128,7 +151,7 @@ export default function TestnetSandbox() {
             {checks.map((check) => (
               <div className="console-stat" key={check.label}><span>{check.label}</span><strong>{check.ok ? "PASS" : "PENDING"}</strong></div>
             ))}
-            <p className="console-evidence">The preview reads the WalletConnect EIP-1193 provider directly. A restored session is re-checked and forced onto BSC Testnet before authentication or signing.</p>
+            <p className="console-evidence">The Testnet helper uses a dedicated WalletConnect storage namespace, validates chain 97, requests an account when needed, and rebuilds the provider if the previous session is stale.</p>
           </div>
         </section>
 
