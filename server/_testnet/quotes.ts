@@ -128,7 +128,7 @@ async function requestQuote(req: VercelRequest, res: VercelResponse, user: NonNu
   const { data: quote, error: quoteError } = await supabase.from("marketplace_quotes").insert({ quote_id: quoteId, agent_id: agent.id, requester_wallet: requesterWallet, goal, request_metadata: requestMetadata, price, currency, provider_quote: providerQuote, quote_hash: quoteHash, chain_id: TESTNET_CHAIN_ID, environment: TESTNET_ENVIRONMENT, status: "offered", provider_status_code: 200, expires_at: expiresAt }).select("quote_id,agent_id,requester_wallet,goal,request_metadata,price,currency,provider_quote,quote_hash,status,expires_at").single();
   if (quoteError) throw new Error(quoteError.message);
 
-  return res.status(200).json({ ok: true, network: "bsc-testnet", chain_id: TESTNET_CHAIN_ID, environment: TESTNET_ENVIRONMENT, payment: { token: payment.token, symbol: payment.symbol, decimals: payment.decimals, balance_raw: payment.balance.toString(), balance_formatted: formatUnits(payment.balance, payment.decimals) }, quote: { ...quote, price_raw: price, price_formatted: formatUnits(priceRaw, payment.decimals) }, provider: { agent_id: agent.agent_id, name: agent.name, status: agent.status, verification_status: agent.verification_status, endpoint: endpoint.endpoint_url }, signature_present: Boolean(providerQuote.provider_sig || providerQuote.provider_signature), next: "Accept this quote, then call the Testnet ERC-8183 prepare endpoint with quote_id." });
+  return res.status(200).json({ ok: true, network: "bsc-testnet", chain_id: TESTNET_CHAIN_ID, environment: TESTNET_ENVIRONMENT, payment: { token: payment.token, symbol: payment.symbol, decimals: payment.decimals, balance_raw: payment.balance.toString(), balance_formatted: formatUnits(payment.balance, payment.decimals) }, quote: { ...quote, price: formatUnits(priceRaw, payment.decimals), price_raw: price, price_formatted: formatUnits(priceRaw, payment.decimals) }, provider: { agent_id: agent.agent_id, name: agent.name, status: agent.status, verification_status: agent.verification_status, endpoint: endpoint.endpoint_url }, signature_present: Boolean(providerQuote.provider_sig || providerQuote.provider_signature), next: "Accept this quote, then call the Testnet ERC-8183 prepare endpoint with quote_id." });
 }
 
 async function acceptQuote(req: VercelRequest, res: VercelResponse, user: NonNullable<Awaited<ReturnType<typeof getAuthenticatedUser>>>) {
@@ -146,7 +146,8 @@ async function acceptQuote(req: VercelRequest, res: VercelResponse, user: NonNul
   if (updateError) throw new Error(updateError.message);
   if (!accepted) return res.status(409).json({ error: "Quote could not be accepted; it may have changed state" });
   const payment = await paymentContext(user.user.wallet_address as Address);
-  return res.status(200).json({ ok: true, network: "bsc-testnet", chain_id: TESTNET_CHAIN_ID, environment: TESTNET_ENVIRONMENT, quote: { ...accepted, price_raw: String(accepted.price), price_formatted: formatUnits(BigInt(accepted.price), payment.decimals) }, payment: { symbol: payment.symbol, decimals: payment.decimals }, next: "Use quote_id with /api/testnet/prepare-quote to prepare the accepted Testnet job." });
+  const rawPrice = BigInt(accepted.price);
+  return res.status(200).json({ ok: true, network: "bsc-testnet", chain_id: TESTNET_CHAIN_ID, environment: TESTNET_ENVIRONMENT, quote: { ...accepted, price: formatUnits(rawPrice, payment.decimals), price_raw: rawPrice.toString(), price_formatted: formatUnits(rawPrice, payment.decimals) }, payment: { symbol: payment.symbol, decimals: payment.decimals }, next: "Use quote_id with /api/testnet/prepare-quote to prepare the accepted Testnet job." });
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
