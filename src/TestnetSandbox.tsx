@@ -3,6 +3,7 @@ import "./mission-console.css";
 import { connectTestnetWalletAndSignIn, connectTestnetWallet, getTestnetConnectedProvider, getTestnetCurrentUser, resetTestnetWalletConnect } from "./lib/testnetWalletAuth";
 
 const TESTNET_CHAIN_ID = "0x61";
+const TESTNET_CHAIN_ID_DECIMAL = "97";
 const TESTNET_CONTRACTS = {
   commerce: "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de",
   router: "0xd7d36d66d2f1b608a0f943f722d27e3744f66f25",
@@ -10,6 +11,16 @@ const TESTNET_CONTRACTS = {
 };
 
 const compact = (value?: string | null) => value ? `${value.slice(0, 8)}…${value.slice(-6)}` : "—";
+const normalizeChainId = (value: unknown) => {
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (!raw) return "";
+  if (raw.startsWith("0x")) {
+    const parsed = Number.parseInt(raw, 16);
+    return Number.isFinite(parsed) ? String(parsed) : raw;
+  }
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? String(parsed) : raw;
+};
 
 type WalletState = { connected: boolean; address: string; chainId: string; };
 
@@ -19,7 +30,7 @@ export default function TestnetSandbox() {
   const [error, setError] = useState("");
   const [connecting, setConnecting] = useState(false);
 
-  const networkReady = wallet.chainId === TESTNET_CHAIN_ID;
+  const networkReady = normalizeChainId(wallet.chainId) === TESTNET_CHAIN_ID_DECIMAL;
   const walletReady = wallet.connected && networkReady;
   const explorerBase = "https://testnet.bscscan.com";
 
@@ -30,10 +41,9 @@ export default function TestnetSandbox() {
   ], [wallet.connected, networkReady, authState]);
 
   async function refresh() {
-    setError("");
     try {
       const provider = getTestnetConnectedProvider();
-      const chainId = String(await provider.request({ method: "eth_chainId" })).toLowerCase();
+      const chainId = normalizeChainId(await provider.request({ method: "eth_chainId" }));
       const accounts = (await provider.request({ method: "eth_accounts" })) as string[];
       setWallet({ connected: accounts.length > 0, address: accounts[0] || "", chainId });
       const auth = await getTestnetCurrentUser();
@@ -49,16 +59,53 @@ export default function TestnetSandbox() {
     }
   }
 
+  async function refreshBackground() {
+    try {
+      await Promise.race([
+        refresh(),
+        new Promise<void>((resolve) => setTimeout(resolve, 2500)),
+      ]);
+    } catch {
+      // Background readiness checks must never block the login UI.
+    }
+  }
+
   async function connect() {
     setError("");
     setConnecting(true);
     try {
       const current = await getTestnetCurrentUser();
-      if (!current) await connectTestnetWalletAndSignIn();
-      else await connectTestnetWallet();
-      await refresh();
+
+      if (!current) {
+        const authenticated = await connectTestnetWalletAndSignIn();
+        setAuthState("ready");
+
+        try {
+          const provider = getTestnetConnectedProvider();
+          const chainId = normalizeChainId(await provider.request({ method: "eth_chainId" }));
+          const accounts = (await provider.request({ method: "eth_accounts" })) as string[];
+          setWallet({
+            connected: accounts.length > 0,
+            address: authenticated.wallet_address || accounts[0] || "",
+            chainId,
+          });
+        } catch {
+          setWallet((previous) => ({
+            connected: true,
+            address: authenticated.wallet_address || previous.address,
+            chainId: previous.chainId || TESTNET_CHAIN_ID_DECIMAL,
+          }));
+        }
+      } else {
+        const connected = await connectTestnetWallet();
+        setWallet({ connected: true, address: connected.address, chainId: normalizeChainId(await connected.provider.request({ method: "eth_chainId" })) });
+        setAuthState("ready");
+      }
+
+      void refreshBackground();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "WalletConnect connection failed");
+      setAuthState("missing");
     } finally {
       setConnecting(false);
     }
@@ -66,11 +113,17 @@ export default function TestnetSandbox() {
 
   async function switchToTestnet() {
     setError("");
+    setConnecting(true);
     try {
-      await connectTestnetWallet();
-      await refresh();
+      const connected = await connectTestnetWallet();
+      const chainId = normalizeChainId(await connected.provider.request({ method: "eth_chainId" }));
+      setWallet({ connected: true, address: connected.address, chainId });
+      setAuthState((previous) => previous === "ready" ? previous : "missing");
+      void refreshBackground();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to switch WalletConnect to BSC Testnet");
+    } finally {
+      setConnecting(false);
     }
   }
 
@@ -80,17 +133,29 @@ export default function TestnetSandbox() {
     try {
       await resetTestnetWalletConnect();
       const current = await getTestnetCurrentUser();
-      if (!current) await connectTestnetWalletAndSignIn();
-      else await connectTestnetWallet();
-      await refresh();
+      if (!current) {
+        const authenticated = await connectTestnetWalletAndSignIn();
+        setAuthState("ready");
+        setWallet((previous) => ({
+          connected: true,
+          address: authenticated.wallet_address || previous.address,
+          chainId: TESTNET_CHAIN_ID_DECIMAL,
+        }));
+      } else {
+        const connected = await connectTestnetWallet();
+        setWallet({ connected: true, address: connected.address, chainId: normalizeChainId(await connected.provider.request({ method: "eth_chainId" })) });
+        setAuthState("ready");
+      }
+      void refreshBackground();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to reset WalletConnect");
+      setAuthState("missing");
     } finally {
       setConnecting(false);
     }
   }
 
-  useEffect(() => { void refresh(); }, []);
+  useEffect(() => { void refreshBackground(); }, []);
 
   return (
     <main className="console-page">
@@ -117,20 +182,20 @@ export default function TestnetSandbox() {
             <div className="console-section-head"><span>WALLETCONNECT</span><b>{walletReady ? "READY" : "ACTION NEEDED"}</b></div>
             <div className="console-stat"><span>Account</span><strong>{compact(wallet.address)}</strong></div>
             <div className="console-stat"><span>Connection</span><strong>{wallet.connected ? "WalletConnect" : "Not connected"}</strong></div>
-            <div className="console-stat"><span>Chain</span><strong>{wallet.chainId === "checking" ? "Checking…" : wallet.chainId}</strong></div>
+            <div className="console-stat"><span>Chain</span><strong>{wallet.chainId === "checking" ? "Checking…" : normalizeChainId(wallet.chainId) || "Unknown"}</strong></div>
             <div className="console-stat"><span>Required</span><strong>BSC Testnet / 97</strong></div>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <button className="console-brass-button" type="button" disabled={connecting} onClick={() => void connect()}>{connecting ? "Connecting…" : "Connect with WalletConnect"}</button>
-              {!networkReady && <button className="console-brass-button" type="button" onClick={() => void switchToTestnet()}>Switch to Testnet</button>}
+              <button className="console-brass-button" type="button" disabled={connecting} onClick={() => void connect()}>{connecting ? "Connecting…" : walletReady && authState === "ready" ? "Wallet connected" : "Connect with WalletConnect"}</button>
+              {!networkReady && <button className="console-brass-button" type="button" disabled={connecting} onClick={() => void switchToTestnet()}>Switch to Testnet</button>}
               <button className="console-dark-button" type="button" disabled={connecting} onClick={() => void resetConnection()}>Reset Testnet WalletConnect</button>
-              <button className="console-brass-button" type="button" onClick={() => void refresh()}>Refresh checks</button>
+              <button className="console-brass-button" type="button" onClick={() => void refreshBackground()}>Refresh checks</button>
             </div>
           </div>
 
           <div className="console-card">
             <div className="console-section-head"><span>READINESS CHECKS</span><b>{checks.filter((check) => check.ok).length}/{checks.length}</b></div>
             {checks.map((check) => <div className="console-stat" key={check.label}><span>{check.label}</span><strong>{check.ok ? "PASS" : "PENDING"}</strong></div>)}
-            <p className="console-evidence">A restored WalletConnect session is never rejected just because it starts on another chain. The provider is explicitly switched to BSC Testnet before authentication.</p>
+            <p className="console-evidence">Authentication completion no longer depends on a second synchronous provider refresh. Background checks are bounded and cannot leave the connect button spinning.</p>
           </div>
         </section>
 
