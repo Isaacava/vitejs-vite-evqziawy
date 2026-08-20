@@ -9,8 +9,6 @@ const POLICY = "0x4f4678d4439fec812ac7674bb3efb4c8f5fb78a6" as Address;
 const CHAIN_ID = 97;
 const JOB_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
 const TESTNET_RPC_URL = "https://bsc-testnet-rpc.publicnode.com";
-const POLICY_LOG_CHUNK_SIZE = 5_000n;
-const MIN_POLICY_LOG_CHUNK_SIZE = 500n;
 
 const COMMERCE_ABI = [
   { type: "function", name: "createJob", stateMutability: "nonpayable", inputs: [
@@ -33,60 +31,21 @@ const client = createPublicClient({ chain: bscTestnet, transport: http(TESTNET_R
 
 function validAddress(value: unknown): value is Address { return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value); }
 
-async function getPolicyLogs(fromBlock: bigint, toBlock: bigint): Promise<readonly any[]> {
-  let chunkSize = POLICY_LOG_CHUNK_SIZE;
-
-  while (true) {
-    try {
-      const logs: any[] = [];
-      let cursor = fromBlock;
-      while (cursor <= toBlock) {
-        const chunkEnd = cursor + chunkSize - 1n < toBlock ? cursor + chunkSize - 1n : toBlock;
-        const chunkLogs = await client.getLogs({
-          address: ROUTER,
-          event: POLICY_EVENT_ABI[0],
-          fromBlock: cursor,
-          toBlock: chunkEnd,
-        });
-        logs.push(...chunkLogs);
-        cursor = chunkEnd + 1n;
-      }
-      return logs;
-    } catch (error) {
-      if (chunkSize <= MIN_POLICY_LOG_CHUNK_SIZE) throw error;
-      chunkSize /= 2n;
-    }
-  }
-}
-
-const POLICY_EVENT_ABI = [{
-  type: "event",
-  name: "PolicyWhitelisted",
-  inputs: [
-    { name: "policy", type: "address", indexed: true },
-    { name: "status", type: "bool", indexed: true },
-  ],
-}] as const;
-
 async function resolveLivePolicy(): Promise<Address> {
-  const configured = await client.readContract({ address: ROUTER, abi: ROUTER_ABI, functionName: "policyWhitelist", args: [POLICY] });
+  const configured = await client.readContract({
+    address: ROUTER,
+    abi: ROUTER_ABI,
+    functionName: "policyWhitelist",
+    args: [POLICY],
+  });
+
   if (configured) return POLICY;
 
-  const latest = await client.getBlockNumber();
-  const fromBlock = latest > 500_000n ? latest - 500_000n : 0n;
-  const logs = await getPolicyLogs(fromBlock, latest);
-
-  const states = new Map<string, boolean>();
-  for (const log of logs) {
-    const policy = String(log.args?.policy || "").toLowerCase();
-    if (policy) states.set(policy, Boolean(log.args?.status));
-  }
-
-  const live = [...states.entries()].reverse().find(([, status]) => status);
-  if (!live || !validAddress(live[0])) {
-    throw new Error("The Testnet EvaluatorRouter has no currently whitelisted ERC-8183 policy. The Testnet contract stack needs its policy whitelist repaired before registerJob can proceed.");
-  }
-  return live[0] as Address;
+  throw new Error(
+    `The configured Testnet ERC-8183 policy ${POLICY} is not currently whitelisted by EvaluatorRouter ${ROUTER}. ` +
+    "Policy discovery cannot fall back to historical PolicyWhitelisted logs because the configured public RPC prunes historical block data. " +
+    "Repair the Testnet Router policy whitelist, then retry the accepted quote.",
+  );
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
