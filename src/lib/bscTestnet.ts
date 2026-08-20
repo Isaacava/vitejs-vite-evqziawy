@@ -1,5 +1,6 @@
 import { createPublicClient, formatUnits, http, type Address } from "viem";
 import { bscTestnet } from "viem/chains";
+import { BSC_RPC_URL } from "./network";
 
 export const ERC8183_TESTNET = {
   commerce: "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address,
@@ -9,7 +10,7 @@ export const ERC8183_TESTNET = {
 
 export const bscTestnetClient = createPublicClient({
   chain: bscTestnet,
-  transport: http(),
+  transport: http(BSC_RPC_URL),
 });
 
 export const ERC20_READ_ABI = [
