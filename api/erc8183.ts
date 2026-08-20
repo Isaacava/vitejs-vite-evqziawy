@@ -15,7 +15,7 @@ import { getAuthenticatedUser, serverClient } from "../src/server/authHandlers.j
 const NETWORK = "bsc-testnet" as const;
 const CHAIN_ID = 97 as const;
 
-const DEFAULT_RPC_URL = "https://bsc-testnet-dataseed.bnbchain.org";
+const DEFAULT_RPC_URL = "https://bsc-testnet-rpc.publicnode.com";
 const RPC_URL = process.env.BSC_TESTNET_RPC_URL || process.env.VITE_BSC_RPC_URL || DEFAULT_RPC_URL;
 
 const COMMERCE = "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address;
@@ -398,129 +398,72 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .limit(1)
       .maybeSingle();
     if (taskError) throw new Error(taskError.message);
-    if (!task?.agent_id) return res.status(409).json({ error: "Mission has no assigned provider" });
+    if (!task) return res.status(409).json({ error: "Mission has no task" });
 
-    const { data: agent, error: agentError } = await supabase
-      .from("agents")
-      .select("agent_id,owner,name,verification_status,status")
-      .eq("id", task.agent_id)
-      .maybeSingle();
-    if (agentError) throw new Error(agentError.message);
-    if (!agent?.owner || !/^0x[a-fA-F0-9]{40}$/.test(agent.owner)) {
-      return res.status(409).json({ error: "Selected provider has no valid wallet" });
-    }
-
-    const token = await readContract({
-      address: COMMERCE,
-      abi: TOKEN_ABI,
-      functionName: "paymentToken",
-    });
-    const [decimals, symbol, balance, allowance] = await Promise.all([
-      readContract({ address: token as Address, abi: ERC20_ABI, functionName: "decimals" }),
-      readContract({ address: token as Address, abi: ERC20_ABI, functionName: "symbol" }),
-      readContract({ address: token as Address, abi: ERC20_ABI, functionName: "balanceOf", args: [clientAddress as Address] }),
-      readContract({ address: token as Address, abi: ERC20_ABI, functionName: "allowance", args: [clientAddress as Address, COMMERCE] }),
+    const token = (await readContract({ address: COMMERCE, abi: TOKEN_ABI, functionName: "paymentToken" })) as Address;
+    const tokenData = await Promise.all([
+      readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" }),
+      readContract({ address: token, abi: ERC20_ABI, functionName: "symbol" }),
+      readContract({ address: token, abi: ERC20_ABI, functionName: "balanceOf", args: [clientAddress as Address] }),
+      readContract({ address: token, abi: ERC20_ABI, functionName: "allowance", args: [clientAddress as Address, COMMERCE] }),
     ]);
 
-    const rawBudget = parseUnits(budget, Number(decimals));
+    const decimals = Number(tokenData[0]);
+    const symbol = String(tokenData[1]);
+    const balance = tokenData[2] as bigint;
+    const allowance = tokenData[3] as bigint;
+    const requestedBudget = parseUnits(budget, decimals);
+
+    if (requestedBudget <= 0n) return res.status(400).json({ error: "budget must be greater than zero" });
+    if (requestedBudget > balance) {
+      return res.status(409).json({
+        error: "Requested budget exceeds Testnet payment-token balance",
+        balance: formatUnits(balance, decimals),
+        symbol,
+      });
+    }
+
+    const evaluator = ROUTER;
+    const hook = ROUTER;
+    const provider = String(req.body?.provider_address || "").trim() as Address;
+    if (!/^0x[a-fA-F0-9]{40}$/.test(provider)) return res.status(400).json({ error: "provider_address is required" });
+
     const expiresAt = BigInt(Math.floor(Date.now() / 1000) + 60 * 60);
+    const description = String(req.body?.description || mission.goal || "AgentMarket Testnet mission").trim();
 
     const createJobData = encodeFunctionData({
       abi: COMMERCE_ABI,
       functionName: "createJob",
-      args: [agent.owner as Address, ROUTER, expiresAt, mission.goal, ROUTER],
+      args: [provider, evaluator, expiresAt, description, hook],
     });
-
-    const registerTemplate = encodeFunctionData({
+    const registerJobData = encodeFunctionData({
       abi: ROUTER_ABI,
       functionName: "registerJob",
       args: [0n, POLICY],
     });
 
-    const setBudgetTemplate = encodeFunctionData({
-      abi: COMMERCE_ABI,
-      functionName: "setBudget",
-      args: [0n, rawBudget, "0x"],
-    });
-
-    const fundTemplate = encodeFunctionData({
-      abi: COMMERCE_ABI,
-      functionName: "fund",
-      args: [0n, rawBudget, "0x"],
-    });
-
     return res.status(200).json({
-      ok: true,
       network: NETWORK,
       chain_id: CHAIN_ID,
       rpc_url: RPC_URL,
-      mission: { id: mission.id, status: mission.status },
-      agent: {
-        agent_id: agent.agent_id,
-        name: agent.name,
-        provider: agent.owner,
-        status: agent.status,
-        verification_status: agent.verification_status,
-      },
-      commerce: {
-        address: COMMERCE,
-        evaluator: ROUTER,
-        hook: ROUTER,
-        default_policy: POLICY,
-      },
+      contracts: { commerce: COMMERCE, router: ROUTER, policy: POLICY, payment_token: token },
       payment: {
-        token,
         symbol,
         decimals,
-        budget_raw: rawBudget.toString(),
-        balance_raw: String(balance),
-        allowance_raw: String(allowance),
-        balance_formatted: formatUnits(BigInt(balance), Number(decimals)),
-        allowance_formatted: formatUnits(BigInt(allowance), Number(decimals)),
+        balance: formatUnits(balance, decimals),
+        allowance: formatUnits(allowance, decimals),
+        requested_budget: budget,
+        requested_budget_raw: requestedBudget.toString(),
       },
-      expiry: new Date(Number(expiresAt) * 1000).toISOString(),
-      wallet_steps: [
-        "createJob",
-        "registerJob using the returned jobId",
-        "setBudget using the returned jobId",
-        BigInt(allowance) < rawBudget
-          ? "approve payment token to Commerce"
-          : "approval already sufficient",
-        "fund using the returned jobId",
-      ],
       transactions: {
-        create_job: {
-          to: COMMERCE,
-          data: createJobData,
-        },
-        register_job: {
-          to: ROUTER,
-          data: registerTemplate,
-          data_builder: "Replace placeholder jobId 0 with the confirmed createJob receipt jobId.",
-        },
-        set_budget: {
-          to: COMMERCE,
-          data: setBudgetTemplate,
-          data_builder: "Replace placeholder jobId 0 with the confirmed createJob receipt jobId.",
-        },
-        approve:
-          BigInt(allowance) < rawBudget
-            ? {
-                to: token,
-                data_builder: "Encode ERC-20 approve(Commerce, budgetRaw) in the Testnet user wallet.",
-              }
-            : { data_builder: "No approval transaction required." },
-        fund: {
-          to: COMMERCE,
-          data: fundTemplate,
-          data_builder: "Replace placeholder jobId 0 with the confirmed createJob receipt jobId.",
-        },
+        create_job: { to: COMMERCE, data: createJobData },
+        register_job_template: { to: ROUTER, data: registerJobData },
       },
-      note: "Testnet preparation only. This endpoint reads BSC Testnet state and never accepts a private key or signs a wallet transaction.",
+      note: "This endpoint is hard-locked to BSC Testnet. All chain reads use the configured Testnet RPC.",
     });
   } catch (error) {
-    return res.status(400).json({
-      error: error instanceof Error ? error.message : "Unable to prepare ERC-8183 Testnet job",
+    return res.status(500).json({
+      error: error instanceof Error ? error.message : "Unexpected Testnet ERC-8183 error",
       network: NETWORK,
       chain_id: CHAIN_ID,
     });
