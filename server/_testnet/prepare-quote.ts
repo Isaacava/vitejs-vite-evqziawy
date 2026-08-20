@@ -22,10 +22,51 @@ const ERC20_ABI = [
   { type: "function", name: "decimals", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] },
   { type: "function", name: "symbol", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
 ] as const;
-const ROUTER_ABI = [{ type: "function", name: "registerJob", stateMutability: "nonpayable", inputs: [{ name: "jobId", type: "uint256" }, { name: "policy", type: "address" }], outputs: [] }] as const;
+const ROUTER_ABI = [
+  { type: "function", name: "registerJob", stateMutability: "nonpayable", inputs: [{ name: "jobId", type: "uint256" }, { name: "policy", type: "address" }], outputs: [] },
+  { type: "function", name: "policyWhitelist", stateMutability: "view", inputs: [{ name: "policy", type: "address" }], outputs: [{ name: "", type: "bool" }] },
+] as const;
 const client = createPublicClient({ chain: bscTestnet, transport: http() });
 
 function validAddress(value: unknown): value is Address { return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value); }
+
+async function resolveLivePolicy(): Promise<Address> {
+  const configured = await client.readContract({ address: ROUTER, abi: ROUTER_ABI, functionName: "policyWhitelist", args: [POLICY] });
+  if (configured) return POLICY;
+
+  // Policy deployments can rotate. The Router emits PolicyWhitelisted for
+  // every policy change, so recover the newest currently-whitelisted policy
+  // instead of trusting a stale copied address.
+  const policyEventAbi = [{
+    type: "event",
+    name: "PolicyWhitelisted",
+    inputs: [
+      { name: "policy", type: "address", indexed: true },
+      { name: "status", type: "bool", indexed: true },
+    ],
+  }] as const;
+
+  const latest = await client.getBlockNumber();
+  const fromBlock = latest > 500_000n ? latest - 500_000n : 0n;
+  const logs = await client.getLogs({
+    address: ROUTER,
+    event: policyEventAbi[0],
+    fromBlock,
+    toBlock: latest,
+  });
+
+  const states = new Map<string, boolean>();
+  for (const log of logs) {
+    const policy = String(log.args.policy || "").toLowerCase();
+    if (policy) states.set(policy, Boolean(log.args.status));
+  }
+
+  const live = [...states.entries()].reverse().find(([, status]) => status);
+  if (!live || !validAddress(live[0])) {
+    throw new Error("The Testnet EvaluatorRouter has no currently whitelisted ERC-8183 policy. The Testnet contract stack needs its policy whitelist repaired before registerJob can proceed.");
+  }
+  return live[0] as Address;
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
@@ -67,41 +108,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!endpoint.data || endpoint.data.status !== "online") return res.status(409).json({ error: "Provider is no longer healthy on Testnet" });
 
     const token = await client.readContract({ address: COMMERCE, abi: COMMERCE_ABI, functionName: "paymentToken" });
-    const [decimals, symbol, balance, allowance] = await Promise.all([
+    const [decimals, symbol, balance, allowance, livePolicy] = await Promise.all([
       client.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" }),
       client.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol" }),
       client.readContract({ address: token, abi: ERC20_ABI, functionName: "balanceOf", args: [clientAddress] }),
       client.readContract({ address: token, abi: ERC20_ABI, functionName: "allowance", args: [clientAddress, COMMERCE] }),
+      resolveLivePolicy(),
     ]);
 
     const rawBudget = BigInt(String(quote.price));
     if (rawBudget <= 0n) return res.status(409).json({ error: "Accepted provider quote has a non-positive price" });
     if (BigInt(balance) < rawBudget) return res.status(409).json({ error: `Insufficient Testnet settlement-token balance. Required ${formatUnits(rawBudget, Number(decimals))} ${symbol}.`, required_raw: rawBudget.toString(), balance_raw: String(balance) });
 
-    // ERC-8183 Testnet createJob rejects very short expiries. Keep the provider
-    // quote expiry separate from the on-chain job lifetime and use a 30-day job.
     const expiryUnix = Math.floor(Date.now() / 1000) + JOB_LIFETIME_SECONDS;
     const description = JSON.stringify({ marketplace: "AgentMarket", network: "bsc-testnet", chain_id: CHAIN_ID, mission_id: missionId, quote_id: quote.quote_id, quote_hash: quote.quote_hash, price: formatUnits(rawBudget, Number(decimals)), price_raw: rawBudget.toString(), currency: quote.currency, goal: quote.goal, params: quote.request_metadata });
     const createJobData = encodeFunctionData({ abi: COMMERCE_ABI, functionName: "createJob", args: [agent.owner, ROUTER, BigInt(expiryUnix), description, ROUTER] });
-    const registerTemplate = encodeFunctionData({ abi: ROUTER_ABI, functionName: "registerJob", args: [0n, POLICY] });
+    const registerTemplate = encodeFunctionData({ abi: ROUTER_ABI, functionName: "registerJob", args: [0n, livePolicy] });
 
     return res.status(200).json({
       ok: true, network: "bsc-testnet", chain_id: CHAIN_ID, environment: "testnet",
       mission: { id: mission.id, status: mission.status, goal: mission.goal },
       quote: { quote_id: quote.quote_id, price_raw: rawBudget.toString(), price: formatUnits(rawBudget, Number(decimals)), currency: quote.currency, quote_hash: quote.quote_hash, expires_at: quote.expires_at, status: quote.status },
       agent: { agent_id: agent.agent_id, name: agent.name, provider: agent.owner, status: agent.status, verification_status: agent.verification_status },
-      commerce: { address: COMMERCE, evaluator: ROUTER, hook: ROUTER, default_policy: POLICY },
+      commerce: { address: COMMERCE, evaluator: ROUTER, hook: ROUTER, default_policy: livePolicy },
       payment: { token, symbol, decimals: Number(decimals), budget_raw: rawBudget.toString(), balance_raw: String(balance), allowance_raw: String(allowance), balance_formatted: formatUnits(BigInt(balance), Number(decimals)), allowance_formatted: formatUnits(BigInt(allowance), Number(decimals)) },
       job_description: description,
       wallet_steps: ["createJob", "registerJob with confirmed jobId", "setBudget with confirmed jobId and quoted budget", "approve payment token if allowance is insufficient", "fund with the same quoted budget"],
       transactions: {
         create_job: { to: COMMERCE, data: createJobData },
-        register_job: { to: ROUTER, data: registerTemplate, data_builder: "Replace placeholder jobId 0 with the confirmed createJob receipt jobId." },
+        register_job: { to: ROUTER, data: registerTemplate, data_builder: `Replace placeholder jobId 0 with the confirmed createJob receipt jobId. Policy: ${livePolicy}` },
         set_budget: { to: COMMERCE, data_builder: `encode setBudget(jobId, ${rawBudget.toString()}, 0x)` },
         approve: BigInt(allowance) < rawBudget ? { to: token, data_builder: `encode approve(${COMMERCE}, ${rawBudget.toString()})` } : { data_builder: "No approval transaction required; current allowance covers the accepted quote." },
         fund: { to: COMMERCE, data_builder: `encode fund(jobId, ${rawBudget.toString()}, 0x)` },
       },
-      note: "This plan is quote-gated. The on-chain description, budget, and provider are derived from the accepted Testnet provider quote.",
+      note: "This plan is quote-gated. The on-chain description, budget, provider, and currently whitelisted policy are derived from the accepted Testnet state.",
     });
   } catch (error) { return res.status(400).json({ error: error instanceof Error ? error.message : "Unable to prepare the accepted Testnet quote" }); }
 }
