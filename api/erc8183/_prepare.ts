@@ -2,12 +2,8 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 import { encodeFunctionData, type Address } from "viem";
 import { getAuthenticatedUser } from "../../src/server/authHandlers.js";
-import {
-  COMMERCE_ABI,
-  ERC20_ABI,
-  ERC8183_ADDRESSES,
-  publicClient,
-} from "../../src/lib/erc8183.js";
+import { BSC_CHAIN_ID } from "../../src/lib/network.js";
+import { COMMERCE_ABI, ERC20_ABI, ERC8183_ADDRESSES, publicClient } from "../../src/lib/erc8183.js";
 
 function supabaseServer() {
   const url = process.env.SUPABASE_URL;
@@ -106,6 +102,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const expiry = BigInt(Math.floor(Date.now() / 1000) + ttlSeconds);
     const description = JSON.stringify({
       marketplace: "AgentMarket",
+      network: "bsc-testnet",
+      chain_id: BSC_CHAIN_ID,
       mission_id: missionId,
       goal: mission.goal || quote.goal,
       quote_id: quote.quote_id,
@@ -122,11 +120,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     return res.status(200).json({
       ok: true,
-      network: "bsc-mainnet",
-      mission: {
-        id: mission.id,
-        status: mission.status,
-      },
+      network: "bsc-testnet",
+      chain_id: BSC_CHAIN_ID,
+      mission: { id: mission.id, status: mission.status },
       quote: {
         quote_id: quote.quote_id,
         status: quote.status,
@@ -190,10 +186,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           data_builder: `encode fund(jobId, ${budget.toString()}, 0x) after budget + approval`,
         },
       },
-      note: "Preparation is quote-gated. The user's wallet must sign each transaction and confirmed receipts must be persisted before the mission is marked funded.",
+      note: "Preparation is quote-gated. The user's wallet must sign each Testnet transaction and confirmed Testnet receipts must be persisted before the mission is marked funded.",
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to prepare ERC-8183 mission";
-    return res.status(400).json({ error: message });
+    const message = error instanceof Error ? error.message : "Unable to prepare ERC-8183 Testnet mission";
+    return res.status(400).json({ error: message, network: "bsc-testnet", chain_id: BSC_CHAIN_ID });
   }
 }
