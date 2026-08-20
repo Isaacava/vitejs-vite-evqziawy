@@ -16,12 +16,6 @@ type Eip1193Provider = {
   };
 };
 
-declare global {
-  interface Window {
-    ethereum?: Eip1193Provider;
-  }
-}
-
 export type AuthUser = {
   id: string;
   wallet_address: string;
@@ -64,8 +58,6 @@ async function makeProvider(forceFresh = false): Promise<Eip1193Provider> {
 
   initPromise = EthereumProvider.init({
     projectId: WALLETCONNECT_PROJECT_ID,
-    // Reown recommends optionalChains instead of required `chains` for Ethereum Provider.
-    // This keeps wallet compatibility high while the dApp still uses only BSC Testnet.
     optionalChains: [AUTH_CHAIN_ID],
     optionalMethods: ["eth_sendTransaction", "personal_sign"],
     optionalEvents: ["chainChanged", "accountsChanged"],
@@ -83,14 +75,12 @@ async function makeProvider(forceFresh = false): Promise<Eip1193Provider> {
   }).then(async (provider) => {
     const eip = provider as unknown as Eip1193Provider;
 
-    // Always create the session explicitly. For restored sessions this is also the point
-    // where the provider can establish the Testnet-scoped session it needs.
     await eip.connect?.({ chains: [AUTH_CHAIN_ID] });
 
     if (!hasTestnetSession(eip)) {
       await dropProvider(eip);
       throw new Error(
-        "The connected wallet did not approve BSC Testnet (chain 97). Reconnect WalletConnect and approve the Testnet network in the wallet."
+        "The connected wallet did not approve BSC Testnet (chain 97). Reconnect WalletConnect and approve the Testnet network in the wallet.",
       );
     }
 
@@ -98,7 +88,7 @@ async function makeProvider(forceFresh = false): Promise<Eip1193Provider> {
     if (chainId !== AUTH_CHAIN_ID_HEX) {
       await dropProvider(eip);
       throw new Error(
-        `WalletConnect established a session, but the active chain is ${chainId}. AgentMarket Testnet requires chain 97.`
+        `WalletConnect established a session, but the active chain is ${chainId}. AgentMarket Testnet requires chain 97.`,
       );
     }
 
