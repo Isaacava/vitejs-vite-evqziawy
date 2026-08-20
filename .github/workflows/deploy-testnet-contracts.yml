@@ -35,9 +35,9 @@ jobs:
       - name: Configure fresh Testnet Router deployment
         working-directory: apex-contracts
         env:
-          BSC_TESTNET_PRIVATE_KEY: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
+          BSC_TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.BSC_TESTNET_DEPLOYER_PRIVATE_KEY }}
         run: |
-          test -n "$BSC_TESTNET_PRIVATE_KEY"
+          test -n "$BSC_TESTNET_DEPLOYER_PRIVATE_KEY"
           cp .env.example .env
           python3 - <<'PY'
           from pathlib import Path
@@ -45,7 +45,7 @@ jobs:
           p = Path('.env')
           s = p.read_text()
           s = s.replace('BSC_TESTNET_RPC_URL=https://data-seed-prebsc-2-s3.binance.org:8545', 'BSC_TESTNET_RPC_URL=https://bsc-testnet-rpc.publicnode.com')
-          s = s.replace('BSC_TESTNET_PRIVATE_KEY=', 'BSC_TESTNET_PRIVATE_KEY=' + os.environ['BSC_TESTNET_PRIVATE_KEY'])
+          s = s.replace('BSC_TESTNET_PRIVATE_KEY=', 'BSC_TESTNET_PRIVATE_KEY=' + os.environ['BSC_TESTNET_DEPLOYER_PRIVATE_KEY'])
           p.write_text(s)
 
           p = Path('scripts/addresses.ts')
