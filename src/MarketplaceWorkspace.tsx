@@ -44,6 +44,18 @@ function gridTestParameters(category: string) {
   return { category, lower_price: 600, upper_price: 700, grid_levels: 12, notional: 100, max_slippage_bps: 50 };
 }
 
+async function readApiResponse(response: Response) {
+  const raw = await response.text();
+  let data: unknown = null;
+  try {
+    data = raw ? JSON.parse(raw) : null;
+  } catch {
+    const compactRaw = raw.replace(/\s+/g, " ").trim();
+    throw new Error(`${response.status} ${response.statusText}: ${compactRaw.slice(0, 240) || "Server returned a non-JSON response."}`);
+  }
+  return { data: data as Record<string, unknown> | null, raw };
+}
+
 export default function MarketplaceWorkspace() {
   const [goal, setGoal] = useState(examples[0]);
   const [result, setResult] = useState<MatchResponse | null>(null);
@@ -61,8 +73,9 @@ export default function MarketplaceWorkspace() {
     setLoading(true); setError(""); setMission(null); setQuote(null); setPrepared(null);
     try {
       const response = await fetch("/api/testnet/match", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal }) });
-      const data = await response.json(); if (!response.ok) throw new Error(data?.error || "Testnet matching API unavailable");
-      const next = data as MatchResponse; setResult(next); setSelected(next.bestHireableMatch || next.bestMatch);
+      const { data } = await readApiResponse(response);
+      if (!response.ok) throw new Error(data?.error ? String(data.error) : "Testnet matching API unavailable");
+      const next = data as unknown as MatchResponse; setResult(next); setSelected(next.bestHireableMatch || next.bestMatch);
     } catch (cause) { setResult(null); setSelected(null); setError(cause instanceof Error ? cause.message : "Unable to find a Testnet agent"); }
     finally { setLoading(false); }
   }
@@ -71,8 +84,9 @@ export default function MarketplaceWorkspace() {
     const authResponse = await fetch("/api/auth/me", { credentials: "include" });
     if (!authResponse.ok) { window.location.href = `/dashboard?return=${encodeURIComponent("/app")}`; return null; }
     const response = await fetch("/api/missions", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal, agent_id: match.agent.agent_id, budget: 0 }) });
-    const data = await response.json(); if (!response.ok) throw new Error(data?.error || "Mission creation failed");
-    const created = data as MissionResponse; setMission(created); return created;
+    const { data } = await readApiResponse(response);
+    if (!response.ok) throw new Error(data?.error ? String(data.error) : "Mission creation failed");
+    const created = data as unknown as MissionResponse; setMission(created); return created;
   }
 
   async function requestQuote(match: Match, createdMission: MissionResponse) {
@@ -85,8 +99,9 @@ export default function MarketplaceWorkspace() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ goal, agent_id: match.agent.id, parameters: gridTestParameters(match.agent.category), mission_id: createdMission.mission.id }),
       });
-      const data = await response.json(); if (!response.ok) throw new Error(data?.error || "Provider quote request failed");
-      setQuote(data as QuoteResponse);
+      const { data } = await readApiResponse(response);
+      if (!response.ok) throw new Error(data?.error ? String(data.error) : "Provider quote request failed");
+      setQuote(data as unknown as QuoteResponse);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Provider quote request failed"); }
     finally { setQuoteLoading(false); }
   }
@@ -107,8 +122,9 @@ export default function MarketplaceWorkspace() {
     setQuoteLoading(true); setError("");
     try {
       const response = await fetch("/api/testnet/quotes", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "accept", quote_id: quote.quote.quote_id }) });
-      const data = await response.json(); if (!response.ok) throw new Error(data?.error || "Unable to accept quote");
-      setQuote(data as QuoteResponse);
+      const { data } = await readApiResponse(response);
+      if (!response.ok) throw new Error(data?.error ? String(data.error) : "Unable to accept quote");
+      setQuote(data as unknown as QuoteResponse);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to accept quote"); }
     finally { setQuoteLoading(false); }
   }
@@ -118,11 +134,13 @@ export default function MarketplaceWorkspace() {
     setPrepareLoading(true); setError("");
     try {
       const auth = await fetch("/api/auth/me", { credentials: "include" });
-      const session = await auth.json();
+      const { data: sessionData } = await readApiResponse(auth);
+      const session = sessionData as { authenticated?: boolean; user?: { wallet_address?: string } } | null;
       if (!auth.ok || !session?.user?.wallet_address) throw new Error("Connect and sign in with your Testnet wallet first.");
       const response = await fetch("/api/testnet/prepare-quote", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mission_id: mission.mission.id, quote_id: quote.quote.quote_id, client_address: session.user.wallet_address }) });
-      const data = await response.json(); if (!response.ok) throw new Error(data?.error || "Unable to prepare the accepted Testnet quote");
-      setPrepared(data as PreparedResponse);
+      const { data } = await readApiResponse(response);
+      if (!response.ok) throw new Error(data?.error ? String(data.error) : "Unable to prepare the accepted Testnet quote");
+      setPrepared(data as unknown as PreparedResponse);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to prepare the accepted Testnet quote"); }
     finally { setPrepareLoading(false); }
   }
@@ -140,7 +158,7 @@ export default function MarketplaceWorkspace() {
       <section className="mission-composer"><div className="composer-copy"><span className="small-label">YOUR TESTNET MISSION</span><div className="composer-intent"><span>{categoryLabel(intent.category)}</span><span>{intent.risk} risk</span></div></div><textarea value={goal} onChange={(event) => setGoal(event.target.value)} aria-label="Mission goal" /><div className="composer-footer"><div className="composer-examples">{examples.map((example) => <button key={example} type="button" onClick={() => setGoal(example)}>{example}</button>)}</div><button type="button" className="brass-button" onClick={() => void findAgent()} disabled={loading}>{loading ? "Matching…" : "Find Testnet agent →"}</button></div></section>
       {error && <div className="workspace-alert workspace-alert-error">{error}</div>}
       {mission && <div className="workspace-alert workspace-alert-success"><div><strong>Testnet mission created.</strong> Marketplace job {mission.job.id.slice(0, 8)}… is open for quote negotiation.</div><span>Mission {mission.mission.id.slice(0, 8)}…</span></div>}
-      <section className="results-layout"><div className="results-main"><div className="section-marker"><span>01</span> TESTNET MATCH RESULT</div>{loading && <div className="workspace-loading">Comparing Testnet capability, verification, liveness, history and reputation…</div>}{!loading && best && <article className="best-agent-card"><div className="best-agent-top"><div><div className="verified-line"><span className="status-dot" /> {hireabilityLabel(best)}</div><h2>{best.agent.name || `Agent #${best.agent.agent_id}`}</h2><p>{best.agent.description || "BSC Testnet DeFi specialist discovered through the ERC-8004 Testnet registry."}</p></div><div className={`score-chip ${scoreColor(best.score)}`}><b>{Math.round(best.score)}</b><span>/100</span></div></div><div className="agent-meta-row"><span>{categoryLabel(best.agent.category)}</span><span>{best.agent.status || "unknown endpoint"}</span><span>{best.agent.source || "testnet indexed"}</span>{best.agent.is_first_party && <span>first-party</span>}</div>{!bestReady && best.hireability && <div className="workspace-alert workspace-alert-error" style={{ marginTop: 16, marginBottom: 0 }}>{best.hireability.reason}</div>}<div className="why-block"><div className="why-head"><span>WHY THIS TESTNET AGENT</span><strong>{confidenceLabel(best.scoreConfidence)}</strong></div><div className="why-summary"><span>Normalized match</span><b>{Math.round(best.score)}/100</b><span>Available evidence ceiling</span><b>{Math.round(best.scoreMax ?? 100)}/100</b></div><div className="metric-list">{Object.entries(best.breakdown).map(([key, value]) => <div className="metric-row" key={key}><span>{key.replace(/([A-Z])/g, " $1")}</span><div className="metric-track"><i style={{ width: `${Math.max(0, Math.min(100, (value / ({ capability: 35, verification: 20, endpointLiveness: 15, completion: 10, jobVolume: 5, reputation: 15 } as Record<string, number>)[key]) * 100))}%` }} /></div><b>{Math.round(value)}</b></div>)}</div>{best.reasons && <div className="evidence-reasons">{best.reasons.map((reason) => <span key={reason}>{reason}</span>)}</div>}</div><div className="best-agent-actions"><button type="button" className="dark-button" onClick={() => void hire(best)} disabled={loading || !!mission || !bestReady}>{mission ? "Quote in progress" : bestReady ? "Request provider quote" : "Provider not ready"}</button><button type="button" className="outline-button" onClick={() => setSelected(best)}>Inspect agent</button></div></article>}</div><aside className="alternatives-panel"><div className="section-marker"><span>02</span> TESTNET ALTERNATIVES</div><div className="alternatives-list">{candidates.length === 0 && !loading && <p className="empty-state">No additional compatible Testnet agents returned yet.</p>}{candidates.map((match) => <button type="button" className="alternative-row" key={match.agent.agent_id} onClick={() => setSelected(match)}><span className="alternative-index">{match.agent.agent_id.slice(-3)}</span><span className="alternative-info"><strong>{match.agent.name || `Agent #${match.agent.agent_id}`}</strong><small>{categoryLabel(match.agent.category)} · {hireabilityLabel(match)}</small></span><strong className={`alternative-score ${scoreColor(match.score)}`}>{Math.round(match.score)}</strong></button>)}</div></aside></section>
+      <section className="results-layout"><div className="results-main"><div className="section-marker"><span>01</span> TESTNET MATCH RESULT</div>{loading && <div className="workspace-loading">Comparing Testnet capability, verification, liveness, history and reputation…</div>}{!loading && best && <article className="best-agent-card"><div className="best-agent-top"><div><div className="verified-line"><span className="status-dot" /> {hireabilityLabel(best)}</div><h2>{best.agent.name || `Agent #${best.agent.agent_id}`}</h2><p>{best.agent.description || "BSC Testnet DeFi specialist discovered through the ERC-8004 Testnet registry."}</p></div><div className={`score-chip ${scoreColor(best.score)}`}><b>{Math.round(best.score)}</b><span>/100</span></div></div><div className="agent-meta-row"><span>{categoryLabel(best.agent.category)}</span><span>{best.agent.status || "unknown endpoint"}</span><span>{best.agent.source || "testnet indexed"}</span>{best.agent.is_first_party && <span>first-party</span>}</div>{!bestReady && best.hireability && <div className="workspace-alert workspace-alert-error" style={{ marginTop: 16, marginBottom: 0 }}>{best.hireability.reason}</div>}<div className="why-block"><div className="why-head"><span>WHY THIS TESTNET AGENT</span><strong>{confidenceLabel(best.scoreConfidence)}</strong></div><div className="why-summary"><span>Normalized match</span><b>{Math.round(best.score)}/100</b><span>Available evidence ceiling</span><b>{Math.round(best.scoreMax ?? 100)}/100</b></div><div className="metric-list">{Object.entries(best.breakdown).map(([key, value]) => <div className="metric-row" key={key}><span>{key.replace(/([A-Z])/g, " $1")}</span><div className="metric-track"><i style={{ width: `${Math.max(0, Math.min(100, (value / ({ capability: 35, verification: 20, endpointLiveness: 15, completion: 10, jobVolume: 5, reputation: 15 } as Record<string, number>)[key]) * 100))}%` }} /></div><b>{Math.round(value)}</b></div>)}</div>{best.reasons && <div className="evidence-reasons">{best.reasons.map((reason) => <span key={reason}>{reason}</span>)}</div>}</div><div className="best-agent-actions"><button type="button" className="dark-button" onClick={() => void hire(best)} disabled={loading || !!mission || !bestReady}>{mission ? "Quote in progress" : bestReady ? "Request provider quote" : "Provider not ready"}</button><button type="button" className="outline-button" onClick={() => setSelected(best)}>Inspect agent</button></div></article>}</div><aside className="alternatives-panel"><div className="section-marker"><span>02</span> TESTNET ALTERNATIVES</div><div className="alternatives-list">{candidates.length === 0 && !loading && <p className="empty-state">No additional compatible Testnet agents returned yet.</p>}{candidates.map((match) => <button type="button" className="alternative-row" key={match.agent.agent_id} onClick={() => setSelected(match)}><span className="alternative-index">{match.agent.agent_id.slice(-3)}</span><span className="alternative-info"><strong>{match.agent.name || `Agent #${match.agent.agent.agent_id}`}</strong><small>{categoryLabel(match.agent.category)} · {hireabilityLabel(match)}</small></span><strong className={`alternative-score ${scoreColor(match.score)}`}>{Math.round(match.score)}</strong></button>)}</div></aside></section>
 
       {quote && (
         <section className="best-agent-card" style={{ marginTop: 18 }}>
@@ -152,27 +170,8 @@ export default function MarketplaceWorkspace() {
             </div>
             <div className="score-chip brass"><b>{quote.quote.price}</b><span>{quote.quote.currency}</span></div>
           </div>
-          <div className="agent-meta-row"><span>Quote {quote.quote.quote_id.slice(0, 8)}…</span><span>Status: {quote.quote.status}</span><span>Expires: {new Date(quote.quote.expires_at).toLocaleString()}</span><span>{quote.signature_present ? "provider signature present" : "unsigned provider response"}</span></div>
-          {quote.quote.request_metadata && Object.keys(quote.quote.request_metadata).length > 1 && <div className="evidence-reasons">{Object.entries(quote.quote.request_metadata).filter(([key]) => key !== "category").map(([key, value]) => <span key={key}>{key.replace(/_/g, " ")}: {String(value)}</span>)}</div>}
-          {quote.quote.quote_hash && <div className="workspace-alert workspace-alert-success" style={{ marginTop: 16, marginBottom: 0 }}>Integrity hash: {quote.quote.quote_hash}</div>}
-          <div className="best-agent-actions" style={{ marginTop: 16 }}>
-            {quote.quote.status === "offered" ? <button type="button" className="dark-button" onClick={() => void acceptQuote()} disabled={quoteLoading}>{quoteLoading ? "Accepting…" : "Accept provider quote"}</button> : <button type="button" className="dark-button" onClick={() => void prepareAcceptedQuote()} disabled={prepareLoading || quote.quote.status !== "accepted"}>{prepareLoading ? "Building plan…" : "Build ERC-8183 Testnet plan"}</button>}
-            <button type="button" className="outline-button" onClick={() => { setQuote(null); setPrepared(null); }}>Cancel quote</button>
-          </div>
         </section>
       )}
-
-      {prepared && (
-        <section className="best-agent-card" style={{ marginTop: 18 }}>
-          <div className="best-agent-top"><div><div className="verified-line"><span className="status-dot" /> ERC-8183 TESTNET PLAN READY</div><h2>Wallet review</h2><p>Every transaction below is derived from the accepted provider quote. Nothing is signed automatically.</p></div><div className="score-chip green"><b>{prepared.payment.budget_raw}</b><span>{prepared.payment.symbol}</span></div></div>
-          <div className="agent-meta-row"><span>Provider {compactAddress(prepared.agent.provider)}</span><span>Balance {prepared.payment.balance_formatted} {prepared.payment.symbol}</span><span>Allowance {prepared.payment.allowance_formatted} {prepared.payment.symbol}</span></div>
-          <div className="metric-list" style={{ marginTop: 16 }}>{Object.entries(prepared.transactions).map(([name, tx]) => <div className="metric-row" key={name}><span>{name.replace(/_/g, " ")}</span><div className="metric-track"><i style={{ width: tx.data ? "100%" : "60%" }} /></div><b>{tx.data ? "encoded" : "builder"}</b></div>)}</div>
-          <div className="workspace-alert workspace-alert-success" style={{ marginTop: 16, marginBottom: 0 }}>The job description contains the accepted quote hash and Testnet strategy parameters. Next step is wallet signing and on-chain create → register → budget → approve → fund.</div>
-        </section>
-      )}
-
-      <section className="registry-note"><div><span className="small-label">TESTNET REGISTRY CONTEXT</span><h3>ERC-8004 → negotiated quote → ERC-8183.</h3><p>The Testnet marketplace now proves the provider negotiation boundary before any user funds enter escrow. Mainnet remains untouched.</p></div><div className="registry-path"><span>CHAIN</span><b>BSC 97</b><i>→</i><span>QUOTE</span><b>ERC-8183</b><i>→</i><span>JOB</span><b>ESCROW</b></div></section>
-      {selected && <div className="agent-drawer-backdrop" onClick={() => setSelected(null)}><aside className="agent-drawer" onClick={(event) => event.stopPropagation()}><button className="drawer-close" type="button" onClick={() => setSelected(null)} aria-label="Close agent details">×</button><span className="small-label">TESTNET AGENT PROFILE</span><div className="drawer-score"><b>{Math.round(selected.score)}</b><span>/100 match · {confidenceLabel(selected.scoreConfidence)}</span></div><h2>{selected.agent.name || `Agent #${selected.agent.agent_id}`}</h2><p>{selected.agent.description || "No description was published in the Testnet registration file yet."}</p><div className="drawer-facts"><div><span>Readiness</span><b>{hireabilityLabel(selected)}</b></div><div><span>agentId</span><b>{selected.agent.agent_id}</b></div><div><span>Owner</span><b>{compactAddress(selected.agent.owner)}</b></div><div><span>Category</span><b>{categoryLabel(selected.agent.category)}</b></div><div><span>Identity</span><b>{selected.agent.verification_status || "indexed"}</b></div><div><span>Endpoint</span><b>{selected.agent.status || "unknown"}</b></div><div><span>History</span><b>{selected.evidence?.completionAvailable ? "Available" : "Insufficient"}</b></div></div><div className="drawer-breakdown">{Object.entries(selected.breakdown).map(([key, value]) => <div className="metric-row" key={key}><span>{key.replace(/([A-Z])/g, " $1")}</span><b>{Math.round(value)}</b></div>)}</div><button className="dark-button" type="button" onClick={() => void hire(selected)} disabled={loading || !!mission || !selected.hireability?.canCreateJob}>{mission ? "Quote in progress" : selected.hireability?.canCreateJob ? "Request provider quote" : "Provider not ready"}</button></aside></div>}
     </main>
   );
 }
