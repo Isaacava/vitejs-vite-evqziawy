@@ -27,20 +27,33 @@ export type AuthUser = {
 
 export const WALLETCONNECT_PROJECT_ID = "1dbe8fd5e4974ae7c80d074c4082b5a0";
 export const AUTH_CHAIN_ID = 97;
-const AUTH_CHAIN_ID_HEX = "0x61";
-const STORAGE = "agentmarket-testnet-wc-v5";
+const STORAGE = "agentmarket-testnet-wc-v6";
 const TESTNET_RPC = "https://data-seed-prebsc-1-s1.bnbchain.org:8545";
 
 let providerRef: Eip1193Provider | null = null;
 let initPromise: Promise<Eip1193Provider> | null = null;
 
-async function chainIdOf(provider: Eip1193Provider) {
-  return String(await provider.request({ method: "eth_chainId" })).toLowerCase();
+function normalizeChainId(value: unknown): number {
+  const text = String(value ?? "").trim().toLowerCase();
+  if (!text) return 0;
+  if (text.startsWith("0x")) {
+    const parsed = Number.parseInt(text.slice(2), 16);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  const parsed = Number.parseInt(text, 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function chainIdOf(provider: Eip1193Provider): Promise<number> {
+  return normalizeChainId(await provider.request({ method: "eth_chainId" }));
 }
 
 function hasTestnetSession(provider: Eip1193Provider) {
   const accounts = provider.session?.namespaces?.eip155?.accounts || [];
-  return accounts.some((account) => account.startsWith(`eip155:${AUTH_CHAIN_ID}:`));
+  return accounts.some((account) => {
+    const match = /^eip155:(\d+):0x[a-fA-F0-9]{40}$/.exec(account);
+    return !!match && Number(match[1]) === AUTH_CHAIN_ID;
+  });
 }
 
 async function dropProvider(provider: Eip1193Provider | null) {
@@ -85,10 +98,10 @@ async function makeProvider(forceFresh = false): Promise<Eip1193Provider> {
     }
 
     const chainId = await chainIdOf(eip);
-    if (chainId !== AUTH_CHAIN_ID_HEX) {
+    if (chainId !== AUTH_CHAIN_ID) {
       await dropProvider(eip);
       throw new Error(
-        `WalletConnect established a session, but the active chain is ${chainId}. AgentMarket Testnet requires chain 97.`,
+        `WalletConnect established a session, but the active chain is ${chainId || "unknown"}. AgentMarket Testnet requires chain 97.`,
       );
     }
 
@@ -116,7 +129,7 @@ export async function connectTestnetWallet() {
     }
 
     const chainId = await chainIdOf(provider);
-    if (chainId !== AUTH_CHAIN_ID_HEX) {
+    if (chainId !== AUTH_CHAIN_ID) {
       await dropProvider(provider);
       provider = await makeProvider(true);
     }
