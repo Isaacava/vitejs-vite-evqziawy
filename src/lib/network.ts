@@ -9,23 +9,38 @@ export const BSC_NETWORK: BscNetworkName = "testnet";
 export const BSC_CHAIN: Chain = bscTestnet;
 export const BSC_CHAIN_ID = 97;
 
-// Dedicated Testnet build: ignore stale Vercel VITE_BSC_RPC_URL overrides.
+// Dedicated Testnet build: do not inherit the stale public BNB seed RPC.
 export const BSC_RPC_URL = "https://bsc-testnet-rpc.publicnode.com";
 
 export const BSC_EXPLORER_URL = "https://testnet.bscscan.com";
 
+const runtimeEnv = (import.meta as unknown as {
+  env?: {
+    VITE_ERC8183_COMMERCE_ADDRESS?: string;
+    VITE_ERC8183_ROUTER_ADDRESS?: string;
+    VITE_ERC8183_POLICY_ADDRESS?: string;
+  };
+}).env;
+
 const TESTNET_CONTRACTS = {
-  commerce: "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de",
-  router: "0xd7d36d66d2f1b608a0f943f722d27e3744f66f25",
-  policy: "0x4f4678d4439fec812ac7674bb3efb4c8f5fb78a6",
+  commerce: runtimeEnv?.VITE_ERC8183_COMMERCE_ADDRESS || "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de",
+  router: runtimeEnv?.VITE_ERC8183_ROUTER_ADDRESS || "0xd7d36d66d2f1b608a0f943f722d27e3744f66f25",
+  policy: runtimeEnv?.VITE_ERC8183_POLICY_ADDRESS || "0x4f4678d4439fec812ac7674bb3efb4c8f5fb78a6",
   registry: "0x8004A818BFB912233c491871b3d84c89A494BD9e",
 } as const;
 
+function asAddress(value: string, name: string): Address {
+  if (!/^0x[a-fA-F0-9]{40}$/.test(value)) {
+    throw new Error(`${name} is not a valid Testnet contract address.`);
+  }
+  return value as Address;
+}
+
 export const NETWORK_CONTRACTS = {
-  commerce: TESTNET_CONTRACTS.commerce as Address,
-  router: TESTNET_CONTRACTS.router as Address,
-  policy: TESTNET_CONTRACTS.policy as Address,
-  registry: TESTNET_CONTRACTS.registry as Address,
+  commerce: asAddress(TESTNET_CONTRACTS.commerce, "VITE_ERC8183_COMMERCE_ADDRESS"),
+  router: asAddress(TESTNET_CONTRACTS.router, "VITE_ERC8183_ROUTER_ADDRESS"),
+  policy: asAddress(TESTNET_CONTRACTS.policy, "VITE_ERC8183_POLICY_ADDRESS"),
+  registry: asAddress(TESTNET_CONTRACTS.registry, "ERC-8004 registry"),
 } as const;
 
 export function assertExpectedChain(actualChainId: number) {
