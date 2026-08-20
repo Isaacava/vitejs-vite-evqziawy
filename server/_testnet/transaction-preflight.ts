@@ -5,8 +5,9 @@ import { getAuthenticatedUser, serverClient } from "../_auth.js";
 
 const CHAIN_ID = 97;
 const COMMERCE = "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address;
-const ROUTER = "0xd7d36d66d2f1b608a0f943f722d27e3744f66f25" as Address;
-const POLICY = "0x4f4678d4439fec812ac7674bb3efb4c8f5fb78a6" as Address;
+const ROUTER = "0x6d948b47614dbfbbf97a5e3fd9b410deeab44f17" as Address;
+const POLICY = "0xc4f85d602235e14a45fd1d9794c4092af762b1a6" as Address;
+const TESTNET_RPC_URL = "https://bsc-testnet-rpc.publicnode.com";
 
 const COMMERCE_ABI = [
   { type: "function", name: "paymentToken", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
@@ -20,7 +21,7 @@ const ERC20_ABI = [
   { type: "function", name: "symbol", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
 ] as const;
 
-const client = createPublicClient({ chain: bscTestnet, transport: http() });
+const client = createPublicClient({ chain: bscTestnet, transport: http(TESTNET_RPC_URL) });
 
 function validAddress(value: unknown): value is Address {
   return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value);
@@ -116,6 +117,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const jobCounter = await client.readContract({ address: COMMERCE, abi: COMMERCE_ABI, functionName: "jobCounter", authorizationList: [] });
     checks.push(check("ERC-8183 Commerce readable", jobCounter >= 0n, `Commerce contract is readable on Testnet; current job counter is ${jobCounter.toString()}.`));
 
+    const policyWhitelisted = await client.readContract({ address: ROUTER, abi: [{ type: "function", name: "policyWhitelist", stateMutability: "view", inputs: [{ name: "policy", type: "address" }], outputs: [{ type: "bool" }] }] as const, functionName: "policyWhitelist", args: [POLICY], authorizationList: [] });
+    checks.push(check("Testnet policy whitelist", Boolean(policyWhitelisted), Boolean(policyWhitelisted) ? `Policy ${POLICY} is whitelisted by Router ${ROUTER}.` : `Policy ${POLICY} is not whitelisted by Router ${ROUTER}.`));
+
     const ready = checks.every((item) => item.passed);
     return res.status(200).json({
       ok: true,
@@ -124,6 +128,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       chain_id: CHAIN_ID,
       environment: "testnet",
       wallet: clientAddress,
+      contracts: { commerce: COMMERCE, router: ROUTER, policy: POLICY },
       quote: quote ? { quote_id: quote.quote_id, status: quote.status, price: String(quote.price), currency: quote.currency, quote_hash: quote.quote_hash, expires_at: quote.expires_at } : null,
       payment: { token, symbol, decimals: Number(decimals), balance_raw: String(balance), balance_formatted: formatUnits(BigInt(balance), Number(decimals)), allowance_raw: String(allowance), allowance_formatted: formatUnits(BigInt(allowance), Number(decimals)), required_raw: budgetRaw.toString(), required_formatted: formatUnits(budgetRaw, Number(decimals)) },
       checks,
