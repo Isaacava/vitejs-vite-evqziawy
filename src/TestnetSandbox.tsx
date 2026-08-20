@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import "./mission-console.css";
 import { connectTestnetWalletAndSignIn, connectTestnetWallet, getTestnetConnectedProvider, getTestnetCurrentUser, resetTestnetWalletConnect } from "./lib/testnetWalletAuth";
 
-const TESTNET_CHAIN_ID = "0x61";
 const TESTNET_CHAIN_ID_DECIMAL = "97";
 const TESTNET_CONTRACTS = {
   commerce: "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de",
