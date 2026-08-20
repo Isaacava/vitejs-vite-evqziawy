@@ -7,6 +7,7 @@ export type TestnetTransactionStep = { id: string; label: string; description: s
 
 type Props = { steps: TestnetTransactionStep[]; onConfirmed?: (step: TestnetTransactionStep, receipt: TestnetConfirmedReceipt) => Promise<void> | void };
 const TX_HASH = /^0x[a-fA-F0-9]{64}$/;
+const WALLET_REQUEST_TIMEOUT_MS = 60000;
 
 function readableWalletError(cause: unknown, fallback: string) {
   if (cause instanceof Error && cause.message) return cause.message;
@@ -20,16 +21,30 @@ function readableWalletError(cause: unknown, fallback: string) {
   return fallback;
 }
 
+async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: number | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = window.setTimeout(() => reject(new Error(message)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) window.clearTimeout(timer);
+  }
+}
+
 async function sendAndConfirm(tx: TestnetPreparedTransaction): Promise<TestnetConfirmedReceipt> {
   if (!/^0x[a-fA-F0-9]{40}$/.test(tx.to)) throw new Error("Testnet transaction target is not a valid address.");
   if (tx.data && !/^0x[0-9a-fA-F]*$/.test(tx.data)) throw new Error("Testnet transaction calldata is invalid.");
 
   const provider = getTestnetConnectedProvider();
-  const chainRaw = String(await provider.request({ method: "eth_chainId" })).toLowerCase();
+  const chainRaw = String(await withTimeout(provider.request({ method: "eth_chainId" }), 15000, "WalletConnect did not respond with the Testnet chain. Reconnect the wallet and try again." )).toLowerCase();
   const chain = chainRaw.startsWith("0x") ? Number.parseInt(chainRaw.slice(2), 16) : Number(chainRaw);
   if (chain !== 97) throw new Error("Wallet must remain on BSC Testnet (chain 97) before signing.");
 
-  const accounts = await provider.request({ method: "eth_accounts" }) as string[];
+  const accounts = await withTimeout(provider.request({ method: "eth_accounts" }), 15000, "WalletConnect did not return an account. Reconnect the Testnet wallet and try again.") as string[];
   const from = accounts?.[0];
   if (!/^0x[a-fA-F0-9]{40}$/.test(from || "")) throw new Error("No valid Testnet wallet account is available for this transaction.");
 
@@ -40,25 +55,37 @@ async function sendAndConfirm(tx: TestnetPreparedTransaction): Promise<TestnetCo
     ...(tx.value ? { value: tx.value } : {}),
   };
 
-  // Preflight with the same sender/data before opening the wallet. This turns
-  // contract reverts into a readable error instead of a generic wallet failure.
   try {
-    await provider.request({ method: "eth_estimateGas", params: [request] });
+    await withTimeout(
+      provider.request({ method: "eth_estimateGas", params: [request] }),
+      20000,
+      "Testnet transaction preflight timed out. Reconnect the Testnet wallet and try again.",
+    );
   } catch (cause) {
-    throw new Error(`Testnet ${"transaction"} preflight failed: ${readableWalletError(cause, "contract rejected the transaction")}`);
+    throw new Error(`Testnet transaction preflight failed: ${readableWalletError(cause, "contract rejected the transaction")}`);
   }
 
   let hash: string;
   try {
-    hash = String(await provider.request({ method: "eth_sendTransaction", params: [request] }));
+    hash = String(
+      await withTimeout(
+        provider.request({ method: "eth_sendTransaction", params: [request] }),
+        WALLET_REQUEST_TIMEOUT_MS,
+        "WalletConnect did not return a transaction hash within 60 seconds. Check the Testnet wallet app, approve the request if it is waiting there, then reconnect and retry.",
+      ),
+    );
   } catch (cause) {
-    throw new Error(`Wallet rejected the Testnet transaction: ${readableWalletError(cause, "unknown wallet/RPC error")}`);
+    throw new Error(`Wallet rejected or timed out on the Testnet transaction: ${readableWalletError(cause, "unknown wallet/RPC error")}`);
   }
 
   if (!TX_HASH.test(hash)) throw new Error("The wallet returned an invalid Testnet transaction hash.");
   const started = Date.now();
   while (Date.now() - started < 180000) {
-    const receipt = await provider.request({ method: "eth_getTransactionReceipt", params: [hash] }) as null | { status?: string; blockNumber?: string; logs?: Array<{ address?: string; topics?: string[]; data?: string }> };
+    const receipt = await withTimeout(
+      provider.request({ method: "eth_getTransactionReceipt", params: [hash] }),
+      15000,
+      "Testnet wallet/RPC did not return the transaction receipt. Reconnect and check the transaction on BscScan.",
+    ) as null | { status?: string; blockNumber?: string; logs?: Array<{ address?: string; topics?: string[]; data?: string }> };
     if (receipt) {
       if (String(receipt.status || "").toLowerCase() !== "0x1") throw new Error(`Testnet transaction ${hash.slice(0, 10)}… reverted.`);
       if (!receipt.blockNumber) throw new Error("Confirmed Testnet transaction has no block number.");
@@ -76,9 +103,15 @@ export default function TestnetOnchainTransactionRunner({ steps, onConfirmed }: 
   async function run(step: TestnetTransactionStep) {
     if (!step.tx || step.disabled) return;
     setRunning(step.id); setError("");
-    try { const receipt = await sendAndConfirm(step.tx); setResults((current) => ({ ...current, [step.id]: receipt })); await onConfirmed?.(step, receipt); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "Testnet transaction failed"); }
-    finally { setRunning(null); }
+    try {
+      const receipt = await sendAndConfirm(step.tx);
+      setResults((current) => ({ ...current, [step.id]: receipt }));
+      await onConfirmed?.(step, receipt);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Testnet transaction failed");
+    } finally {
+      setRunning(null);
+    }
   }
   return <div className="console-plan-list">
     {error && <div className="console-alert console-alert-error">{error}</div>}
