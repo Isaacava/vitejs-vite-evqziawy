@@ -25,7 +25,7 @@ export type ChainJob = {
 };
 
 export function bscExplorerUrl(hash: Hex) {
-  return `https://bscscan.com/tx/${hash}`;
+  return `https://testnet.bscscan.com/tx/${hash}`;
 }
 
 export async function readPaymentAsset() {
