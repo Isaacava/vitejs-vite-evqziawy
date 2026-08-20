@@ -7,9 +7,20 @@ type Eip1193Provider = {
   disconnect?: () => Promise<void>;
   connect?: (args?: { chains?: number[] }) => Promise<void>;
   connected?: boolean;
+  session?: {
+    namespaces?: {
+      eip155?: {
+        accounts?: string[];
+      };
+    };
+  };
 };
 
-declare global { interface Window { ethereum?: Eip1193Provider; } }
+declare global {
+  interface Window {
+    ethereum?: Eip1193Provider;
+  }
+}
 
 export type AuthUser = {
   id: string;
@@ -23,14 +34,8 @@ export type AuthUser = {
 export const WALLETCONNECT_PROJECT_ID = "1dbe8fd5e4974ae7c80d074c4082b5a0";
 export const AUTH_CHAIN_ID = 97;
 const AUTH_CHAIN_ID_HEX = "0x61";
-const STORAGE = "agentmarket-testnet-wc-v4";
-const TESTNET_CHAIN = {
-  chainId: AUTH_CHAIN_ID_HEX,
-  chainName: "BNB Smart Chain Testnet",
-  nativeCurrency: { name: "BNB", symbol: "tBNB", decimals: 18 },
-  rpcUrls: ["https://data-seed-prebsc-1-s1.bnbchain.org:8545"],
-  blockExplorerUrls: ["https://testnet.bscscan.com"],
-};
+const STORAGE = "agentmarket-testnet-wc-v5";
+const TESTNET_RPC = "https://data-seed-prebsc-1-s1.bnbchain.org:8545";
 
 let providerRef: Eip1193Provider | null = null;
 let initPromise: Promise<Eip1193Provider> | null = null;
@@ -39,17 +44,34 @@ async function chainIdOf(provider: Eip1193Provider) {
   return String(await provider.request({ method: "eth_chainId" })).toLowerCase();
 }
 
+function hasTestnetSession(provider: Eip1193Provider) {
+  const accounts = provider.session?.namespaces?.eip155?.accounts || [];
+  return accounts.some((account) => account.startsWith(`eip155:${AUTH_CHAIN_ID}:`));
+}
+
 async function dropProvider(provider: Eip1193Provider | null) {
-  try { await provider?.disconnect?.(); } catch { /* ignore stale-session disconnect errors */ }
+  try {
+    await provider?.disconnect?.();
+  } catch {
+    // Ignore stale WalletConnect disconnect failures.
+  }
   providerRef = null;
   initPromise = null;
 }
 
 async function makeProvider(forceFresh = false): Promise<Eip1193Provider> {
   if (!forceFresh && initPromise) return initPromise;
+
   initPromise = EthereumProvider.init({
     projectId: WALLETCONNECT_PROJECT_ID,
-    chains: [AUTH_CHAIN_ID],
+    // Reown recommends optionalChains instead of required `chains` for Ethereum Provider.
+    // This keeps wallet compatibility high while the dApp still uses only BSC Testnet.
+    optionalChains: [AUTH_CHAIN_ID],
+    optionalMethods: ["eth_sendTransaction", "personal_sign"],
+    optionalEvents: ["chainChanged", "accountsChanged"],
+    rpcMap: {
+      [AUTH_CHAIN_ID]: TESTNET_RPC,
+    },
     showQrModal: true,
     customStoragePrefix: STORAGE,
     metadata: {
@@ -60,63 +82,93 @@ async function makeProvider(forceFresh = false): Promise<Eip1193Provider> {
     },
   }).then(async (provider) => {
     const eip = provider as unknown as Eip1193Provider;
-    if (!provider.connected) await provider.connect({ chains: [AUTH_CHAIN_ID] });
-    // Do NOT reject a restored session just because it reports another chain.
-    // connectWallet() below gets a chance to switch it to BSC Testnet.
-    await chainIdOf(eip);
+
+    // Always create the session explicitly. For restored sessions this is also the point
+    // where the provider can establish the Testnet-scoped session it needs.
+    await eip.connect?.({ chains: [AUTH_CHAIN_ID] });
+
+    if (!hasTestnetSession(eip)) {
+      await dropProvider(eip);
+      throw new Error(
+        "The connected wallet did not approve BSC Testnet (chain 97). Reconnect WalletConnect and approve the Testnet network in the wallet."
+      );
+    }
+
+    const chainId = await chainIdOf(eip);
+    if (chainId !== AUTH_CHAIN_ID_HEX) {
+      await dropProvider(eip);
+      throw new Error(
+        `WalletConnect established a session, but the active chain is ${chainId}. AgentMarket Testnet requires chain 97.`
+      );
+    }
+
     providerRef = eip;
     return eip;
   });
-  try { return await initPromise; } catch (error) { initPromise = null; throw error; }
-}
 
-async function ensureTestnet(provider: Eip1193Provider) {
-  if ((await chainIdOf(provider)) === AUTH_CHAIN_ID_HEX) return;
   try {
-    await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: AUTH_CHAIN_ID_HEX }] });
+    return await initPromise;
   } catch (error) {
-    const code = typeof error === "object" && error && "code" in error ? Number((error as { code?: unknown }).code) : 0;
-    if (code !== 4902) throw error;
-    await provider.request({ method: "wallet_addEthereumChain", params: [TESTNET_CHAIN] });
-  }
-  await new Promise((resolve) => setTimeout(resolve, 250));
-  if ((await chainIdOf(provider)) !== AUTH_CHAIN_ID_HEX) {
-    throw new Error("WalletConnect connected, but the wallet did not apply BSC Testnet (chain 97). Please approve the network switch in the wallet.");
+    initPromise = null;
+    throw error;
   }
 }
 
 export async function connectTestnetWallet() {
-  let provider = providerRef || await makeProvider();
+  let provider = providerRef;
+
+  if (!provider) provider = await makeProvider();
+
   try {
-    if (provider.connect) await provider.connect({ chains: [AUTH_CHAIN_ID] });
-    else await provider.request({ method: "eth_requestAccounts" });
-    await ensureTestnet(provider);
-  } catch (firstError) {
+    if (!hasTestnetSession(provider)) {
+      await dropProvider(provider);
+      provider = await makeProvider(true);
+    }
+
+    const chainId = await chainIdOf(provider);
+    if (chainId !== AUTH_CHAIN_ID_HEX) {
+      await dropProvider(provider);
+      provider = await makeProvider(true);
+    }
+  } catch {
     await dropProvider(provider);
     provider = await makeProvider(true);
-    try {
-      await ensureTestnet(provider);
-    } catch (secondError) {
-      const message = secondError instanceof Error ? secondError.message : firstError instanceof Error ? firstError.message : "Unable to establish BSC Testnet wallet connection";
-      throw new Error(message);
-    }
   }
+
   const accounts = (await provider.request({ method: "eth_accounts" })) as string[];
   const address = accounts?.[0];
-  if (!address) throw new Error("No Testnet wallet account was selected.");
+  if (!address) throw new Error("Wallet connected to BSC Testnet but no account was selected.");
+
   providerRef = provider;
   return { provider, address };
 }
 
 export async function connectTestnetWalletAndSignIn() {
   const { provider, address: wallet } = await connectTestnetWallet();
-  const challengeResponse = await fetch("/api/auth/nonce", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ wallet }) });
+
+  const challengeResponse = await fetch("/api/auth/nonce", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ wallet }),
+  });
   const challenge = await challengeResponse.json();
   if (!challengeResponse.ok) throw new Error(challenge?.error || "Unable to start Testnet wallet sign-in");
-  const signature = await provider.request({ method: "personal_sign", params: [challenge.message, wallet] });
-  const verifyResponse = await fetch("/api/auth/verify", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ session_id: challenge.session_id, wallet, signature }) });
+
+  const signature = await provider.request({
+    method: "personal_sign",
+    params: [challenge.message, wallet],
+  });
+
+  const verifyResponse = await fetch("/api/auth/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ session_id: challenge.session_id, wallet, signature }),
+  });
   const verified = await verifyResponse.json();
   if (!verifyResponse.ok) throw new Error(verified?.error || "Testnet wallet signature verification failed");
+
   return verified.user as AuthUser;
 }
 
