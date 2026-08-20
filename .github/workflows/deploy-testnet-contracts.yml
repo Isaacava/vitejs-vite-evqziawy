@@ -32,20 +32,41 @@ jobs:
         working-directory: apex-contracts
         run: bun install --frozen-lockfile
 
-      - name: Configure Testnet deployment
+      - name: Configure fresh Testnet Router deployment
         working-directory: apex-contracts
         env:
           BSC_TESTNET_PRIVATE_KEY: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
         run: |
           test -n "$BSC_TESTNET_PRIVATE_KEY"
           cp .env.example .env
-          printf '\nPRIVATE_KEY=%s\n' "$BSC_TESTNET_PRIVATE_KEY" >> .env
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          p = Path('.env')
+          s = p.read_text()
+          s = s.replace('BSC_TESTNET_RPC_URL=https://data-seed-prebsc-2-s3.binance.org:8545', 'BSC_TESTNET_RPC_URL=https://bsc-testnet-rpc.publicnode.com')
+          s = s.replace('BSC_TESTNET_PRIVATE_KEY=', 'BSC_TESTNET_PRIVATE_KEY=' + os.environ['BSC_TESTNET_PRIVATE_KEY'])
+          p.write_text(s)
+
+          p = Path('scripts/addresses.ts')
+          s = p.read_text()
+          old = 'routerProxy: "0xd7d36d66d2f1b608a0f943f722d27e3744f66f25",'
+          if old not in s:
+              raise SystemExit('Expected current BSC Testnet routerProxy entry was not found')
+          s = s.replace(old, '// routerProxy intentionally blank for fresh Testnet Router rotation', 1)
+          old_policy = 'policy: "0xd6a4217588f6b1f5657a92a3e94e6422ad771cea",'
+          if old_policy in s:
+              s = s.replace(old_policy, '// policy intentionally blank so a fresh policy is deployed for the new Router', 1)
+          p.write_text(s)
+          PY
 
       - name: Deploy fresh Testnet Router + Policy
         working-directory: apex-contracts
+        env:
+          DEPLOY_YES: "1"
         run: bun run deploy:testnet
 
-      - name: Show deployment outputs
+      - name: Print deployment result without secrets
         working-directory: apex-contracts
         run: |
-          echo "Deployment completed. Review the deploy script output above for the new Router and Policy addresses."
+          echo "Fresh Testnet deployment completed. See the deploy output above for routerProxy, routerImpl, and policy addresses."
