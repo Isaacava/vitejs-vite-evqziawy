@@ -107,17 +107,24 @@ async function requestQuote(req: VercelRequest, res: VercelResponse, user: NonNu
   if (endpointError) throw new Error(endpointError.message);
   if (!endpoint?.endpoint_url || endpoint.status !== "online") return res.status(409).json({ error: "Testnet provider endpoint is not healthy", readiness: endpoint?.status ?? "missing" });
 
-  const preferredTestBudget = 10n ** BigInt(payment.decimals) / 100n;
-  const maxBudgetRaw = payment.balance < preferredTestBudget ? payment.balance : preferredTestBudget;
+  const maxBudgetRaw = payment.balance;
   const maxBudgetFormatted = formatUnits(maxBudgetRaw, payment.decimals);
-  const providerQuote = await negotiate(endpoint.endpoint_url, goal, { ...requestMetadata, chain_id: TESTNET_CHAIN_ID, environment: TESTNET_ENVIRONMENT, settlement_token: payment.token, settlement_token_symbol: payment.symbol, settlement_token_decimals: payment.decimals, max_budget_raw: maxBudgetRaw.toString(), max_budget: maxBudgetFormatted, preferred_test_budget_raw: maxBudgetRaw.toString(), preferred_test_budget: maxBudgetFormatted });
+  const providerQuote = await negotiate(endpoint.endpoint_url, goal, {
+    ...requestMetadata,
+    chain_id: TESTNET_CHAIN_ID,
+    environment: TESTNET_ENVIRONMENT,
+    settlement_token: payment.token,
+    settlement_token_symbol: payment.symbol,
+    settlement_token_decimals: payment.decimals,
+    max_budget_raw: maxBudgetRaw.toString(),
+    max_budget: maxBudgetFormatted,
+  });
 
   if (providerQuote.accepted === false) return res.status(409).json({ error: "Provider declined the requested terms", provider_quote: providerQuote });
   const price = normalizedPrice(providerQuote.price);
   const priceRaw = BigInt(price);
   if (priceRaw <= 0n) return res.status(409).json({ error: "Provider returned a non-positive quote" });
-  if (priceRaw > payment.balance) return res.status(409).json({ error: `Provider quote is ${formatUnits(priceRaw, payment.decimals)} ${payment.symbol}, but your connected Testnet wallet has only ${formatUnits(payment.balance, payment.decimals)} ${payment.symbol}. Request a smaller Testnet quote.`, price_raw: price, balance_raw: payment.balance.toString(), decimals: payment.decimals });
-  if (priceRaw > maxBudgetRaw) return res.status(409).json({ error: `Provider quote exceeds the controlled Testnet budget of ${maxBudgetFormatted} ${payment.symbol}.`, price_raw: price, max_budget_raw: maxBudgetRaw.toString(), decimals: payment.decimals });
+  if (priceRaw > payment.balance) return res.status(409).json({ error: `Provider quote is ${formatUnits(priceRaw, payment.decimals)} ${payment.symbol}, but your connected Testnet wallet has only ${formatUnits(payment.balance, payment.decimals)} ${payment.symbol}.`, price_raw: price, balance_raw: payment.balance.toString(), decimals: payment.decimals });
 
   const currency = typeof providerQuote.currency === "string" ? providerQuote.currency : payment.symbol;
   const expiresAt = normalizedExpiry(providerQuote.quote_expires_at, new Date(Date.now() + QUOTE_TTL_MS).toISOString());
