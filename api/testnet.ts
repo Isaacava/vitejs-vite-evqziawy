@@ -1,36 +1,50 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-import testnetErc8183Settlement from "../server/_testnet/erc8183-settlement.js";
-import testnetErc8183 from "../server/_testnet/erc8183.js";
-import testnetJobStatus from "../server/_testnet/job-status.js";
-import testnetJobsHistory from "../server/_testnet/jobs-history.js";
-import testnetMatch from "../server/_testnet/match.js";
-import testnetPrepareQuote from "../server/_testnet/prepare-quote.js";
-import testnetProviders from "../server/_testnet/providers.js";
-import testnetQuotes from "../server/_testnet/quotes.js";
-import testnetRecoverJob from "../server/_testnet/recover-job.js";
-import testnetSettlePlan from "../server/_testnet/settle-plan.js";
-import testnetSyncAgent from "../server/_testnet/sync-agent.js";
-import testnetTransactionPreflight from "../server/_testnet/transaction-preflight.js";
+type Handler = (req: VercelRequest, res: VercelResponse) => unknown;
 
-const handlers: Record<string, (req: VercelRequest, res: VercelResponse) => unknown> = {
-  "erc8183-settlement": testnetErc8183Settlement,
-  "erc8183": testnetErc8183,
-  "job-status": testnetJobStatus,
-  "jobs-history": testnetJobsHistory,
-  match: testnetMatch,
-  "prepare-quote": testnetPrepareQuote,
-  providers: testnetProviders,
-  quotes: testnetQuotes,
-  "recover-job": testnetRecoverJob,
-  "settle-plan": testnetSettlePlan,
-  "sync-agent": testnetSyncAgent,
-  "transaction-preflight": testnetTransactionPreflight,
-};
+async function loadHandler(route: string): Promise<Handler | null> {
+  switch (route) {
+    case "erc8183-settlement":
+      return (await import("../server/_testnet/erc8183-settlement.js")).default as Handler;
+    case "erc8183":
+      return (await import("../server/_testnet/erc8183.js")).default as Handler;
+    case "job-status":
+      return (await import("../server/_testnet/job-status.js")).default as Handler;
+    case "jobs-history":
+      return (await import("../server/_testnet/jobs-history.js")).default as Handler;
+    case "match":
+      return (await import("../server/_testnet/match.js")).default as Handler;
+    case "prepare-quote":
+      return (await import("../server/_testnet/prepare-quote.js")).default as Handler;
+    case "providers":
+      return (await import("../server/_testnet/providers.js")).default as Handler;
+    case "quotes":
+      return (await import("../server/_testnet/quotes.js")).default as Handler;
+    case "recover-job":
+      return (await import("../server/_testnet/recover-job.js")).default as Handler;
+    case "settle-plan":
+      return (await import("../server/_testnet/settle-plan.js")).default as Handler;
+    case "sync-agent":
+      return (await import("../server/_testnet/sync-agent.js")).default as Handler;
+    case "transaction-preflight":
+      return (await import("../server/_testnet/transaction-preflight.js")).default as Handler;
+    default:
+      return null;
+  }
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const route = typeof req.query?.route === "string" ? req.query.route : "";
-  const target = handlers[route];
-  if (!target) return res.status(404).json({ error: "Unknown Testnet API route" });
-  return await target(req, res);
+
+  try {
+    const target = await loadHandler(route);
+    if (!target) return res.status(404).json({ error: "Unknown Testnet API route", route });
+    return await target(req, res);
+  } catch (error) {
+    console.error("Testnet API route failed", { route, error });
+    return res.status(500).json({
+      error: error instanceof Error ? error.message : "Testnet API route failed",
+      route,
+    });
+  }
 }
