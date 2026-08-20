@@ -8,14 +8,53 @@ export type TestnetTransactionStep = { id: string; label: string; description: s
 type Props = { steps: TestnetTransactionStep[]; onConfirmed?: (step: TestnetTransactionStep, receipt: TestnetConfirmedReceipt) => Promise<void> | void };
 const TX_HASH = /^0x[a-fA-F0-9]{64}$/;
 
+function readableWalletError(cause: unknown, fallback: string) {
+  if (cause instanceof Error && cause.message) return cause.message;
+  if (typeof cause === "string" && cause) return cause;
+  if (cause && typeof cause === "object") {
+    const candidate = cause as { message?: unknown; code?: unknown; data?: unknown };
+    if (typeof candidate.message === "string" && candidate.message) return candidate.message;
+    if (typeof candidate.data === "string" && candidate.data) return `Wallet/RPC error: ${candidate.data}`;
+    if (candidate.code != null) return `Wallet/RPC error ${String(candidate.code)}`;
+  }
+  return fallback;
+}
+
 async function sendAndConfirm(tx: TestnetPreparedTransaction): Promise<TestnetConfirmedReceipt> {
   if (!/^0x[a-fA-F0-9]{40}$/.test(tx.to)) throw new Error("Testnet transaction target is not a valid address.");
   if (tx.data && !/^0x[0-9a-fA-F]*$/.test(tx.data)) throw new Error("Testnet transaction calldata is invalid.");
+
   const provider = getTestnetConnectedProvider();
   const chainRaw = String(await provider.request({ method: "eth_chainId" })).toLowerCase();
   const chain = chainRaw.startsWith("0x") ? Number.parseInt(chainRaw.slice(2), 16) : Number(chainRaw);
   if (chain !== 97) throw new Error("Wallet must remain on BSC Testnet (chain 97) before signing.");
-  const hash = String(await provider.request({ method: "eth_sendTransaction", params: [{ to: tx.to, ...(tx.data ? { data: tx.data } : {}), ...(tx.value ? { value: tx.value } : {}) }] }));
+
+  const accounts = await provider.request({ method: "eth_accounts" }) as string[];
+  const from = accounts?.[0];
+  if (!/^0x[a-fA-F0-9]{40}$/.test(from || "")) throw new Error("No valid Testnet wallet account is available for this transaction.");
+
+  const request = {
+    from,
+    to: tx.to,
+    ...(tx.data ? { data: tx.data } : {}),
+    ...(tx.value ? { value: tx.value } : {}),
+  };
+
+  // Preflight with the same sender/data before opening the wallet. This turns
+  // contract reverts into a readable error instead of a generic wallet failure.
+  try {
+    await provider.request({ method: "eth_estimateGas", params: [request] });
+  } catch (cause) {
+    throw new Error(`Testnet ${"transaction"} preflight failed: ${readableWalletError(cause, "contract rejected the transaction")}`);
+  }
+
+  let hash: string;
+  try {
+    hash = String(await provider.request({ method: "eth_sendTransaction", params: [request] }));
+  } catch (cause) {
+    throw new Error(`Wallet rejected the Testnet transaction: ${readableWalletError(cause, "unknown wallet/RPC error")}`);
+  }
+
   if (!TX_HASH.test(hash)) throw new Error("The wallet returned an invalid Testnet transaction hash.");
   const started = Date.now();
   while (Date.now() - started < 180000) {
