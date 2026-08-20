@@ -5,7 +5,7 @@ import { getAuthenticatedUser, serverClient } from "../src/server/authHandlers.j
 
 const NETWORK = "bsc-testnet" as const;
 const CHAIN_ID = 97 as const;
-const RPC_URL = process.env.BSC_TESTNET_RPC_URL || process.env.VITE_BSC_RPC_URL || "https://data-seed-prebsc-1-s1-s1-s1.bnbchain.org:8545";
+const RPC_URL = process.env.BSC_TESTNET_RPC_URL || process.env.VITE_BSC_RPC_URL || "https://data-seed-prebsc-1-s1.bnbchain.org:8545";
 
 const COMMERCE = "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address;
 const ROUTER = "0xd7d36d66d2f1b608a0f943f722d27e3744f66f25" as Address;
@@ -28,10 +28,7 @@ const COMMERCE_ABI = [{
   ] }],
 }] as const;
 
-const client = createPublicClient({
-  chain: bscTestnet,
-  transport: http(RPC_URL),
-});
+const client = createPublicClient({ chain: bscTestnet, transport: http(RPC_URL) });
 
 const CHAIN_STATUS: Record<number, "open" | "funded" | "submitted" | "completed" | "rejected" | "expired"> = {
   0: "open",
@@ -79,9 +76,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .maybeSingle();
     if (jobError) throw new Error(jobError.message);
     if (!job) return res.status(404).json({ error: "Marketplace job not found" });
-    if (String(job.chain_job_id || "") !== chainJobId) {
-      return res.status(409).json({ error: "Chain job id does not match the marketplace job" });
-    }
+    if (String(job.chain_job_id || "") !== chainJobId) return res.status(409).json({ error: "Chain job id does not match the marketplace job" });
 
     const { data: task, error: taskError } = await supabase
       .from("mission_tasks")
@@ -116,9 +111,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const status = Number(chainJob.status);
     const chainStatus = CHAIN_STATUS[status];
     if (!chainStatus) return res.status(409).json({ error: "Unknown ERC-8183 job status", onchain_status: status });
-    if (!isTerminal(status)) {
-      return res.status(409).json({ error: "Settlement receipt confirmed, but the chain job is not terminal", chain_status: chainStatus, onchain_status: status });
-    }
+    if (!isTerminal(status)) return res.status(409).json({ error: "Settlement receipt confirmed, but the chain job is not terminal", chain_status: chainStatus, onchain_status: status });
 
     const existingTx = await supabase.from("transactions").select("id").eq("tx_hash", txHash).maybeSingle();
     if (!existingTx.data) {
