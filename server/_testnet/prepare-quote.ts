@@ -24,7 +24,6 @@ const ERC20_ABI = [
 const ROUTER_ABI = [{ type: "function", name: "registerJob", stateMutability: "nonpayable", inputs: [{ name: "jobId", type: "uint256" }, { name: "policy", type: "address" }], outputs: [] }] as const;
 
 const client = createPublicClient({ chain: bscTestnet, transport: http() });
-const READ_OPTIONS = { authorizationList: [] } as const;
 
 function validAddress(value: unknown): value is Address {
   return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value);
@@ -94,12 +93,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (endpoint.error) throw new Error(endpoint.error.message);
     if (!endpoint.data || endpoint.data.status !== "online") return res.status(409).json({ error: "Provider is no longer healthy on Testnet" });
 
-    const token = await client.readContract({ address: COMMERCE, abi: COMMERCE_ABI, functionName: "paymentToken", ...READ_OPTIONS });
+    const token = await client.readContract({ address: COMMERCE, abi: COMMERCE_ABI, functionName: "paymentToken" });
     const [decimals, symbol, balance, allowance] = await Promise.all([
-      client.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals", ...READ_OPTIONS }),
-      client.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol", ...READ_OPTIONS }),
-      client.readContract({ address: token, abi: ERC20_ABI, functionName: "balanceOf", args: [clientAddress], ...READ_OPTIONS }),
-      client.readContract({ address: token, abi: ERC20_ABI, functionName: "allowance", args: [clientAddress, COMMERCE], ...READ_OPTIONS }),
+      client.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" }),
+      client.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol" }),
+      client.readContract({ address: token, abi: ERC20_ABI, functionName: "balanceOf", args: [clientAddress] }),
+      client.readContract({ address: token, abi: ERC20_ABI, functionName: "allowance", args: [clientAddress, COMMERCE] }),
     ]);
 
     const rawBudget = parseUnits(String(quote.price), Number(decimals));
