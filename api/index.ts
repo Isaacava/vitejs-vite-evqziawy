@@ -93,5 +93,21 @@ function routeHandler(req: VercelRequest): Handler | null {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const route = routeHandler(req);
   if (!route) return res.status(404).json({ error: "Unknown AgentMarket API route" });
-  return route(req, res);
+
+  try {
+    return await route(req, res);
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : String(cause || "Unknown server error");
+    console.error("AgentMarket API handler failed", {
+      path: normalizePath(req),
+      method: req.method,
+      error: detail,
+    });
+
+    if (res.headersSent) return;
+    return res.status(500).json({
+      error: "AgentMarket API request failed",
+      detail,
+    });
+  }
 }
