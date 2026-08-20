@@ -102,6 +102,7 @@ export default function OnchainPrepare() {
       setTokenNotice("The live Testnet payment token is not available yet. Build the Testnet transaction plan first.");
       return;
     }
+    const tokenSymbol = symbol;
 
     setAddingToken(true);
     setTokenNotice("");
@@ -114,16 +115,16 @@ export default function OnchainPrepare() {
           type: "ERC20",
           options: {
             address: token,
-            symbol,
+            symbol: tokenSymbol,
             decimals,
           },
         }],
       });
 
       if (result === false) {
-        setTokenNotice(`Your wallet declined the ${symbol} import. Token: ${token}`);
+        setTokenNotice(`Your wallet declined the ${tokenSymbol} import. Token: ${token}`);
       } else {
-        setTokenNotice(`${symbol} import request sent to your connected wallet.`);
+        setTokenNotice(`${tokenSymbol} import request sent to your connected wallet.`);
       }
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Your wallet could not add the Testnet token";
