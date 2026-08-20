@@ -28,7 +28,7 @@ export type AuthUser = {
 export const WALLETCONNECT_PROJECT_ID = "1dbe8fd5e4974ae7c80d074c4082b5a0";
 export const AUTH_CHAIN_ID = 97;
 const STORAGE = "agentmarket-testnet-wc-v6";
-const TESTNET_RPC = "https://data-seed-prebsc-1-s1.bnbchain.org:8545";
+const TESTNET_RPC = "https://bsc-testnet-rpc.publicnode.com";
 
 let providerRef: Eip1193Provider | null = null;
 let initPromise: Promise<Eip1193Provider> | null = null;
