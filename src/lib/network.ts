@@ -9,10 +9,8 @@ export const BSC_NETWORK: BscNetworkName = "testnet";
 export const BSC_CHAIN: Chain = bscTestnet;
 export const BSC_CHAIN_ID = 97;
 
-const runtimeEnv = (import.meta as unknown as { env?: { VITE_BSC_RPC_URL?: string } }).env;
-export const BSC_RPC_URL =
-  runtimeEnv?.VITE_BSC_RPC_URL ||
-  "https://bsc-testnet-rpc.publicnode.com";
+// Dedicated Testnet build: ignore stale Vercel VITE_BSC_RPC_URL overrides.
+export const BSC_RPC_URL = "https://bsc-testnet-rpc.publicnode.com";
 
 export const BSC_EXPLORER_URL = "https://testnet.bscscan.com";
 
