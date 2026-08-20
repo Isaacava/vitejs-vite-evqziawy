@@ -4,8 +4,9 @@ import { bscTestnet } from "viem/chains";
 import { getAuthenticatedUser, serverClient } from "../../src/server/authHandlers.js";
 
 const COMMERCE = "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address;
-const ROUTER = "0xd7d36d66d2f1b608a0f943f722d27e3744f66f25" as Address;
-const POLICY = "0x4f4678d4439fec812ac7674bb3efb4c8f5fb78a6" as Address;
+const ROUTER = "0x6d948b47614dbfbbf97a5e3fd9b410deeab44f17" as Address;
+const POLICY = "0xc4f85d602235e14a45fd1d9794c4092af762b1a6" as Address;
+const TESTNET_RPC_URL = "https://bsc-testnet-rpc.publicnode.com";
 const COMMERCE_ABI = [
   { type: "function", name: "createJob", stateMutability: "nonpayable", inputs: [{ name: "provider", type: "address" }, { name: "evaluator", type: "address" }, { name: "expiredAt", type: "uint256" }, { name: "description", type: "string" }, { name: "hook", type: "address" }], outputs: [{ name: "jobId", type: "uint256" }] },
   { type: "function", name: "setBudget", stateMutability: "nonpayable", inputs: [{ name: "jobId", type: "uint256" }, { name: "amount", type: "uint256" }, { name: "optParams", type: "bytes" }], outputs: [] },
@@ -43,7 +44,7 @@ const JOB_READ_ABI = [{
     ],
   }],
 }] as const;
-const publicClient = createPublicClient({ chain: bscTestnet, transport: http() });
+const publicClient = createPublicClient({ chain: bscTestnet, transport: http(TESTNET_RPC_URL) });
 
 function readContract(args: Record<string, unknown>) {
   return (publicClient.readContract as unknown as (value: Record<string, unknown>) => Promise<any>)(args);
