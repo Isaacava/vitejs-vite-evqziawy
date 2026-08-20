@@ -98,10 +98,11 @@ export default function OnchainPrepare() {
     const token = data?.payment.token || livePayment?.token;
     const symbol = data?.payment.symbol || livePayment?.symbol;
     const decimals = data?.payment.decimals ?? livePayment?.decimals;
-    if (!validAddress(token) || !symbol || decimals == null) {
+    if (typeof token !== "string" || !validAddress(token) || typeof symbol !== "string" || !symbol || decimals == null) {
       setTokenNotice("The live Testnet payment token is not available yet. Build the Testnet transaction plan first.");
       return;
     }
+    const tokenAddress = token;
     const tokenSymbol = symbol;
 
     setAddingToken(true);
@@ -114,7 +115,7 @@ export default function OnchainPrepare() {
         params: [{
           type: "ERC20",
           options: {
-            address: token,
+            address: tokenAddress,
             symbol: tokenSymbol,
             decimals,
           },
@@ -122,17 +123,17 @@ export default function OnchainPrepare() {
       });
 
       if (result === false) {
-        setTokenNotice(`Your wallet declined the ${tokenSymbol} import. Token: ${token}`);
+        setTokenNotice(`Your wallet declined the ${tokenSymbol} import. Token: ${tokenAddress}`);
       } else {
         setTokenNotice(`${tokenSymbol} import request sent to your connected wallet.`);
       }
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Your wallet could not add the Testnet token";
       try {
-        await navigator.clipboard.writeText(token);
-        setTokenNotice(`${message}. The token address was copied: ${token}`);
+        await navigator.clipboard.writeText(tokenAddress);
+        setTokenNotice(`${message}. The token address was copied: ${tokenAddress}`);
       } catch {
-        setTokenNotice(`${message}. Token address: ${token}`);
+        setTokenNotice(`${message}. Token address: ${tokenAddress}`);
       }
     } finally {
       setAddingToken(false);
