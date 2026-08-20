@@ -36,7 +36,7 @@ type Status = "loading" | "ready" | "error";
 
 const SUPABASE_URL = "https://sfbxpscbevnmoppgkjcr.supabase.co";
 const SUPABASE_ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzZmJ4cHNharz...REDACTED";
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNmYnhwc2NiZXZubW9wcGdramNyIiwiaWF0IjoxNzg2MTE0Nzk0LCJleHAiOjIxMDE2OTA3OTR9.ttfR2pNVqlOYrorGdAs7aaGgufxwXIsG-GXvLDd-jZw";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
