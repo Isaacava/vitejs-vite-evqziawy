@@ -1,0 +1,80 @@
+name: Repair Testnet Router Hook Whitelist
+
+on:
+  push:
+    paths:
+      - .github/workflows/repair-testnet-router-hook.yml
+
+permissions:
+  contents: read
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: testnet
+    steps:
+      - name: Checkout APEX contracts
+        uses: actions/checkout@v4
+        with:
+          repository: bnb-chain/apex-contracts
+          path: apex-contracts
+          ref: main
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install APEX dependencies
+        working-directory: apex-contracts
+        run: bun install --frozen-lockfile
+
+      - name: Verify and repair fresh Router hook whitelist
+        working-directory: apex-contracts
+        env:
+          BSC_TESTNET_PRIVATE_KEY: ${{ secrets.BSC_TESTNET_DEPLOYER_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$BSC_TESTNET_PRIVATE_KEY"
+          cat > repair-hook.mjs <<'EOF'
+          import { ethers } from "ethers";
+
+          const RPC = "https://bsc-testnet-rpc.publicnode.com";
+          const COMMERCE = "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de";
+          const ROUTER = "0x6d948b47614dbfbbf97a5e3fd9b410deeab44f17";
+          const abi = [
+            "function ADMIN_ROLE() view returns (bytes32)",
+            "function hasRole(bytes32 role, address account) view returns (bool)",
+            "function whitelistedHooks(address hook) view returns (bool)",
+            "function setHookWhitelist(address hook, bool status)",
+          ];
+
+          const provider = new ethers.JsonRpcProvider(RPC);
+          const wallet = new ethers.Wallet(process.env.BSC_TESTNET_PRIVATE_KEY, provider);
+          const commerce = new ethers.Contract(COMMERCE, abi, wallet);
+          const deployer = await wallet.getAddress();
+          const network = await provider.getNetwork();
+          if (network.chainId !== 97n) throw new Error(`Expected BSC Testnet chain 97, got ${network.chainId}`);
+
+          const role = await commerce.ADMIN_ROLE();
+          const isAdmin = await commerce.hasRole(role, deployer);
+          if (!isAdmin) throw new Error(`Deployer ${deployer} does not have Commerce ADMIN_ROLE`);
+
+          const already = await commerce.whitelistedHooks(ROUTER);
+          console.log(`Deployer: ${deployer}`);
+          console.log(`Fresh Router: ${ROUTER}`);
+          console.log(`Commerce hook whitelist before: ${already}`);
+
+          if (!already) {
+            const tx = await commerce.setHookWhitelist(ROUTER, true);
+            console.log(`Whitelist transaction: ${tx.hash}`);
+            const receipt = await tx.wait();
+            if (!receipt || receipt.status !== 1) throw new Error("Hook whitelist transaction did not succeed");
+          }
+
+          const confirmed = await commerce.whitelistedHooks(ROUTER);
+          if (!confirmed) throw new Error("Fresh Router is still not whitelisted as a Commerce hook");
+          console.log("Commerce hook whitelist after: true");
+          console.log("TESTNET ROUTER HOOK REPAIR COMPLETE");
+          EOF
+          bun repair-hook.mjs
