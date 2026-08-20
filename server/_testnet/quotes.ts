@@ -8,6 +8,8 @@ const TESTNET_ENVIRONMENT = "testnet";
 const REQUEST_TIMEOUT_MS = 12_000;
 const QUOTE_TTL_MS = 5 * 60 * 1000;
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 type AgentRow = {
   id: string;
   agent_id: string;
@@ -121,20 +123,28 @@ function normalizedExpiry(value: unknown, fallback: string) {
   return fallback;
 }
 
-async function requestQuote(req: VercelRequest, res: VercelResponse, user: NonNullable<Awaited<ReturnType<typeof getAuthenticatedUser>>>) {
-  const goal = typeof req.body?.goal === "string" ? req.body.goal.trim() : "";
-  const agentId = typeof req.body?.agent_id === "string" ? req.body.agent_id.trim() : "";
-  const requestMetadata = typeof req.body?.parameters === "object" && req.body.parameters !== null ? req.body.parameters : {};
-  if (!goal || !agentId) return res.status(400).json({ error: "goal and agent_id are required" });
-
-  const supabase = serverClient();
-  const { data: agent, error: agentError } = await supabase
+async function resolveTestnetAgent(supabase: ReturnType<typeof serverClient>, agentIdentifier: string) {
+  const query = supabase
     .from("agents")
     .select("id,agent_id,owner,name,status,verification_status")
-    .eq("id", agentId)
-    .eq("chain", "bsc-testnet")
-    .maybeSingle();
-  if (agentError) throw new Error(agentError.message);
+    .eq("chain", "bsc-testnet");
+
+  const result = UUID_RE.test(agentIdentifier)
+    ? await query.eq("id", agentIdentifier).maybeSingle()
+    : await query.eq("agent_id", agentIdentifier).maybeSingle();
+
+  if (result.error) throw new Error(result.error.message);
+  return result.data as AgentRow | null;
+}
+
+async function requestQuote(req: VercelRequest, res: VercelResponse, user: NonNullable<Awaited<ReturnType<typeof getAuthenticatedUser>>>) {
+  const goal = typeof req.body?.goal === "string" ? req.body.goal.trim() : "";
+  const agentIdentifier = typeof req.body?.agent_id === "string" ? req.body.agent_id.trim() : "";
+  const requestMetadata = typeof req.body?.parameters === "object" && req.body.parameters !== null ? req.body.parameters : {};
+  if (!goal || !agentIdentifier) return res.status(400).json({ error: "goal and agent_id are required" });
+
+  const supabase = serverClient();
+  const agent = await resolveTestnetAgent(supabase, agentIdentifier);
   if (!agent) return res.status(404).json({ error: "Testnet agent not found" });
   if (agent.verification_status === "revoked") return res.status(409).json({ error: "Agent identity is revoked" });
 
@@ -207,10 +217,10 @@ async function requestQuote(req: VercelRequest, res: VercelResponse, user: NonNu
     environment: TESTNET_ENVIRONMENT,
     quote,
     provider: {
-      agent_id: (agent as AgentRow).agent_id,
-      name: (agent as AgentRow).name,
-      status: (agent as AgentRow).status,
-      verification_status: (agent as AgentRow).verification_status,
+      agent_id: agent.agent_id,
+      name: agent.name,
+      status: agent.status,
+      verification_status: agent.verification_status,
       endpoint: endpoint.endpoint_url,
     },
     signature_present: Boolean(providerQuote.provider_sig || providerQuote.provider_signature),
