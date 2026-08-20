@@ -8,6 +8,7 @@ export type TestnetTransactionStep = { id: string; label: string; description: s
 type Props = { steps: TestnetTransactionStep[]; onConfirmed?: (step: TestnetTransactionStep, receipt: TestnetConfirmedReceipt) => Promise<void> | void };
 const TX_HASH = /^0x[a-fA-F0-9]{64}$/;
 const WALLET_REQUEST_TIMEOUT_MS = 60000;
+const MIN_BNB_BALANCE_WEI = 1000000000000000n;
 
 function readableWalletError(cause: unknown, fallback: string) {
   if (cause instanceof Error && cause.message) return cause.message;
@@ -40,13 +41,29 @@ async function sendAndConfirm(tx: TestnetPreparedTransaction): Promise<TestnetCo
   if (tx.data && !/^0x[0-9a-fA-F]*$/.test(tx.data)) throw new Error("Testnet transaction calldata is invalid.");
 
   const provider = getTestnetConnectedProvider();
-  const chainRaw = String(await withTimeout(provider.request({ method: "eth_chainId" }), 15000, "WalletConnect did not respond with the Testnet chain. Reconnect the wallet and try again." )).toLowerCase();
+  const chainRaw = String(await withTimeout(provider.request({ method: "eth_chainId" }), 15000, "WalletConnect did not respond with the Testnet chain. Reconnect the wallet and try again.")).toLowerCase();
   const chain = chainRaw.startsWith("0x") ? Number.parseInt(chainRaw.slice(2), 16) : Number(chainRaw);
   if (chain !== 97) throw new Error("Wallet must remain on BSC Testnet (chain 97) before signing.");
 
   const accounts = await withTimeout(provider.request({ method: "eth_accounts" }), 15000, "WalletConnect did not return an account. Reconnect the Testnet wallet and try again.") as string[];
   const from = accounts?.[0];
   if (!/^0x[a-fA-F0-9]{40}$/.test(from || "")) throw new Error("No valid Testnet wallet account is available for this transaction.");
+
+  const nativeBalanceRaw = String(await withTimeout(
+    provider.request({ method: "eth_getBalance", params: [from, "latest"] }),
+    15000,
+    "The Testnet wallet did not return its BNB balance. Reconnect the wallet and try again.",
+  ));
+  let nativeBalance = 0n;
+  try {
+    nativeBalance = BigInt(nativeBalanceRaw);
+  } catch {
+    throw new Error("The Testnet wallet returned an invalid BNB balance.");
+  }
+  if (nativeBalance < MIN_BNB_BALANCE_WEI) {
+    const bnb = Number(nativeBalance) / 1e18;
+    throw new Error(`Insufficient BNB for BSC Testnet gas. Your wallet has ${bnb.toFixed(6)} BNB; fund this Testnet wallet with at least 0.001 BNB, then retry.`);
+  }
 
   const request = {
     from,
