@@ -7,6 +7,7 @@ const COMMERCE = "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address;
 const ROUTER = "0xd7d36d66d2f1b608a0f943f722d27e3744f66f25" as Address;
 const POLICY = "0x4f4678d4439fec812ac7674bb3efb4c8f5fb78a6" as Address;
 const CHAIN_ID = 97;
+const JOB_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
 
 const COMMERCE_ABI = [
   { type: "function", name: "createJob", stateMutability: "nonpayable", inputs: [
@@ -77,7 +78,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (rawBudget <= 0n) return res.status(409).json({ error: "Accepted provider quote has a non-positive price" });
     if (BigInt(balance) < rawBudget) return res.status(409).json({ error: `Insufficient Testnet settlement-token balance. Required ${formatUnits(rawBudget, Number(decimals))} ${symbol}.`, required_raw: rawBudget.toString(), balance_raw: String(balance) });
 
-    const expiryUnix = Math.min(Math.floor(new Date(quote.expires_at).getTime() / 1000), Math.floor(Date.now() / 1000) + 60 * 60);
+    // ERC-8183 Testnet createJob rejects very short expiries. Keep the provider
+    // quote expiry separate from the on-chain job lifetime and use a 30-day job.
+    const expiryUnix = Math.floor(Date.now() / 1000) + JOB_LIFETIME_SECONDS;
     const description = JSON.stringify({ marketplace: "AgentMarket", network: "bsc-testnet", chain_id: CHAIN_ID, mission_id: missionId, quote_id: quote.quote_id, quote_hash: quote.quote_hash, price: formatUnits(rawBudget, Number(decimals)), price_raw: rawBudget.toString(), currency: quote.currency, goal: quote.goal, params: quote.request_metadata });
     const createJobData = encodeFunctionData({ abi: COMMERCE_ABI, functionName: "createJob", args: [agent.owner, ROUTER, BigInt(expiryUnix), description, ROUTER] });
     const registerTemplate = encodeFunctionData({ abi: ROUTER_ABI, functionName: "registerJob", args: [0n, POLICY] });
