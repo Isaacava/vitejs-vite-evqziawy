@@ -6,11 +6,43 @@ import { getAuthenticatedUser, serverClient } from "../../src/server/authHandler
 const COMMERCE = "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address;
 const ROUTER = "0xd7d36d66d2f1b608a0f943f722d27e3744f66f25" as Address;
 const POLICY = "0x4f4678d4439fec812ac7674bb3efb4c8f5fb78a6" as Address;
-const COMMERCE_ABI = [{ type: "function", name: "createJob", stateMutability: "nonpayable", inputs: [{ name: "provider", type: "address" }, { name: "evaluator", type: "address" }, { name: "expiredAt", type: "uint256" }, { name: "description", type: "string" }, { name: "hook", type: "address" }], outputs: [{ name: "jobId", type: "uint256" }] }, { type: "function", name: "setBudget", stateMutability: "nonpayable", inputs: [{ name: "jobId", type: "uint256" }, { name: "amount", type: "uint256" }, { name: "optParams", type: "bytes" }], outputs: [] }, { type: "function", name: "fund", stateMutability: "nonpayable", inputs: [{ name: "jobId", type: "uint256" }, { name: "expectedBudget", type: "uint256" }, { name: "optParams", type: "bytes" }], outputs: [] }, { type: "event", name: "JobCreated", inputs: [{ name: "jobId", type: "uint256", indexed: true }, { name: "client", type: "address", indexed: true }, { name: "provider", type: "address", indexed: true }, { name: "evaluator", type: "address", indexed: false }, { name: "expiredAt", type: "uint256", indexed: false }, { name: "hook", type: "address", indexed: false }], anonymous: false }] as const;
+const COMMERCE_ABI = [
+  { type: "function", name: "createJob", stateMutability: "nonpayable", inputs: [{ name: "provider", type: "address" }, { name: "evaluator", type: "address" }, { name: "expiredAt", type: "uint256" }, { name: "description", type: "string" }, { name: "hook", type: "address" }], outputs: [{ name: "jobId", type: "uint256" }] },
+  { type: "function", name: "setBudget", stateMutability: "nonpayable", inputs: [{ name: "jobId", type: "uint256" }, { name: "amount", type: "uint256" }, { name: "optParams", type: "bytes" }], outputs: [] },
+  { type: "function", name: "fund", stateMutability: "nonpayable", inputs: [{ name: "jobId", type: "uint256" }, { name: "expectedBudget", type: "uint256" }, { name: "optParams", type: "bytes" }], outputs: [] },
+  { type: "event", name: "JobCreated", inputs: [{ name: "jobId", type: "uint256", indexed: true }, { name: "client", type: "address", indexed: true }, { name: "provider", type: "address", indexed: true }, { name: "evaluator", type: "address", indexed: false }, { name: "expiredAt", type: "uint256", indexed: false }, { name: "hook", type: "address", indexed: false }], anonymous: false },
+] as const;
 const ROUTER_ABI = [{ type: "function", name: "registerJob", stateMutability: "nonpayable", inputs: [{ name: "jobId", type: "uint256" }, { name: "policy", type: "address" }], outputs: [] }] as const;
-const ERC20_ABI = [{ type: "function", name: "balanceOf", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] }, { type: "function", name: "allowance", stateMutability: "view", inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }], outputs: [{ type: "uint256" }] }, { type: "function", name: "decimals", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] }, { type: "function", name: "symbol", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] }] as const;
+const ERC20_ABI = [
+  { type: "function", name: "balanceOf", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "allowance", stateMutability: "view", inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "decimals", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] },
+  { type: "function", name: "symbol", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
+] as const;
 const TOKEN_ABI = [{ type: "function", name: "paymentToken", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] }] as const;
-const JOB_READ_ABI = [{ type: "function", name: "getJob", stateMutability: "view", inputs: [{ name: "jobId", type: "uint256" }] as const, outputs: [{ name: "job", type: "tuple", components: [{ name: "id", type: "uint256" }, { name: "client", type: "address" }, { name: "provider", type: "address" }, { name: "evaluator", type: "address" }, { name: "expiredAt", type: "uint256" }, { name: "description", type: "string" }, { name: "budget", type: "uint256" }, { name: "status", type: "uint8" }, { name: "deliverable", type: "string" }, { name: "hook", type: "address" }] }] }] as const;
+const JOB_READ_ABI = [{
+  type: "function",
+  name: "getJob",
+  stateMutability: "view",
+  inputs: [{ name: "jobId", type: "uint256" }],
+  outputs: [{
+    name: "job",
+    type: "tuple",
+    components: [
+      { name: "id", type: "uint256" },
+      { name: "client", type: "address" },
+      { name: "provider", type: "address" },
+      { name: "evaluator", type: "address" },
+      { name: "description", type: "string" },
+      { name: "budget", type: "uint256" },
+      { name: "expiredAt", type: "uint256" },
+      { name: "status", type: "uint8" },
+      { name: "hook", type: "address" },
+      { name: "submittedAt", type: "uint256" },
+      { name: "deliverable", type: "bytes32" },
+    ],
+  }],
+}] as const;
 const publicClient = createPublicClient({ chain: bscTestnet, transport: http() });
 
 function readContract(args: Record<string, unknown>) {
@@ -45,6 +77,8 @@ async function syncReceipt(req: VercelRequest, res: VercelResponse, auth: Awaite
   const { data: job, error: jobError } = await supabase.from("jobs").select("id,mission_task_id,status,chain_job_id,chain_status").eq("id", jobId).maybeSingle();
   if (jobError) throw new Error(jobError.message);
   if (!job) return res.status(404).json({ error: "Marketplace job not found" });
+  if (!chainJobId && job.chain_job_id != null) chainJobId = String(job.chain_job_id);
+  if (!chainJobId && phase !== "create") return res.status(409).json({ error: "A confirmed chain job id is required for this Testnet phase" });
   const { data: task, error: taskError } = await supabase.from("mission_tasks").select("id,mission_id").eq("id", job.mission_task_id).eq("mission_id", mission.id).maybeSingle();
   if (taskError) throw new Error(taskError.message);
   if (!task) return res.status(403).json({ error: "Job does not belong to this mission" });
@@ -104,6 +138,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const registerTemplate = encodeFunctionData({ abi: ROUTER_ABI, functionName: "registerJob", args: [0n, POLICY] });
     const setBudgetTemplate = encodeFunctionData({ abi: COMMERCE_ABI, functionName: "setBudget", args: [0n, rawBudget, "0x"] });
     const fundTemplate = encodeFunctionData({ abi: COMMERCE_ABI, functionName: "fund", args: [0n, rawBudget, "0x"] });
-    return res.status(200).json({ ok: true, network: "bsc-testnet", chain_id: 97, mission: { id: mission.id, status: mission.status }, agent: { agent_id: agent.agent_id, name: agent.name, provider: agent.owner, status: agent.status, verification_status: agent.verification_status }, commerce: { address: COMMERCE, evaluator: ROUTER, hook: ROUTER, default_policy: POLICY }, payment: { token, symbol, decimals, budget_raw: rawBudget.toString(), balance_raw: String(balance), allowance_raw: String(allowance), balance_formatted: formatUnits(BigInt(balance), Number(decimals)), allowance_formatted: formatUnits(BigInt(allowance), Number(decimals)) }, expiry: new Date(Number(expiresAt) * 1000).toISOString(), wallet_steps: ["createJob", "registerJob using the returned jobId", "setBudget using the returned jobId", BigInt(allowance) < rawBudget ? "approve payment token to Commerce" : "approval already sufficient", "fund using the returned jobId"], transactions: { create_job: { to: COMMERCE, data: createJobData }, register_job: { to: ROUTER, data: registerTemplate, data_builder: "Replace placeholder jobId 0 with the confirmed createJob receipt jobId." }, set_budget: { to: COMMERCE, data: setBudgetTemplate, data_builder: "Replace placeholder jobId 0 with the confirmed createJob receipt jobId." }, approve: BigInt(allowance) < rawBudget ? { to: token, data_builder: "Encode ERC-20 approve(Commerce, budgetRaw) in the user wallet." } : { data_builder: "No approval transaction required." }, fund: { to: COMMERCE, data: fundTemplate, data_builder: "Replace placeholder jobId 0 with the confirmed createJob receipt jobId." } }, note: "Testnet-only preparation for isolated Grid Agent validation. This endpoint does not share production Mainnet contracts." });
+    const { data: marketplaceJob, error: marketplaceJobError } = await supabase.from("jobs").select("id,status,chain_job_id").eq("mission_task_id", task.id).maybeSingle();
+    if (marketplaceJobError) throw new Error(marketplaceJobError.message);
+    return res.status(200).json({
+      ok: true,
+      network: "bsc-testnet",
+      chain_id: 97,
+      mission: { id: mission.id, status: mission.status },
+      marketplace_job: marketplaceJob ? { id: marketplaceJob.id, status: marketplaceJob.status, chain_job_id: marketplaceJob.chain_job_id } : null,
+      agent: { agent_id: agent.agent_id, name: agent.name, provider: agent.owner, status: agent.status, verification_status: agent.verification_status },
+      commerce: { address: COMMERCE, evaluator: ROUTER, hook: ROUTER, default_policy: POLICY },
+      payment: { token, symbol, decimals, budget_raw: rawBudget.toString(), balance_raw: String(balance), allowance_raw: String(allowance), balance_formatted: formatUnits(BigInt(balance), Number(decimals)), allowance_formatted: formatUnits(BigInt(allowance), Number(decimals)) },
+      expiry: new Date(Number(expiresAt) * 1000).toISOString(),
+      wallet_steps: ["createJob", "registerJob using the returned jobId", "setBudget using the returned jobId", BigInt(allowance) < rawBudget ? "approve payment token to Commerce" : "approval already sufficient", "fund using the returned jobId"],
+      transactions: {
+        create_job: { to: COMMERCE, data: createJobData },
+        register_job: { to: ROUTER, data: registerTemplate, data_builder: "Replace placeholder jobId 0 with the confirmed createJob receipt jobId." },
+        set_budget: { to: COMMERCE, data: setBudgetTemplate, data_builder: "Replace placeholder jobId 0 with the confirmed createJob receipt jobId." },
+        approve: BigInt(allowance) < rawBudget ? { to: token, data_builder: "Encode ERC-20 approve(Commerce, budgetRaw) in the user wallet." } : { data_builder: "No approval transaction required." },
+        fund: { to: COMMERCE, data: fundTemplate, data_builder: "Replace placeholder jobId 0 with the confirmed createJob receipt jobId." },
+      },
+      note: "Testnet-only preparation for isolated Grid Agent validation. This endpoint does not share production Mainnet contracts.",
+    });
   } catch (error) { return res.status(400).json({ error: error instanceof Error ? error.message : "Unable to prepare testnet ERC-8183 job" }); }
 }
