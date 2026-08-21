@@ -4,8 +4,8 @@ import { bscTestnet } from "viem/chains";
 export const PROVIDER_ERC8183_TESTNET = {
   chainId: 97,
   commerce: "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address,
-  router: "0xd7d36d66d2f1b608a0f943f722d27e3744f66f25" as Address,
-  policy: "0x4f4678d4439fec812ac7674bb3efb4c8f5fb78a6" as Address,
+  router: "0x6d948b47614dbfbbf97a5e3fd9b410deeab44f17" as Address,
+  policy: "0xc4f85d602235e14a45fd1d9794c4092af762b1a6" as Address,
 } as const;
 
 export const PROVIDER_COMMERCE_ABI = [
@@ -50,5 +50,5 @@ export const PROVIDER_COMMERCE_ABI = [
 
 export const providerPublicClient = createPublicClient({
   chain: bscTestnet,
-  transport: http(),
+  transport: http("https://bsc-testnet-rpc.publicnode.com"),
 });
