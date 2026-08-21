@@ -11,6 +11,7 @@ import TestnetJobHistory from "./TestnetJobHistory";
 import TestnetProviderReadiness from "./TestnetProviderReadiness";
 import TestnetTransactionPreflight from "./TestnetTransactionPreflight";
 import TestnetGridRun from "./TestnetGridRun";
+import TestnetPolicyReview from "./TestnetPolicyReview";
 import "./index.css";
 
 const params = new URLSearchParams(window.location.search);
@@ -72,6 +73,7 @@ function renderApp() {
   if (path === "/testnet/quote-gate" && missionId && quoteId) return <TestnetQuoteGate />;
   if (path === "/testnet/recover") return <TestnetRecovery />;
   if (path === "/testnet/jobs" || path === "/missions") return <TestnetJobHistory />;
+  if (path === "/testnet/review") return <TestnetPolicyReview />;
   if (path === "/testnet/providers") return <TestnetProviderReadiness />;
   if (path === "/testnet/preflight") return <TestnetTransactionPreflight />;
   if (path === "/testnet/run") return <TestnetGridRun />;
