@@ -112,26 +112,33 @@ export default function TestnetJobHistory() {
           <section className="console-card"><p className="console-evidence">No Testnet jobs are recorded for this account yet. Start from the Testnet marketplace.</p><a className="console-brass-button" href="/app" style={{ textDecoration: "none", display: "inline-flex" }}>Open Testnet marketplace →</a></section>
         ) : (
           <section className="console-grid">
-            {jobs.map((job) => (
-              <article className="console-card" key={job.id}>
-                <div className="console-section-head"><span>{statusLabel(job)}</span><b>{job.chain_status || "UNKNOWN"}</b></div>
-                <h2 style={{ marginTop: 0 }}>{job.mission_title}</h2>
-                <div className="console-stat"><span>Task</span><strong>{job.task_title}</strong></div>
-                <div className="console-stat"><span>Marketplace job</span><strong>{compact(job.id)}</strong></div>
-                <div className="console-stat"><span>Chain job</span><strong>{job.chain_job_id == null ? "Not created" : `#${job.chain_job_id}`}</strong></div>
-                <div className="console-stat"><span>Budget</span><strong>{job.budget ?? "—"}</strong></div>
-                <div className="console-stat"><span>Updated</span><strong>{formatDate(job.updated_at)}</strong></div>
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
-                  {job.recoverable && <a className="console-brass-button" href={`/testnet/recover?job=${encodeURIComponent(job.id)}`} style={{ textDecoration: "none", display: "inline-flex" }}>Resume job →</a>}
-                </div>
-                <p className="console-evidence">Created {formatDate(job.created_at)} · Funded {formatDate(job.funded_at)} · Submitted {formatDate(job.submitted_at)} · Terminal {formatDate(job.terminal_at)}</p>
-                {String(job.job_status).toLowerCase() === "submitted" && !isChainVerifiedSubmission(job) && (
-                  <div className="console-alert console-alert-error" style={{ marginTop: 12 }}>
-                    Marketplace marked this record submitted, but no ERC-8183 chain submission is verified yet. This is not counted as an agent on-chain submission.
+            {jobs.map((job) => {
+              const chainVerified = isChainVerifiedSubmission(job);
+              const reviewHref = chainVerified
+                ? `/testnet/review?job=${encodeURIComponent(String(job.chain_job_id))}&mission=${encodeURIComponent(job.mission_id || "")}&marketplaceJob=${encodeURIComponent(job.id)}`
+                : "";
+              return (
+                <article className="console-card" key={job.id}>
+                  <div className="console-section-head"><span>{statusLabel(job)}</span><b>{job.chain_status || "UNKNOWN"}</b></div>
+                  <h2 style={{ marginTop: 0 }}>{job.mission_title}</h2>
+                  <div className="console-stat"><span>Task</span><strong>{job.task_title}</strong></div>
+                  <div className="console-stat"><span>Marketplace job</span><strong>{compact(job.id)}</strong></div>
+                  <div className="console-stat"><span>Chain job</span><strong>{job.chain_job_id == null ? "Not created" : `#${job.chain_job_id}`}</strong></div>
+                  <div className="console-stat"><span>Budget</span><strong>{job.budget ?? "—"}</strong></div>
+                  <div className="console-stat"><span>Updated</span><strong>{formatDate(job.updated_at)}</strong></div>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
+                    {job.recoverable && <a className="console-brass-button" href={`/testnet/recover?job=${encodeURIComponent(job.id)}`} style={{ textDecoration: "none", display: "inline-flex" }}>Resume job →</a>}
+                    {reviewHref && <a className="console-brass-button" href={reviewHref} style={{ textDecoration: "none", display: "inline-flex" }}>Review / dispute / settle →</a>}
                   </div>
-                )}
-              </article>
-            ))}
+                  <p className="console-evidence">Created {formatDate(job.created_at)} · Funded {formatDate(job.funded_at)} · Submitted {formatDate(job.submitted_at)} · Terminal {formatDate(job.terminal_at)}</p>
+                  {String(job.job_status).toLowerCase() === "submitted" && !chainVerified && (
+                    <div className="console-alert console-alert-error" style={{ marginTop: 12 }}>
+                      Marketplace marked this record submitted, but no ERC-8183 chain submission is verified yet. This is not counted as an agent on-chain submission.
+                    </div>
+                  )}
+                </article>
+              );
+            })}
           </section>
         )}
       </div>
