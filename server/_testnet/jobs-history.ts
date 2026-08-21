@@ -93,6 +93,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!mission) continue;
 
       const chainStatus = STATUS[Number(chainJob.status)] || "UNKNOWN";
+      const chainStatusLower = chainStatus.toLowerCase();
       const hasSubmittedChainState = Number(chainJob.status) === 2;
       const submittedAt = hasSubmittedChainState && chainJob.submittedAt > 0n
         ? new Date(Number(chainJob.submittedAt) * 1000).toISOString()
@@ -104,7 +105,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         mission_title: mission.title ?? "Untitled mission",
         mission_status: mission.status ?? "unknown",
         task_title: task?.title ?? "Marketplace task",
-        job_status: hasSubmittedChainState ? "submitted" : job.status,
+        // The ERC-8183 chain status is the lifecycle authority for every state.
+        job_status: chainStatusLower,
         chain_job_id: job.chain_job_id,
         chain_status: chainStatus,
         deliverable_hash: chainJob.deliverable,
@@ -113,7 +115,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         created_at: job.created_at,
         funded_at: job.funded_at,
         submitted_at: submittedAt,
-        terminal_at: job.terminal_at,
+        terminal_at: ["completed", "rejected", "expired"].includes(chainStatusLower)
+          ? job.terminal_at ?? job.updated_at
+          : job.terminal_at,
         updated_at: job.updated_at,
         recoverable: !["COMPLETED", "REJECTED", "EXPIRED"].includes(chainStatus),
         verified_testnet: true,
