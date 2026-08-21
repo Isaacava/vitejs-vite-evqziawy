@@ -244,6 +244,9 @@ export default function TestnetQuoteExecutionWalletConnect() {
                 <b>{confirmedRequired}/{requiredSteps.length} REQUIRED CONFIRMED</b>
               </div>
               <p className="console-evidence">The first step creates the ERC-8183 job and establishes the real chain job ID. Register, budget, approval and funding remain locked until their dependencies are confirmed.</p>
+              {chainJobId && data.agent.agent_id && (
+                <p className="console-evidence"><a href={`/testnet/provider-submit?job=${encodeURIComponent(chainJobId)}&agent=${encodeURIComponent(data.agent.agent_id)}`} className="console-link">Open provider submission for job {chainJobId} →</a></p>
+              )}
               <TestnetOnchainTransactionRunner steps={steps} onConfirmed={syncReceipt} />
             </section>
           </>
