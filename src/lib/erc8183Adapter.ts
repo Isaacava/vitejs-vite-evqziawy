@@ -5,6 +5,7 @@ import {
   COMMERCE_ABI,
   ERC20_ABI,
   ERC8183_ADDRESSES,
+  POLICY_ABI,
   ROUTER_ABI,
   getWalletClient,
   publicClient,
@@ -48,6 +49,23 @@ export async function readChainJob(jobId: bigint): Promise<ChainJob> {
     address: ERC8183_ADDRESSES.commerce,
     abi: COMMERCE_ABI,
     functionName: "getJob",
+    args: [jobId],
+  });
+}
+
+export async function readPolicyConfig() {
+  const [disputeWindow, voteQuorum] = await Promise.all([
+    publicClient.readContract({ address: ERC8183_ADDRESSES.policy, abi: POLICY_ABI, functionName: "disputeWindow" }),
+    publicClient.readContract({ address: ERC8183_ADDRESSES.policy, abi: POLICY_ABI, functionName: "voteQuorum" }),
+  ]);
+  return { disputeWindow, voteQuorum };
+}
+
+export async function readPolicyVerdict(jobId: bigint) {
+  return publicClient.readContract({
+    address: ERC8183_ADDRESSES.policy,
+    abi: POLICY_ABI,
+    functionName: "check",
     args: [jobId],
   });
 }
@@ -171,6 +189,38 @@ export async function submitDeliverable(args: {
   return { hash, receipt: await publicClient.waitForTransactionReceipt({ hash }) };
 }
 
+export async function disputeJob(args: {
+  jobId: bigint;
+  providerWallet: EIP1193Provider;
+  account: Address;
+}) {
+  const wallet = getWalletClient(args.providerWallet, args.account);
+  const hash = await wallet.writeContract({
+    address: ERC8183_ADDRESSES.policy,
+    abi: POLICY_ABI,
+    functionName: "dispute",
+    args: [args.jobId],
+    chain: undefined,
+  });
+  return { hash, receipt: await publicClient.waitForTransactionReceipt({ hash }) };
+}
+
+export async function voteRejectJob(args: {
+  jobId: bigint;
+  providerWallet: EIP1193Provider;
+  account: Address;
+}) {
+  const wallet = getWalletClient(args.providerWallet, args.account);
+  const hash = await wallet.writeContract({
+    address: ERC8183_ADDRESSES.policy,
+    abi: POLICY_ABI,
+    functionName: "voteReject",
+    args: [args.jobId],
+    chain: undefined,
+  });
+  return { hash, receipt: await publicClient.waitForTransactionReceipt({ hash }) };
+}
+
 export async function settleJob(args: {
   jobId: bigint;
   providerWallet: EIP1193Provider;
@@ -182,6 +232,38 @@ export async function settleJob(args: {
     abi: ROUTER_ABI,
     functionName: "settle",
     args: [args.jobId, "0x"],
+    chain: undefined,
+  });
+  return { hash, receipt: await publicClient.waitForTransactionReceipt({ hash }) };
+}
+
+export async function markExpiredJob(args: {
+  jobId: bigint;
+  providerWallet: EIP1193Provider;
+  account: Address;
+}) {
+  const wallet = getWalletClient(args.providerWallet, args.account);
+  const hash = await wallet.writeContract({
+    address: ERC8183_ADDRESSES.router,
+    abi: ROUTER_ABI,
+    functionName: "markExpired",
+    args: [args.jobId],
+    chain: undefined,
+  });
+  return { hash, receipt: await publicClient.waitForTransactionReceipt({ hash }) };
+}
+
+export async function claimRefundJob(args: {
+  jobId: bigint;
+  providerWallet: EIP1193Provider;
+  account: Address;
+}) {
+  const wallet = getWalletClient(args.providerWallet, args.account);
+  const hash = await wallet.writeContract({
+    address: ERC8183_ADDRESSES.commerce,
+    abi: COMMERCE_ABI,
+    functionName: "claimRefund",
+    args: [args.jobId],
     chain: undefined,
   });
   return { hash, receipt: await publicClient.waitForTransactionReceipt({ hash }) };
