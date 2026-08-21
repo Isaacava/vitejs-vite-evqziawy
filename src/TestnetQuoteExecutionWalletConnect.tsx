@@ -133,6 +133,12 @@ export default function TestnetQuoteExecutionWalletConnect() {
       (step.id === "fund" && (!confirmed.set_budget || (approvalRequired && !confirmed.approve))),
   })), [rawSteps, confirmed, approvalRequired]);
 
+  const requiredSteps = useMemo(() => steps.filter((step) => Boolean(step.tx)), [steps]);
+  const confirmedRequired = useMemo(
+    () => requiredSteps.filter((step) => confirmed[step.id]).length,
+    [requiredSteps, confirmed],
+  );
+
   async function syncReceipt(step: TestnetTransactionStep, receipt: TestnetConfirmedReceipt) {
     if (!active) throw new Error("Active Testnet mission context is missing.");
 
@@ -233,7 +239,10 @@ export default function TestnetQuoteExecutionWalletConnect() {
             </section>
 
             <section className="console-card console-plan-card">
-              <div className="console-section-head"><span>ON-CHAIN TESTNET EXECUTION</span><b>{Object.values(confirmed).filter(Boolean).length}/5 CONFIRMED</b></div>
+              <div className="console-section-head">
+                <span>ON-CHAIN TESTNET EXECUTION</span>
+                <b>{confirmedRequired}/{requiredSteps.length} REQUIRED CONFIRMED</b>
+              </div>
               <p className="console-evidence">The first step creates the ERC-8183 job and establishes the real chain job ID. Register, budget, approval and funding remain locked until their dependencies are confirmed.</p>
               <TestnetOnchainTransactionRunner steps={steps} onConfirmed={syncReceipt} />
             </section>
