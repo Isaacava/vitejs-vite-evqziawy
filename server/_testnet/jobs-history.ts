@@ -6,6 +6,12 @@ import { getAuthenticatedUser, serverClient } from "../../src/server/authHandler
 const COMMERCE = "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address;
 const COMMERCE_ABI = [{
   type: "function",
+  name: "jobCounter",
+  stateMutability: "view",
+  inputs: [],
+  outputs: [{ name: "", type: "uint256" }],
+}, {
+  type: "function",
   name: "getJob",
   stateMutability: "view",
   inputs: [{ name: "jobId", type: "uint256" }],
@@ -28,8 +34,56 @@ const COMMERCE_ABI = [{
   }],
 }] as const;
 
-const publicClient = createPublicClient({ chain: bscTestnet, transport: http("https://bsc-testnet-rpc.publicnode.com") });
-const STATUS: Record<number, string> = { 0: "OPEN", 1: "FUNDED", 2: "SUBMITTED", 3: "COMPLETED", 4: "REJECTED", 5: "EXPIRED" };
+const publicClient = createPublicClient({
+  chain: bscTestnet,
+  transport: http("https://bsc-testnet-rpc.publicnode.com"),
+});
+
+const STATUS: Record<number, string> = {
+  0: "OPEN",
+  1: "FUNDED",
+  2: "SUBMITTED",
+  3: "COMPLETED",
+  4: "REJECTED",
+  5: "EXPIRED",
+};
+
+const TERMINAL = new Set(["COMPLETED", "REJECTED", "EXPIRED"]);
+const BATCH_SIZE = 25;
+const MAX_SCAN = 2000;
+
+type ChainJob = {
+  id: bigint;
+  client: Address;
+  provider: Address;
+  evaluator: Address;
+  description: string;
+  budget: bigint;
+  expiredAt: bigint;
+  status: number;
+  hook: Address;
+  submittedAt: bigint;
+  deliverable: `0x${string}`;
+};
+
+function serializeChainJob(job: ChainJob) {
+  const chainStatus = STATUS[Number(job.status)] || "UNKNOWN";
+  return {
+    chain_job_id: Number(job.id),
+    chain_status: chainStatus,
+    client_wallet: job.client,
+    provider: job.provider,
+    evaluator: job.evaluator,
+    description: job.description,
+    budget_raw: job.budget.toString(),
+    expired_at: Number(job.expiredAt),
+    submitted_at: job.submittedAt > 0n ? new Date(Number(job.submittedAt) * 1000).toISOString() : null,
+    deliverable_hash: job.deliverable,
+    recoverable: !TERMINAL.has(chainStatus),
+    verified_testnet: true,
+    source_of_truth: "erc8183_commerce",
+  };
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
@@ -38,94 +92,124 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!auth) return res.status(401).json({ error: "Authentication required" });
 
   try {
-    const supabase = serverClient();
-    const { data: missions, error: missionError } = await supabase
-      .from("missions")
-      .select("id,title,goal,status,budget,created_at,updated_at")
-      .eq("user_id", auth.user.id)
-      .order("updated_at", { ascending: false })
-      .limit(50);
-    if (missionError) throw new Error(missionError.message);
+    const wallet = String(auth.user.wallet_address).toLowerCase();
+    const jobCounter = await publicClient.readContract({
+      address: COMMERCE,
+      abi: COMMERCE_ABI,
+      functionName: "jobCounter",
+    });
 
-    const missionIds = (missions ?? []).map((mission) => mission.id);
-    if (!missionIds.length) return res.status(200).json({ ok: true, network: "bsc-testnet", chain_id: 97, jobs: [] });
-
-    const { data: tasks, error: taskError } = await supabase
-      .from("mission_tasks")
-      .select("id,mission_id,title,status,budget,chain_job_id,created_at,updated_at")
-      .in("mission_id", missionIds)
-      .order("updated_at", { ascending: false });
-    if (taskError) throw new Error(taskError.message);
-
-    const taskIds = (tasks ?? []).map((task) => task.id);
-    const { data: jobs, error: jobError } = taskIds.length
-      ? await supabase
-          .from("jobs")
-          .select("id,mission_task_id,provider_agent_id,client_wallet,status,budget,chain_job_id,chain_status,created_at,funded_at,submitted_at,terminal_at,updated_at")
-          .in("mission_task_id", taskIds)
-          .not("chain_job_id", "is", null)
-          .order("updated_at", { ascending: false })
-      : { data: [], error: null };
-    if (jobError) throw new Error(jobError.message);
-
-    const missionById = new Map((missions ?? []).map((mission) => [mission.id, mission]));
-    const taskById = new Map((tasks ?? []).map((task) => [task.id, task]));
-    const jobsOut: Array<Record<string, unknown>> = [];
-
-    for (const job of jobs ?? []) {
-      if (job.chain_job_id == null) continue;
-      let chainJob: any;
-      try {
-        chainJob = await publicClient.readContract({
-          address: COMMERCE,
-          abi: COMMERCE_ABI,
-          functionName: "getJob",
-          args: [BigInt(job.chain_job_id)],
-        });
-      } catch {
-        continue;
-      }
-      if (!chainJob || chainJob.id === 0n) continue;
-      if (String(chainJob.client).toLowerCase() !== String(auth.user.wallet_address).toLowerCase()) continue;
-
-      const task = taskById.get(job.mission_task_id);
-      const mission = task ? missionById.get(task.mission_id) : undefined;
-      if (!mission) continue;
-
-      const chainStatus = STATUS[Number(chainJob.status)] || "UNKNOWN";
-      const chainStatusLower = chainStatus.toLowerCase();
-      const hasSubmittedChainState = Number(chainJob.status) === 2;
-      const submittedAt = hasSubmittedChainState && chainJob.submittedAt > 0n
-        ? new Date(Number(chainJob.submittedAt) * 1000).toISOString()
-        : job.submitted_at;
-
-      jobsOut.push({
-        id: job.id,
-        mission_id: mission.id,
-        mission_title: mission.title ?? "Untitled mission",
-        mission_status: mission.status ?? "unknown",
-        task_title: task?.title ?? "Marketplace task",
-        // The ERC-8183 chain status is the lifecycle authority for every state.
-        job_status: chainStatusLower,
-        chain_job_id: job.chain_job_id,
-        chain_status: chainStatus,
-        deliverable_hash: chainJob.deliverable,
-        budget: job.budget,
-        client_wallet: job.client_wallet,
-        created_at: job.created_at,
-        funded_at: job.funded_at,
-        submitted_at: submittedAt,
-        terminal_at: ["completed", "rejected", "expired"].includes(chainStatusLower)
-          ? job.terminal_at ?? job.updated_at
-          : job.terminal_at,
-        updated_at: job.updated_at,
-        recoverable: !["COMPLETED", "REJECTED", "EXPIRED"].includes(chainStatus),
-        verified_testnet: true,
-      });
+    const latest = Number(jobCounter);
+    if (!Number.isFinite(latest) || latest <= 0) {
+      return res.status(200).json({ ok: true, network: "bsc-testnet", chain_id: 97, source_of_truth: "erc8183_commerce", jobs: [] });
     }
 
-    return res.status(200).json({ ok: true, network: "bsc-testnet", chain_id: 97, jobs: jobsOut });
+    const start = Math.max(1, latest - MAX_SCAN + 1);
+    const ids = Array.from({ length: latest - start + 1 }, (_, index) => BigInt(start + index));
+    const chainJobs: ChainJob[] = [];
+
+    for (let offset = 0; offset < ids.length; offset += BATCH_SIZE) {
+      const batch = ids.slice(offset, offset + BATCH_SIZE);
+      const results = await Promise.all(batch.map(async (id) => {
+        try {
+          return await publicClient.readContract({
+            address: COMMERCE,
+            abi: COMMERCE_ABI,
+            functionName: "getJob",
+            args: [id],
+          });
+        } catch {
+          return null;
+        }
+      }));
+
+      for (const job of results) {
+        if (job && job.id > 0n) chainJobs.push(job as ChainJob);
+      }
+    }
+
+    const userChainJobs = chainJobs.filter((job) =>
+      job.client.toLowerCase() === wallet || job.provider.toLowerCase() === wallet,
+    );
+
+    const supabase = serverClient();
+    const { data: dbJobs } = await supabase
+      .from("jobs")
+      .select("id,mission_task_id,provider_agent_id,budget,status,created_at,funded_at,submitted_at,terminal_at,updated_at,chain_job_id")
+      .not("chain_job_id", "is", null)
+      .in("chain_job_id", userChainJobs.map((job) => Number(job.id)));
+
+    const jobByChainId = new Map((dbJobs ?? []).map((job) => [Number(job.chain_job_id), job]));
+    const taskIds = Array.from(new Set((dbJobs ?? []).map((job) => job.mission_task_id).filter(Boolean)));
+
+    const { data: tasks } = taskIds.length
+      ? await supabase
+          .from("mission_tasks")
+          .select("id,mission_id,title")
+          .in("id", taskIds)
+      : { data: [] };
+
+    const missionIds = Array.from(new Set((tasks ?? []).map((task) => task.mission_id).filter(Boolean)));
+    const { data: missions } = missionIds.length
+      ? await supabase
+          .from("missions")
+          .select("id,title,status")
+          .in("id", missionIds)
+      : { data: [] };
+
+    const taskById = new Map((tasks ?? []).map((task) => [task.id, task]));
+    const missionById = new Map((missions ?? []).map((mission) => [mission.id, mission]));
+
+    const jobs = userChainJobs
+      .sort((a, b) => Number(b.id - a.id))
+      .map((chainJob) => {
+        const chain = serializeChainJob(chainJob);
+        const db = jobByChainId.get(Number(chainJob.id));
+        const task = db ? taskById.get(db.mission_task_id) : undefined;
+        const mission = task ? missionById.get(task.mission_id) : undefined;
+        const submitted = ["SUBMITTED", "COMPLETED", "REJECTED"].includes(chain.chain_status);
+
+        return {
+          ...chain,
+          id: db?.id ?? null,
+          mission_id: mission?.id ?? null,
+          mission_title: mission?.title ?? null,
+          mission_status: mission?.status ?? null,
+          task_title: task?.title ?? chain.description.slice(0, 120),
+          job_status: chain.chain_status.toLowerCase(),
+          submitted_at: submitted && chainJob.submittedAt > 0n ? new Date(Number(chainJob.submittedAt) * 1000).toISOString() : null,
+          created_at: db?.created_at ?? null,
+          funded_at: db?.funded_at ?? null,
+          terminal_at: TERMINAL.has(chain.chain_status) ? (db?.terminal_at ?? null) : null,
+          updated_at: db?.updated_at ?? null,
+          marketplace_recorded: Boolean(db),
+        };
+      });
+
+    const counts = jobs.reduce(
+      (acc, job) => {
+        if (job.chain_status === "COMPLETED" || job.chain_status === "REJECTED" || job.chain_status === "EXPIRED") acc.terminal += 1;
+        else if (job.chain_status === "SUBMITTED") acc.submitted += 1;
+        else acc.active += 1;
+        return acc;
+      },
+      { active: 0, submitted: 0, terminal: 0 },
+    );
+
+    return res.status(200).json({
+      ok: true,
+      network: "bsc-testnet",
+      chain_id: 97,
+      source_of_truth: "erc8183_commerce",
+      scanned_range: { from: start, to: latest },
+      counts,
+      jobs,
+    });
   } catch (error) {
-    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to load Testnet job history" });
+    console.error("Testnet chain-first job history failed", error);
+    return res.status(500).json({
+      error: error instanceof Error ? error.message : "Unable to load Testnet chain job history",
+      source_of_truth: "erc8183_commerce",
+    });
   }
 }
