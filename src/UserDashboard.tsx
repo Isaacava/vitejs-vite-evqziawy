@@ -110,7 +110,7 @@ export default function UserDashboard() {
     void loadDashboard();
   }, []);
 
-  const activeMissions = useMemo(() => data?.missions.filter((mission) => ["planning", "in_progress", "awaiting_review"].includes(mission.status)) || [], [data]);
+  const activeMissions = useMemo(() => data?.missions.filter((mission) => ["planning", "in_progress", "submitted", "awaiting_review"].includes(mission.status)) || [], [data]);
   const recentMissions = useMemo(() => data?.missions.slice(0, 6) || [], [data]);
 
   return (
