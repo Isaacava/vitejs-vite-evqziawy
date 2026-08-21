@@ -17,17 +17,18 @@ const COMMERCE_ABI = [{
       { name: "client", type: "address" },
       { name: "provider", type: "address" },
       { name: "evaluator", type: "address" },
-      { name: "expiredAt", type: "uint256" },
       { name: "description", type: "string" },
       { name: "budget", type: "uint256" },
+      { name: "expiredAt", type: "uint256" },
       { name: "status", type: "uint8" },
-      { name: "deliverable", type: "string" },
       { name: "hook", type: "address" },
+      { name: "submittedAt", type: "uint256" },
+      { name: "deliverable", type: "bytes32" },
     ],
   }],
 }] as const;
 
-const publicClient = createPublicClient({ chain: bscTestnet, transport: http() });
+const publicClient = createPublicClient({ chain: bscTestnet, transport: http("https://bsc-testnet-rpc.publicnode.com") });
 const STATUS: Record<number, string> = { 0: "OPEN", 1: "FUNDED", 2: "SUBMITTED", 3: "COMPLETED", 4: "REJECTED", 5: "EXPIRED" };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -80,7 +81,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           abi: COMMERCE_ABI,
           functionName: "getJob",
           args: [BigInt(job.chain_job_id)],
-          authorizationList: [],
         });
       } catch {
         continue;
@@ -93,20 +93,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!mission) continue;
 
       const chainStatus = STATUS[Number(chainJob.status)] || "UNKNOWN";
+      const hasSubmittedChainState = Number(chainJob.status) === 2;
+      const submittedAt = hasSubmittedChainState && chainJob.submittedAt > 0n
+        ? new Date(Number(chainJob.submittedAt) * 1000).toISOString()
+        : job.submitted_at;
+
       jobsOut.push({
         id: job.id,
         mission_id: mission.id,
         mission_title: mission.title ?? "Untitled mission",
         mission_status: mission.status ?? "unknown",
         task_title: task?.title ?? "Marketplace task",
-        job_status: job.status,
+        job_status: hasSubmittedChainState ? "submitted" : job.status,
         chain_job_id: job.chain_job_id,
         chain_status: chainStatus,
+        deliverable_hash: chainJob.deliverable,
         budget: job.budget,
         client_wallet: job.client_wallet,
         created_at: job.created_at,
         funded_at: job.funded_at,
-        submitted_at: job.submitted_at,
+        submitted_at: submittedAt,
         terminal_at: job.terminal_at,
         updated_at: job.updated_at,
         recoverable: !["COMPLETED", "REJECTED", "EXPIRED"].includes(chainStatus),
