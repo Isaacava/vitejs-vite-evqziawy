@@ -4,6 +4,7 @@ import ReactDOM from "react-dom/client";
 import MarketplaceWorkspace from "./MarketplaceWorkspace";
 import TestnetQuoteExecutionWalletConnect from "./TestnetQuoteExecutionWalletConnect";
 import TestnetQuoteGate from "./TestnetQuoteGate";
+import TestnetProviderSubmit from "./ProviderSubmit";
 import TestnetSandbox from "./TestnetSandbox";
 import TestnetRecovery from "./TestnetRecovery";
 import TestnetJobHistory from "./TestnetJobHistory";
@@ -37,6 +38,7 @@ function TestnetExecutionHandoff() {
 
 function renderApp() {
   if (path === "/testnet/execute") return <TestnetQuoteExecutionWalletConnect />;
+  if (path === "/testnet/provider-submit") return <TestnetProviderSubmit />;
   if (path === "/testnet/quote-gate" && missionId && quoteId) return <TestnetQuoteGate />;
   if (path === "/testnet/recover") return <TestnetRecovery />;
   if (path === "/testnet/jobs") return <TestnetJobHistory />;
