@@ -4,7 +4,7 @@ import { bscTestnet } from "viem/chains";
 import { getAuthenticatedUser, serverClient } from "../../src/server/authHandlers.js";
 
 const COMMERCE = "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address;
-const ROUTER = "0xd7d36d66d2f1b608a0f943f722d27e3744f66f25" as Address;
+const ROUTER = "0x6d948b47614dbfbbf97a5e3fd9b410deeab44f17" as Address;
 const COMMERCE_ABI = [{
   type: "function",
   name: "getJob",
@@ -28,7 +28,7 @@ const COMMERCE_ABI = [{
     ],
   }],
 }] as const;
-const client = createPublicClient({ chain: bscTestnet, transport: http() });
+const client = createPublicClient({ chain: bscTestnet, transport: http("https://bsc-testnet-rpc.publicnode.com") });
 const CHAIN_STATUS: Record<number, "open" | "funded" | "submitted" | "completed" | "rejected" | "expired"> = { 0: "open", 1: "funded", 2: "submitted", 3: "completed", 4: "rejected", 5: "expired" };
 function isTerminal(status: number) { return status === 3 || status === 4 || status === 5; }
 
@@ -54,7 +54,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!task) return res.status(403).json({ error: "Job does not belong to this mission" });
   const receipt = await client.getTransactionReceipt({ hash: txHash as Hex });
   if (receipt.status !== "success") return res.status(409).json({ error: "Settlement transaction reverted", tx_hash: txHash, status: receipt.status });
-  if (!receipt.to || receipt.to.toLowerCase() !== ROUTER.toLowerCase()) return res.status(409).json({ error: "Transaction target is not the testnet ERC-8183 router", expected_target: ROUTER, actual_target: receipt.to });
+  if (!receipt.to || receipt.to.toLowerCase() !== ROUTER.toLowerCase()) return res.status(409).json({ error: "Transaction target is not the fresh testnet ERC-8183 router", expected_target: ROUTER, actual_target: receipt.to });
   const chainJob = await client.readContract({ address: COMMERCE, abi: COMMERCE_ABI, functionName: "getJob", args: [BigInt(chainJobId)] });
   if (!chainJob || chainJob.id === 0n) return res.status(409).json({ error: "Chain job was not found" });
   if (chainJob.client.toLowerCase() !== auth.user.wallet_address.toLowerCase()) return res.status(403).json({ error: "Chain job client does not match the authenticated wallet" });
@@ -64,7 +64,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!isTerminal(status)) return res.status(409).json({ error: "Settlement receipt confirmed, but the chain job is not terminal", chain_status: chainStatus, onchain_status: status });
   const existingTx = await supabase.from("transactions").select("id").eq("tx_hash", txHash).maybeSingle();
   if (!existingTx.data) {
-    const { error: txError } = await supabase.from("transactions").insert({ mission_id: mission.id, job_id: job.id, tx_hash: txHash, chain_id: 97, kind: "settlement", status: "confirmed", block_number: Number(receipt.blockNumber), metadata: { chain_job_id: chainJobId, chain_status: chainStatus, network: "bsc-testnet", environment: "grid-agent-test" } });
+    const { error: txError } = await supabase.from("transactions").insert({ mission_id: mission.id, job_id: job.id, tx_hash: txHash, chain_id: 97, kind: "settlement", status: "confirmed", block_number: Number(receipt.blockNumber), metadata: { chain_job_id: chainJobId, chain_status: chainStatus, network: "bsc-testnet", environment: "grid-agent-test", router: ROUTER } });
     if (txError) throw new Error(txError.message);
   }
   const now = new Date().toISOString();
@@ -72,7 +72,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (jobUpdateError) throw new Error(jobUpdateError.message);
   const verdict = chainStatus === "completed" ? "approve" : "reject";
   const { data: evaluation } = await supabase.from("evaluations").select("id").eq("job_id", job.id).maybeSingle();
-  const evidence = { source: "erc8183_chain", tx_hash: txHash, chain_job_id: chainJobId, chain_status: chainStatus, block_number: Number(receipt.blockNumber), deliverable: chainJob.deliverable || null, chain_id: 97, environment: "grid-agent-test" };
+  const evidence = { source: "erc8183_chain", tx_hash: txHash, chain_job_id: chainJobId, chain_status: chainStatus, block_number: Number(receipt.blockNumber), deliverable: chainJob.deliverable || null, chain_id: 97, environment: "grid-agent-test", router: ROUTER };
   if (evaluation?.id) await supabase.from("evaluations").update({ verdict, evidence, updated_at: now }).eq("id", evaluation.id);
   else await supabase.from("evaluations").insert({ job_id: job.id, verdict, evaluator_address: chainJob.evaluator, evidence, notes: "Terminal outcome verified from the isolated BSC Testnet ERC-8183 Grid Agent job." });
   const paymentStatus = chainStatus === "completed" ? "released" : "refunded";
@@ -80,8 +80,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (payment?.id) await supabase.from("payments").update({ status: paymentStatus, tx_hash: txHash, updated_at: now }).eq("id", payment.id);
   if (job.provider_agent_id) {
     const existingRep = await supabase.from("reputation").select("id").eq("job_id", job.id).maybeSingle();
-    if (!existingRep.data) await supabase.from("reputation").insert({ agent_id: job.provider_agent_id, job_id: job.id, score: chainStatus === "completed" ? 100 : 0, source: "platform-testnet", feedback: { outcome: chainStatus, verified: true, tx_hash: txHash, chain_job_id: chainJobId, chain_id: 97, environment: "grid-agent-test" } });
+    if (!existingRep.data) await supabase.from("reputation").insert({ agent_id: job.provider_agent_id, job_id: job.id, score: chainStatus === "completed" ? 100 : 0, source: "platform-testnet", feedback: { outcome: chainStatus, verified: true, tx_hash: txHash, chain_job_id: chainJobId, chain_id: 97, environment: "grid-agent-test", router: ROUTER } });
   }
-  await supabase.from("user_activity").insert({ user_id: auth.user.id, mission_id: mission.id, job_id: job.id, type: "testnet_settlement_synced", title: `Testnet settlement ${chainStatus}`, description: `Verified isolated BSC Testnet Grid Agent state: ${chainStatus}.`, metadata: { tx_hash: txHash, chain_job_id: chainJobId, chain_status: chainStatus, block_number: Number(receipt.blockNumber), chain_id: 97, environment: "grid-agent-test" } });
-  return res.status(200).json({ ok: true, network: "bsc-testnet", chain_id: 97, environment: "grid-agent-test", tx_hash: txHash, block_number: receipt.blockNumber.toString(), chain_job_id: chainJobId, chain_status: chainStatus, evaluation_verdict: verdict, payment_status: paymentStatus, reputation_recorded: !!job.provider_agent_id, note: "Testnet-only settlement endpoint. It never reads or writes against production Mainnet ERC-8183 contracts." });
+  await supabase.from("user_activity").insert({ user_id: auth.user.id, mission_id: mission.id, job_id: job.id, type: "testnet_settlement_synced", title: `Testnet settlement ${chainStatus}`, description: `Verified isolated BSC Testnet Grid Agent state: ${chainStatus}.`, metadata: { tx_hash: txHash, chain_job_id: chainJobId, chain_status: chainStatus, block_number: Number(receipt.blockNumber), chain_id: 97, environment: "grid-agent-test", router: ROUTER } });
+  return res.status(200).json({ ok: true, network: "bsc-testnet", chain_id: 97, environment: "grid-agent-test", tx_hash: txHash, block_number: receipt.blockNumber.toString(), chain_job_id: chainJobId, chain_status: chainStatus, evaluation_verdict: verdict, payment_status: paymentStatus, reputation_recorded: !!job.provider_agent_id, router: ROUTER, note: "Testnet-only settlement endpoint. It never reads or writes against production Mainnet ERC-8183 contracts." });
 }
