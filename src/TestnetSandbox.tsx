@@ -5,8 +5,8 @@ import { connectTestnetWalletAndSignIn, connectTestnetWallet, getTestnetConnecte
 const TESTNET_CHAIN_ID_DECIMAL = "97";
 const TESTNET_CONTRACTS = {
   commerce: "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de",
-  router: "0xd7d36d66d2f1b608a0f943f722d27e3744f66f25",
-  policy: "0x4f4678d4439fec812ac7674bb3efb4c8f5fb78a6",
+  router: "0x6d948b47614dbfbbf97a5e3fd9b410deeab44f17",
+  policy: "0xc4f85d602235e14a45fd1d9794c4092af762b1a6",
 };
 
 const compact = (value?: string | null) => value ? `${value.slice(0, 8)}…${value.slice(-6)}` : "—";
@@ -162,7 +162,10 @@ export default function TestnetSandbox() {
         <header className="console-nav">
           <a href="/testnet" className="console-brand">AgentMarket Testnet</a>
           <span>TESTNET SANDBOX</span>
-          <a href="/app">Open Testnet marketplace →</a>
+          <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <a href="/testnet/jobs">Missions →</a>
+            <a href="/app">Open Testnet marketplace →</a>
+          </div>
         </header>
 
         {error && <div className="console-alert console-alert-error">{error}</div>}
@@ -208,7 +211,10 @@ export default function TestnetSandbox() {
         <section className="console-card console-plan-card">
           <div className="console-section-head"><span>FULL TEST</span><b>{walletReady && authState === "ready" ? "READY TO START" : "COMPLETE CHECKS FIRST"}</b></div>
           <p className="console-evidence">The end-to-end Testnet flow is: discover Grid Agent → request quote → accept quote → create ERC-8183 job → register → budget → approve → fund → provider executes → submit deliverable → settle → evaluation → reputation.</p>
-          <a className="console-brass-button" href="/app" style={{ pointerEvents: walletReady && authState === "ready" ? "auto" : "none", opacity: walletReady && authState === "ready" ? 1 : 0.45, display: "inline-flex", textDecoration: "none" }}>Enter Testnet marketplace →</a>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <a className="console-brass-button" href="/testnet/jobs" style={{ textDecoration: "none", display: "inline-flex" }}>View Missions →</a>
+            <a className="console-brass-button" href="/app" style={{ pointerEvents: walletReady && authState === "ready" ? "auto" : "none", opacity: walletReady && authState === "ready" ? 1 : 0.45, display: "inline-flex", textDecoration: "none" }}>Enter Testnet marketplace →</a>
+          </div>
         </section>
       </div>
     </main>
