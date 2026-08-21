@@ -79,6 +79,13 @@ export const COMMERCE_ABI = [
   },
   {
     type: "function",
+    name: "claimRefund",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "jobId", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
     name: "paymentToken",
     stateMutability: "view",
     inputs: [],
@@ -159,6 +166,51 @@ export const ROUTER_ABI = [
       { name: "optParams", type: "bytes" },
     ],
     outputs: [],
+  },
+  {
+    type: "function",
+    name: "markExpired",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "jobId", type: "uint256" }],
+    outputs: [],
+  },
+] as const;
+
+export const POLICY_ABI = [
+  {
+    type: "function",
+    name: "dispute",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "jobId", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "voteReject",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "jobId", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "check",
+    stateMutability: "view",
+    inputs: [{ name: "jobId", type: "uint256" }],
+    outputs: [{ name: "verdict", type: "uint8" }],
+  },
+  {
+    type: "function",
+    name: "disputeWindow",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "voteQuorum",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
   },
 ] as const;
 
