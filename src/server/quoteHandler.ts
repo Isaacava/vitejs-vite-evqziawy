@@ -32,6 +32,43 @@ function negotiateUrl(endpointUrl: string) {
   return endpoint.toString();
 }
 
+function erc8183BaseUrl(endpointUrl: string) {
+  const endpoint = new URL(endpointUrl);
+  endpoint.pathname = endpoint.pathname.replace(/\/+$/, "");
+  if (endpoint.pathname.endsWith("/negotiate")) endpoint.pathname = endpoint.pathname.slice(0, -"/negotiate".length);
+  if (!endpoint.pathname.endsWith("/erc8183")) endpoint.pathname = `${endpoint.pathname}/erc8183`;
+  return endpoint;
+}
+
+async function probeProvider(endpointUrl: string) {
+  const base = erc8183BaseUrl(endpointUrl);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+  try {
+    const [healthResponse, statusResponse] = await Promise.all([
+      fetch(new URL(`${base.pathname}/health`, base).toString(), {
+        headers: { accept: "application/json" },
+        signal: controller.signal,
+      }),
+      fetch(new URL(`${base.pathname}/status`, base).toString(), {
+        headers: { accept: "application/json" },
+        signal: controller.signal,
+      }),
+    ]);
+
+    if (!healthResponse.ok) throw new Error(`Provider health probe returned HTTP ${healthResponse.status}`);
+    if (!statusResponse.ok) throw new Error(`Provider status probe returned HTTP ${statusResponse.status}`);
+
+    const health = await healthResponse.json() as Record<string, unknown>;
+    const status = await statusResponse.json() as Record<string, unknown>;
+    if (health.status !== "ok" || status.status !== "ok") throw new Error("Provider reported a non-ready Testnet status");
+    if (Number(status.chain_id) !== 97 || status.network !== "bsc-testnet") throw new Error("Provider is not configured for BSC Testnet");
+    return status;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function asString(value: unknown, fallback = "") {
   return typeof value === "string" ? value.trim() : fallback;
 }
@@ -132,6 +169,12 @@ export async function quoteHandler(req: VercelRequest, res: VercelResponse) {
     if (!endpoint?.endpoint_url) return res.status(409).json({ error: "Agent has no ERC-8183 provider endpoint" });
     if (endpoint.status !== "online") return res.status(409).json({ error: "Agent provider endpoint is not currently healthy" });
 
+    const providerStatus = await probeProvider(endpoint.endpoint_url);
+    const providerAddress = asString(providerStatus.agent_address);
+    if (providerAddress && providerAddress.toLowerCase() !== String(agent.owner || "").toLowerCase()) {
+      throw new Error("Live Testnet provider wallet does not match the registered agent owner");
+    }
+
     const quoteId = crypto.randomUUID();
     const requestedAt = new Date();
     const negotiationEndpoint = negotiateUrl(endpoint.endpoint_url);
@@ -210,7 +253,7 @@ export async function quoteHandler(req: VercelRequest, res: VercelResponse) {
     const { error: insertError } = await supabase.from("marketplace_quotes").insert(quote);
     if (insertError) throw new Error(insertError.message);
 
-    return res.status(200).json({ ok: true, quote: { ...quote, endpoint: negotiationEndpoint } });
+    return res.status(200).json({ ok: true, quote: { ...quote, endpoint: negotiationEndpoint, provider_status: providerStatus } });
   } catch (error) {
     return res.status(502).json({ error: error instanceof Error ? error.message : "Provider negotiation failed" });
   }
