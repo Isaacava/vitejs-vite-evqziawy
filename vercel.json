@@ -28,6 +28,7 @@
     { "source": "/api/testnet/:path*", "destination": "/api/testnet?route=:path*" },
     { "source": "/app", "destination": "/index.html" },
     { "source": "/dashboard", "destination": "/index.html" },
+    { "source": "/missions", "destination": "/index.html" },
     { "source": "/permissions", "destination": "/index.html" },
     { "source": "/agent/evidence", "destination": "/index.html" },
     { "source": "/prepare", "destination": "/index.html" },
