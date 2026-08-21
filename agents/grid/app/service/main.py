@@ -63,8 +63,44 @@ def _payment_token() -> str | None:
 
 
 async def _on_funded(job: dict[str, Any]) -> None:
-    deliverable = fulfill_grid_job(job)
-    await _ops.submit_result(job["jobId"], deliverable)
+    job_id = job.get("jobId")
+    logger.info(
+        "ERC8183_EXECUTION_STARTED job_id=%s provider=%s network=%s chain_id=97",
+        job_id,
+        _provider_address(),
+        config["network"],
+    )
+    try:
+        deliverable = fulfill_grid_job(job)
+        logger.info(
+            "ERC8183_DELIVERABLE_GENERATED job_id=%s provider=%s deliverable_type=%s",
+            job_id,
+            _provider_address(),
+            type(deliverable).__name__,
+        )
+        submission = await _ops.submit_result(job_id, deliverable)
+        tx_hash = None
+        if isinstance(submission, str):
+            tx_hash = submission
+        elif hasattr(submission, "hash"):
+            tx_hash = str(submission.hash)
+        elif isinstance(submission, dict):
+            tx_hash = submission.get("hash") or submission.get("tx_hash")
+        logger.info(
+            "ERC8183_SUBMISSION_CONFIRMED job_id=%s provider=%s tx_hash=%s network=%s chain_id=97",
+            job_id,
+            _provider_address(),
+            tx_hash or "unknown",
+            config["network"],
+        )
+    except Exception:
+        logger.exception(
+            "ERC8183_EXECUTION_FAILED job_id=%s provider=%s network=%s chain_id=97",
+            job_id,
+            _provider_address(),
+            config["network"],
+        )
+        raise
 
 
 _watcher_task: asyncio.Task | None = None
@@ -73,6 +109,12 @@ _watcher_task: asyncio.Task | None = None
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     global _watcher_task
+    logger.info(
+        "ERC8183_WATCHER_STARTING provider=%s network=%s chain_id=97 poll_interval=%s",
+        _provider_address(),
+        config["network"],
+        config["poll_interval"],
+    )
     _watcher_task = asyncio.create_task(
         funded_job_watcher(_ops, _on_funded, interval=config["poll_interval"])
     )
@@ -82,6 +124,11 @@ async def lifespan(_: FastAPI):
         if _watcher_task is not None:
             _watcher_task.cancel()
             await asyncio.gather(_watcher_task, return_exceptions=True)
+        logger.info(
+            "ERC8183_WATCHER_STOPPED provider=%s network=%s chain_id=97",
+            _provider_address(),
+            config["network"],
+        )
 
 
 app = FastAPI(
