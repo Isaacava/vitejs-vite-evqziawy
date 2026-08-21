@@ -33,9 +33,9 @@ export async function dashboard(req: VercelRequest, res: VercelResponse) {
     const jobsByMission = new Map<string, any[]>();
     for (const job of jobRows) { const task = taskById.get(job.mission_task_id); if (!task) continue; const list = jobsByMission.get(task.mission_id) || []; list.push({ ...job, task_id: task.id, agent: task.agent_id ? agentById.get(task.agent_id) : null }); jobsByMission.set(task.mission_id, list); }
     const missionViews = missions.map((mission: any) => ({ ...mission, jobs: jobsByMission.get(mission.id) || [] }));
-    const active = missionViews.filter((m: any) => ["planning", "in_progress", "awaiting_review"].includes(m.status)).length;
+    const active = missionViews.filter((m: any) => ["planning", "in_progress", "submitted", "awaiting_review"].includes(m.status)).length;
     const completed = missionViews.filter((m: any) => m.status === "completed").length;
-    const awaitingReview = missionViews.filter((m: any) => m.status === "awaiting_review").length;
+    const awaitingReview = missionViews.filter((m: any) => ["submitted", "awaiting_review"].includes(m.status)).length;
     const escrow = (paymentsResult.data || []).filter((p: any) => ["pending", "funded", "escrowed"].includes(String(p.status))).reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
     return res.status(200).json({ user: auth.user, stats: { active, completed, awaitingReview, escrow }, missions: missionViews, activity: activityResult.data || [], payments: paymentsResult.data || [], notifications: notificationsResult.data || [] });
   } catch (error) { return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to load dashboard" }); }
