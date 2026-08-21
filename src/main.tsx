@@ -33,7 +33,37 @@ function TestnetExecutionHandoff() {
     document.addEventListener("click", onClick, true);
     return () => document.removeEventListener("click", onClick, true);
   }, []);
-  return <MarketplaceWorkspace />;
+
+  return (
+    <div style={{ minHeight: "100vh", position: "relative" }}>
+      <MarketplaceWorkspace />
+      <a
+        href="/missions"
+        aria-label="Open Testnet mission history"
+        style={{
+          position: "fixed",
+          right: 18,
+          top: 18,
+          zIndex: 1000,
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "10px 14px",
+          borderRadius: 999,
+          background: "#15181b",
+          border: "1px solid #343a40",
+          color: "#f0b90b",
+          textDecoration: "none",
+          fontSize: 12,
+          fontWeight: 800,
+          letterSpacing: "0.03em",
+          boxShadow: "0 10px 28px rgba(0,0,0,.3)",
+        }}
+      >
+        Missions →
+      </a>
+    </div>
+  );
 }
 
 function renderApp() {
@@ -41,7 +71,7 @@ function renderApp() {
   if (path === "/testnet/provider-submit") return <TestnetProviderSubmit />;
   if (path === "/testnet/quote-gate" && missionId && quoteId) return <TestnetQuoteGate />;
   if (path === "/testnet/recover") return <TestnetRecovery />;
-  if (path === "/testnet/jobs") return <TestnetJobHistory />;
+  if (path === "/testnet/jobs" || path === "/missions") return <TestnetJobHistory />;
   if (path === "/testnet/providers") return <TestnetProviderReadiness />;
   if (path === "/testnet/preflight") return <TestnetTransactionPreflight />;
   if (path === "/testnet/run") return <TestnetGridRun />;
