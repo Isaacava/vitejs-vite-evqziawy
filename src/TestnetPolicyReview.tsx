@@ -96,12 +96,23 @@ export default function TestnetPolicyReview() {
       setLoading(false);
       return;
     }
+
+    setError("");
     try {
-      const [chain, config, policyVerdict] = await Promise.all([
+      const [chain, config] = await Promise.all([
         readChainJob(BigInt(chainJobId)),
         readPolicyConfig(),
-        readPolicyVerdict(BigInt(chainJobId)),
       ]);
+
+      let nextVerdict: number | null = null;
+      try {
+        nextVerdict = Number(await readPolicyVerdict(BigInt(chainJobId)));
+      } catch {
+        // OptimisticPolicy.check() legitimately reverts while the policy has no
+        // verdict yet. The Commerce job is still valid and should remain visible.
+        nextVerdict = null;
+      }
+
       setJob({
         id: chain.id,
         client: chain.client,
@@ -113,9 +124,11 @@ export default function TestnetPolicyReview() {
       });
       setDisputeWindow(config.disputeWindow);
       setVoteQuorum(config.voteQuorum);
-      setVerdict(Number(policyVerdict));
+      setVerdict(nextVerdict);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to read Testnet ERC-8183 policy state.");
+      setJob(null);
+      setVerdict(null);
+      setError(cause instanceof Error ? cause.message : "Unable to read Testnet ERC-8183 job state.");
     } finally {
       setLoading(false);
     }
@@ -191,12 +204,12 @@ export default function TestnetPolicyReview() {
             </article>
 
             <article className="console-card">
-              <div className="console-section-head"><span>OPTIMISTIC POLICY</span><b>{verdict == null ? "—" : VERDICTS[verdict] || `VERDICT ${verdict}`}</b></div>
+              <div className="console-section-head"><span>OPTIMISTIC POLICY</span><b>{verdict == null ? "PENDING" : VERDICTS[verdict] || `VERDICT ${verdict}`}</b></div>
               <div className="console-stat"><span>Policy</span><strong>{short(ERC8183_ADDRESSES.policy)}</strong></div>
               <div className="console-stat"><span>Dispute window</span><strong>{disputeWindow.toString()} seconds</strong></div>
               <div className="console-stat"><span>Reject quorum</span><strong>{voteQuorum.toString()}</strong></div>
               <div className="console-stat"><span>Dispute deadline</span><strong>{job.submittedAt ? formatDate(disputeDeadline) : "—"}</strong></div>
-              <p className="console-evidence">Silence through the dispute window is approval. A client dispute moves the job into the policy's reject-vote path. Whitelisted voters perform `voteReject`; settlement is permissionless once the policy has a verdict.</p>
+              <p className="console-evidence">A pending `check()` result is normal until the policy reaches a verdict. Silence through the dispute window is approval. A client dispute moves the job into the policy's reject-vote path. Whitelisted voters perform `voteReject`; settlement is permissionless once the policy has a verdict.</p>
             </article>
           </section>
         )}
@@ -212,7 +225,7 @@ export default function TestnetPolicyReview() {
 
         {job && job.status === 2 && (
           <section className="console-card">
-            <div className="console-section-head"><span>POST-SUBMISSION ACTIONS</span><b>{verdict == null ? "CHECKING POLICY" : VERDICTS[verdict] || "UNKNOWN"}</b></div>
+            <div className="console-section-head"><span>POST-SUBMISSION ACTIONS</span><b>{verdict == null ? "POLICY PENDING" : VERDICTS[verdict] || "UNKNOWN"}</b></div>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
               <button className="console-brass-button" disabled={!canDispute || !!working} onClick={() => void runAction("dispute")}>{working === "dispute" ? "Submitting dispute…" : "Dispute submission"}</button>
               <button className="console-brass-button" disabled={!settleReady || !!working} onClick={() => void runAction("settle")}>{working === "settle" ? "Settling…" : "Settle job"}</button>
