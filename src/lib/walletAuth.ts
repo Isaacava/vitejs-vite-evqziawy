@@ -37,6 +37,8 @@ const TESTNET_CHAIN_CONFIG = {
   blockExplorerUrls: ["https://testnet.bscscan.com"],
 };
 
+const AUTH_API = "/api/auth";
+
 let walletProvider: Eip1193Provider | null = null;
 let walletConnectInitPromise: Promise<Eip1193Provider> | null = null;
 
@@ -181,10 +183,18 @@ export function getConnectedWalletProvider() {
   return walletProvider;
 }
 
+async function authRequest(action: "nonce" | "verify" | "me" | "logout", init?: RequestInit) {
+  const separator = AUTH_API.includes("?") ? "&" : "?";
+  return fetch(`${AUTH_API}${separator}action=${action}`, {
+    credentials: "include",
+    ...init,
+  });
+}
+
 export async function connectWalletAndSignIn() {
   const { provider, address: wallet } = await connectWallet();
 
-  const challengeResponse = await fetch("/api/auth/nonce", {
+  const challengeResponse = await authRequest("nonce", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ wallet }),
@@ -197,7 +207,7 @@ export async function connectWalletAndSignIn() {
     params: [challenge.message, wallet],
   });
 
-  const verifyResponse = await fetch("/api/auth/verify", {
+  const verifyResponse = await authRequest("verify", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: challenge.session_id, wallet, signature }),
@@ -209,14 +219,14 @@ export async function connectWalletAndSignIn() {
 }
 
 export async function getCurrentUser() {
-  const response = await fetch("/api/auth/me", { credentials: "include" });
+  const response = await authRequest("me");
   if (!response.ok) return null;
   const data = (await response.json()) as { authenticated: boolean; user?: AuthUser };
   return data.authenticated ? data.user || null : null;
 }
 
 export async function signOut() {
-  await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+  await authRequest("logout", { method: "POST" });
   await disconnectWalletConnectSession(walletProvider);
 }
 
