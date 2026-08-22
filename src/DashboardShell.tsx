@@ -11,9 +11,9 @@ const primaryLinks = [
 ];
 
 const manageLinks = [
-  { label: "Testnet", href: "/testnet" },
-  { label: "Register agent", href: "/agents/register" },
-  { label: "Permissions", href: "/permissions" },
+  { label: "Testnet", href: "/testnet/jobs", detail: "BSC Testnet · Chain 97 sandbox", icon: "◎" },
+  { label: "Register agent", href: "/agents/register", detail: "List a new provider", icon: "+" },
+  { label: "Permissions", href: "/permissions", detail: "Session scopes & allowances", icon: "◈" },
 ];
 
 function currentPage() {
@@ -33,11 +33,17 @@ export default function DashboardShell() {
 
   useEffect(() => {
     const onPopState = () => setPage(currentPage());
+    const onDocumentClick = () => setManageOpen(false);
     window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
+    document.addEventListener("click", onDocumentClick);
+    return () => {
+      window.removeEventListener("popstate", onPopState);
+      document.removeEventListener("click", onDocumentClick);
+    };
   }, []);
 
-  function navigate(href: string) {
+  function navigate(href: string, nextPage?: string) {
+    setPage(nextPage || currentPage());
     setManageOpen(false);
     setMobileOpen(false);
     window.location.assign(href);
@@ -45,9 +51,9 @@ export default function DashboardShell() {
 
   return (
     <div className="market-shell">
-      <header className="market-topbar">
+      <header className="market-topbar" id="agentmarket-topbar">
         <div className="market-topbar-inner">
-          <a className="market-brand" href="/" aria-label="AgentMarket home">
+          <a className="market-brand" href="/dashboard" aria-label="AgentMarket home">
             <span className="market-brand-glyph" aria-hidden="true">
               <svg viewBox="0 0 28 28" fill="none">
                 <rect x="1.5" y="1.5" width="25" height="25" rx="7" stroke="currentColor" strokeWidth="1.5" />
@@ -59,17 +65,14 @@ export default function DashboardShell() {
 
           <nav className="market-primary-nav" aria-label="Workspace navigation">
             {primaryLinks.map((link) => (
-              <button
-                key={link.label}
-                className={`market-nav-link ${page === link.label ? "current" : ""}`}
-                onClick={() => navigate(link.href)}
-              >
+              <button key={link.label} type="button" className={`market-nav-link ${page === link.label ? "current" : ""}`} onClick={() => navigate(link.href, link.label)}>
                 {link.label}
               </button>
             ))}
 
             <div className="market-manage-wrap">
               <button
+                type="button"
                 className={`market-nav-link manage-button ${manageOpen ? "current" : ""}`}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -77,48 +80,34 @@ export default function DashboardShell() {
                 }}
                 aria-expanded={manageOpen}
               >
-                Manage <span className="manage-chevron">⌄</span>
+                <span>Manage</span>
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
               </button>
-              {manageOpen && (
-                <div className="market-manage-menu" onClick={(event) => event.stopPropagation()}>
-                  {manageLinks.map((link) => (
-                    <button key={link.label} onClick={() => navigate(link.href)}>
-                      <strong>{link.label}</strong>
-                      <span>{
-                        link.label === "Testnet"
-                          ? "BSC Testnet sandbox"
-                          : link.label === "Register agent"
-                            ? "List an external provider"
-                            : "Scoped execution permissions"
-                      }</span>
-                    </button>
-                  ))}
-                </div>
-              )}
+              <div className={`market-manage-menu ${manageOpen ? "open" : ""}`}>
+                {manageLinks.map((link) => (
+                  <button key={link.label} type="button" onClick={() => navigate(link.href, link.label)}>
+                    <span className="market-manage-icon">{link.icon}</span>
+                    <span className="market-manage-copy"><strong>{link.label}</strong><small>{link.detail}</small></span>
+                  </button>
+                ))}
+              </div>
             </div>
           </nav>
 
           <div className="market-top-actions">
-            <span className="market-network-pill"><i /> BSC TESTNET · 97</span>
-            <button className="market-mobile-button" onClick={() => setMobileOpen((value) => !value)} aria-label="Open navigation">
-              <span /><span /><span />
+            <span className="market-network-pill"><i /> CHAIN 97</span>
+            <button type="button" className="market-wallet-pill" onClick={() => navigate("/dashboard", "Overview")}>Wallet session</button>
+            <button type="button" className="market-create-btn" onClick={() => navigate("/app", "Discover")}>Create mission <span>+</span></button>
+            <button type="button" className="market-mobile-button" onClick={() => setMobileOpen((value) => !value)} aria-label="Open navigation" aria-expanded={mobileOpen}>
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
             </button>
           </div>
         </div>
 
-        {mobileOpen && (
-          <div className="market-mobile-menu">
-            {primaryLinks.map((link) => (
-              <button key={link.label} className={page === link.label ? "current" : ""} onClick={() => navigate(link.href)}>
-                {link.label}
-              </button>
-            ))}
-            <div className="market-mobile-divider" />
-            {manageLinks.map((link) => (
-              <button key={link.label} onClick={() => navigate(link.href)}>{link.label}</button>
-            ))}
-          </div>
-        )}
+        <div className={`market-mobile-menu ${mobileOpen ? "open" : ""}`}>
+          {primaryLinks.map((link) => <button key={link.label} type="button" onClick={() => navigate(link.href, link.label)}>{link.label}</button>)}
+          {manageLinks.map((link) => <button key={link.label} type="button" onClick={() => navigate(link.href, link.label)}>{link.label}</button>)}
+        </div>
       </header>
 
       <div className="market-crumbbar">
