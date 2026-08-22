@@ -3,6 +3,8 @@ import ReactDOM from "react-dom/client";
 
 import LandingEntry from "./LandingEntry";
 import DashboardShell from "./DashboardShell";
+import AgentRegistration from "./AgentRegistration";
+import SessionPermissions from "./SessionPermissions";
 import MarketplaceWorkspace from "./MarketplaceWorkspace";
 import TestnetQuoteExecutionWalletConnect from "./TestnetQuoteExecutionWalletConnect";
 import TestnetQuoteGate from "./TestnetQuoteGate";
@@ -76,8 +78,13 @@ function renderApp() {
   if (path === "/") return <LandingEntry />;
 
   // Authenticated workspace shell. UserDashboard performs the authenticated
-  // data load; the shell supplies the new navigation/UX around it.
+  // data load; the shell supplies the single workspace navigation/UX.
   if (path === "/dashboard") return <DashboardShell />;
+
+  // These routes already have real screens/components. They should not fall
+  // through to the Testnet sandbox when opened directly from the workspace nav.
+  if (path === "/agents/register") return <AgentRegistration />;
+  if (path === "/permissions") return <SessionPermissions />;
 
   if (path === "/testnet/execute") return <TestnetQuoteExecutionWalletConnect />;
   if (path === "/testnet/provider-submit") return <TestnetProviderSubmit />;
