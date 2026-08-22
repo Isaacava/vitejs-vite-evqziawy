@@ -1,6 +1,8 @@
 import React, { useEffect } from "react";
 import ReactDOM from "react-dom/client";
 
+import LandingEntry from "./LandingEntry";
+import DashboardShell from "./DashboardShell";
 import MarketplaceWorkspace from "./MarketplaceWorkspace";
 import TestnetQuoteExecutionWalletConnect from "./TestnetQuoteExecutionWalletConnect";
 import TestnetQuoteGate from "./TestnetQuoteGate";
@@ -69,6 +71,14 @@ function TestnetExecutionHandoff() {
 }
 
 function renderApp() {
+  // Public entry point: the polished AgentMarket landing page owns wallet
+  // connection/sign-in and redirects to /dashboard after authentication.
+  if (path === "/") return <LandingEntry />;
+
+  // Authenticated workspace shell. UserDashboard performs the authenticated
+  // data load; the shell supplies the new navigation/UX around it.
+  if (path === "/dashboard") return <DashboardShell />;
+
   if (path === "/testnet/execute") return <TestnetQuoteExecutionWalletConnect />;
   if (path === "/testnet/provider-submit") return <TestnetProviderSubmit />;
   if (path === "/testnet/quote-gate" && missionId && quoteId) return <TestnetQuoteGate />;
