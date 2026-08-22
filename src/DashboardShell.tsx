@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import UserDashboard from "./UserDashboard";
+import { signOut } from "./lib/walletAuth";
 import "./dashboard-shell.css";
 
 const primaryLinks = [
@@ -30,6 +31,7 @@ export default function DashboardShell() {
   const [page, setPage] = useState(currentPage);
   const [manageOpen, setManageOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
     const onPopState = () => setPage(currentPage());
@@ -49,8 +51,27 @@ export default function DashboardShell() {
     window.location.assign(href);
   }
 
+  async function handleSignOut() {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await signOut();
+    } finally {
+      window.location.assign("/");
+    }
+  }
+
   return (
     <div className="market-shell">
+      <style>{`
+        /* UserDashboard still owns its historical auth markup for reuse on
+           its standalone page. Inside this workspace shell, the supplied
+           AgentMarket top-nav is the only global navigation layer. */
+        .market-shell .dashboard-nav {
+          display: none !important;
+        }
+      `}</style>
+
       <header className="market-topbar" id="agentmarket-topbar">
         <div className="market-topbar-inner">
           <a className="market-brand" href="/dashboard" aria-label="AgentMarket home">
@@ -96,8 +117,15 @@ export default function DashboardShell() {
 
           <div className="market-top-actions">
             <span className="market-network-pill"><i /> CHAIN 97</span>
-            <button type="button" className="market-wallet-pill" onClick={() => navigate("/dashboard", "Overview")}>Wallet session</button>
-            <button type="button" className="market-create-btn" onClick={() => navigate("/app", "Discover")}>Create mission <span>+</span></button>
+            <button type="button" className="market-wallet-pill" onClick={() => navigate("/dashboard", "Overview")}>
+              Wallet session
+            </button>
+            <button type="button" className="market-create-btn" onClick={() => navigate("/app", "Discover")}>
+              Create mission <span>+</span>
+            </button>
+            <button type="button" className="market-signout-btn" onClick={() => void handleSignOut()} disabled={signingOut}>
+              {signingOut ? "Signing out…" : "Sign out"}
+            </button>
             <button type="button" className="market-mobile-button" onClick={() => setMobileOpen((value) => !value)} aria-label="Open navigation" aria-expanded={mobileOpen}>
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
             </button>
@@ -107,6 +135,7 @@ export default function DashboardShell() {
         <div className={`market-mobile-menu ${mobileOpen ? "open" : ""}`}>
           {primaryLinks.map((link) => <button key={link.label} type="button" onClick={() => navigate(link.href, link.label)}>{link.label}</button>)}
           {manageLinks.map((link) => <button key={link.label} type="button" onClick={() => navigate(link.href, link.label)}>{link.label}</button>)}
+          <button type="button" onClick={() => void handleSignOut()} disabled={signingOut}>{signingOut ? "Signing out…" : "Sign out"}</button>
         </div>
       </header>
 
