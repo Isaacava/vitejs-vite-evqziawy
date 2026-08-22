@@ -1,114 +1,136 @@
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import UserDashboard from "./UserDashboard";
 import "./dashboard-shell.css";
 
 const primaryLinks = [
-  { label: "Overview", href: "/dashboard", icon: "⌂" },
-  { label: "Discover agents", href: "/app", icon: "⌕" },
-  { label: "Missions", href: "/dashboard?tab=missions", icon: "◫" },
-  { label: "Activity", href: "/dashboard?tab=activity", icon: "◌" },
-  { label: "Payments & escrow", href: "/dashboard?tab=payments", icon: "◇" },
+  { label: "Overview", href: "/dashboard" },
+  { label: "Discover", href: "/app" },
+  { label: "Missions", href: "/dashboard?tab=missions" },
+  { label: "Activity", href: "/dashboard?tab=activity" },
+  { label: "Payments", href: "/dashboard?tab=payments" },
 ];
 
 const manageLinks = [
-  { label: "Testnet", href: "/testnet", icon: "◎" },
-  { label: "Register agent", href: "/agents/register", icon: "+" },
-  { label: "Permissions", href: "/permissions", icon: "◈" },
+  { label: "Testnet", href: "/testnet" },
+  { label: "Register agent", href: "/agents/register" },
+  { label: "Permissions", href: "/permissions" },
 ];
 
+function currentPage() {
+  const path = window.location.pathname;
+  const tab = new URLSearchParams(window.location.search).get("tab");
+  if (path === "/app") return "Discover";
+  if (tab === "missions") return "Missions";
+  if (tab === "activity") return "Activity";
+  if (tab === "payments") return "Payments";
+  return "Overview";
+}
+
 export default function DashboardShell() {
-  const [open, setOpen] = useState(true);
+  const [page, setPage] = useState(currentPage);
+  const [manageOpen, setManageOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const network = useMemo(() => "BSC Testnet", []);
+
+  useEffect(() => {
+    const onPopState = () => setPage(currentPage());
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  function navigate(href: string) {
+    setManageOpen(false);
+    setMobileOpen(false);
+    window.location.assign(href);
+  }
 
   return (
-    <div className={`workspace-shell ${open ? "sidebar-open" : "sidebar-collapsed"}`}>
-      <button
-        className={`workspace-backdrop ${mobileOpen ? "visible" : ""}`}
-        aria-label="Close navigation"
-        onClick={() => setMobileOpen(false)}
-      />
-
-      <aside className={`workspace-sidebar ${mobileOpen ? "mobile-visible" : ""}`} aria-label="AgentMarket workspace navigation">
-        <div className="workspace-brand-row">
-          <a className="workspace-sidebar-brand" href="/dashboard" aria-label="AgentMarket home">
-            <span className="workspace-logo">A</span>
-            <span className="workspace-brand-wordmark">AgentMarket</span>
+    <div className="market-shell">
+      <header className="market-topbar">
+        <div className="market-topbar-inner">
+          <a className="market-brand" href="/" aria-label="AgentMarket home">
+            <span className="market-brand-glyph" aria-hidden="true">
+              <svg viewBox="0 0 28 28" fill="none">
+                <rect x="1.5" y="1.5" width="25" height="25" rx="7" stroke="currentColor" strokeWidth="1.5" />
+                <path d="M7 18L11.4 10.2L15.2 15L20.8 7.7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </span>
+            <span>AgentMarket</span>
           </a>
-          <button className="workspace-collapse-btn" onClick={() => setOpen((value) => !value)} aria-label={open ? "Collapse sidebar" : "Expand sidebar"}>
-            {open ? "‹" : "›"}
-          </button>
-        </div>
 
-        <div className="workspace-network-card">
-          <span className="workspace-network-dot" />
-          <div>
-            <strong>{network}</strong>
-            <small>Chain 97 · Test environment</small>
-          </div>
-          <span className="workspace-network-chevron">⌄</span>
-        </div>
+          <nav className="market-primary-nav" aria-label="Workspace navigation">
+            {primaryLinks.map((link) => (
+              <button
+                key={link.label}
+                className={`market-nav-link ${page === link.label ? "current" : ""}`}
+                onClick={() => navigate(link.href)}
+              >
+                {link.label}
+              </button>
+            ))}
 
-        <div className="workspace-section-label">WORKSPACE</div>
-        <nav className="workspace-nav">
-          {primaryLinks.map((link) => (
-            <a className="workspace-nav-link" key={link.label} href={link.href} onClick={() => setMobileOpen(false)}>
-              <span className="workspace-nav-icon">{link.icon}</span>
-              <span className="workspace-nav-text">{link.label}</span>
-            </a>
-          ))}
-        </nav>
-
-        <div className="workspace-section-row">
-          <span>MANAGE</span>
-          <span>⌄</span>
-        </div>
-        <nav className="workspace-nav workspace-nav-manage">
-          {manageLinks.map((link) => (
-            <a className="workspace-nav-link" key={link.label} href={link.href} onClick={() => setMobileOpen(false)}>
-              <span className="workspace-nav-icon">{link.icon}</span>
-              <span className="workspace-nav-text">{link.label}</span>
-            </a>
-          ))}
-        </nav>
-
-        <div className="workspace-sidebar-spacer" />
-
-        <div className="workspace-help-card">
-          <span>TESTNET MODE</span>
-          <strong>Use faucet funds only.</strong>
-          <small>Testnet jobs, balances and contracts never mix with Mainnet.</small>
-        </div>
-
-        <div className="workspace-sidebar-foot">
-          <div className="workspace-avatar">W</div>
-          <div className="workspace-user-copy">
-            <strong>Wallet session</strong>
-            <small>Authenticated</small>
-          </div>
-          <button className="workspace-more-btn" aria-label="Account menu">•••</button>
-        </div>
-      </aside>
-
-      <div className="workspace-main">
-        <header className="workspace-topbar">
-          <div className="workspace-topbar-left">
-            <button className="workspace-mobile-btn" onClick={() => setMobileOpen(true)} aria-label="Open navigation">☰</button>
-            <div>
-              <span className="workspace-breadcrumb">WORKSPACE / <b>OVERVIEW</b></span>
-              <h1>Mission control</h1>
+            <div className="market-manage-wrap">
+              <button
+                className={`market-nav-link manage-button ${manageOpen ? "current" : ""}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setManageOpen((value) => !value);
+                }}
+                aria-expanded={manageOpen}
+              >
+                Manage <span className="manage-chevron">⌄</span>
+              </button>
+              {manageOpen && (
+                <div className="market-manage-menu" onClick={(event) => event.stopPropagation()}>
+                  {manageLinks.map((link) => (
+                    <button key={link.label} onClick={() => navigate(link.href)}>
+                      <strong>{link.label}</strong>
+                      <span>{
+                        link.label === "Testnet"
+                          ? "BSC Testnet sandbox"
+                          : link.label === "Register agent"
+                            ? "List an external provider"
+                            : "Scoped execution permissions"
+                      }</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-          </div>
-          <div className="workspace-topbar-right">
-            <a className="workspace-activity-chip" href="/dashboard?tab=activity"><span /> Live activity</a>
-            <a className="workspace-create-btn" href="/app">Create mission <span>+</span></a>
-          </div>
-        </header>
+          </nav>
 
-        <main className="workspace-content">
-          <UserDashboard />
-        </main>
+          <div className="market-top-actions">
+            <span className="market-network-pill"><i /> BSC TESTNET · 97</span>
+            <button className="market-mobile-button" onClick={() => setMobileOpen((value) => !value)} aria-label="Open navigation">
+              <span /><span /><span />
+            </button>
+          </div>
+        </div>
+
+        {mobileOpen && (
+          <div className="market-mobile-menu">
+            {primaryLinks.map((link) => (
+              <button key={link.label} className={page === link.label ? "current" : ""} onClick={() => navigate(link.href)}>
+                {link.label}
+              </button>
+            ))}
+            <div className="market-mobile-divider" />
+            {manageLinks.map((link) => (
+              <button key={link.label} onClick={() => navigate(link.href)}>{link.label}</button>
+            ))}
+          </div>
+        )}
+      </header>
+
+      <div className="market-crumbbar">
+        <div className="market-page-width">
+          <span>WORKSPACE / <b>{page}</b></span>
+          <span className="market-testnet-note">TESTNET MODE — FAUCET FUNDS ONLY</span>
+        </div>
       </div>
+
+      <main className="market-page-width market-workspace-content">
+        <UserDashboard />
+      </main>
     </div>
   );
 }
