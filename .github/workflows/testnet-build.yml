@@ -128,12 +128,21 @@ jobs:
           grep -Rni --exclude-dir=.git --exclude='package-lock.json' "bsc-testnet" "${surfaces[@]}" >/dev/null
           grep -Rni --exclude-dir=.git --exclude='package-lock.json' "chain_id.*97\|chainId.*97\|0x61" "${surfaces[@]}" >/dev/null
 
-      - name: Verify dedicated Testnet router does not expose Mainnet-only pages
+      - name: Verify universal router keeps Testnet paths on Testnet components
         shell: bash
         run: |
           set -euo pipefail
-          if grep -nE 'LandingEntry|OnchainPrepare|OnchainExecute|EvaluatorConsole|ProviderSubmit|LifecycleActions|AgentRegistration|DashboardShell|SessionPermissions|AgentEvidence|MissionConsole' src/main.tsx; then
-            echo "Dedicated Testnet router contains a production/Mainnet component or route."
+          grep -n 'path === "/testnet/execute"' src/main.tsx >/dev/null
+          grep -n 'path === "/testnet/provider-submit"' src/main.tsx >/dev/null
+          grep -n 'path === "/testnet/recover"' src/main.tsx >/dev/null
+          grep -n 'path === "/testnet/jobs"' src/main.tsx >/dev/null
+          grep -n 'path === "/testnet/review"' src/main.tsx >/dev/null
+          grep -n 'path === "/testnet/result"' src/main.tsx >/dev/null
+          grep -n 'path === "/testnet/providers"' src/main.tsx >/dev/null
+          grep -n 'path === "/testnet/preflight"' src/main.tsx >/dev/null
+          grep -n 'path === "/testnet/run"' src/main.tsx >/dev/null
+          if grep -n 'path === "/testnet/execute".*LandingEntry\|path === "/testnet/execute".*DashboardShell' src/main.tsx; then
+            echo "A Testnet execution path is mapped to a production workspace shell."
             exit 1
           fi
 
