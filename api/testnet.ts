@@ -7,6 +7,7 @@ async function loadHandler(route: string): Promise<Handler | null> {
     case "active-quote": return (await import("../api/testnet/active-quote.js")).default as Handler;
     case "erc8183-settlement": return (await import("../server/_testnet/erc8183-settlement.js")).default as Handler;
     case "erc8183": return (await import("../server/_testnet/erc8183.js")).default as Handler;
+    case "job-result": return (await import("../server/_testnet/job-result.js")).default as Handler;
     case "job-status": return (await import("../server/_testnet/job-status.js")).default as Handler;
     case "jobs-history": return (await import("../server/_testnet/jobs-history.js")).default as Handler;
     case "match": return (await import("../server/_testnet/match.js")).default as Handler;
