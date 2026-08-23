@@ -36,7 +36,7 @@ export async function dashboard(req: VercelRequest, res: VercelResponse) {
     const taskIds = taskRows.map((t: any) => t.id);
     let jobRows: any[] = [];
     if (taskIds.length) {
-      const { data, error } = await supabase.from("jobs").select("id,mission_task_id,provider_agent_id,status,chain_status,budget,chain_job_id,client_wallet,updated_at").in("mission_task_id", taskIds).order("updated_at", { ascending: false });
+      const { data, error } = await supabase.from("jobs").select("id,mission_task_id,provider_agent_id,status,budget,chain_job_id,chain_status,chain_last_synced_at,chain_tx_hash,chain_error,client_wallet,updated_at").in("mission_task_id", taskIds).order("updated_at", { ascending: false });
       if (error) throw new Error(error.message);
       jobRows = data || [];
     }
