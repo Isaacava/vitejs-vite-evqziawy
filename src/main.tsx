@@ -49,7 +49,7 @@ function TestnetExecutionHandoff() {
 function renderApp() {
   if (path === "/" && jobId) return <WorkspaceShell><MissionConsole /></WorkspaceShell>;
   if (path === "/") return <LandingEntry />;
-  if (path === "/dashboard") return <WorkspaceShell><DashboardShell /></WorkspaceShell>;
+  if (path === "/dashboard") return <DashboardShell />;
   if (path === "/agents/register") return <WorkspaceShell><AgentRegistration /></WorkspaceShell>;
   if (path === "/permissions") return <WorkspaceShell><SessionPermissions /></WorkspaceShell>;
 
