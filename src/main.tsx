@@ -6,6 +6,7 @@ import DashboardShell from "./DashboardShell";
 import AgentRegistration from "./AgentRegistration";
 import SessionPermissions from "./SessionPermissions";
 import MarketplaceWorkspace from "./MarketplaceWorkspace";
+import WorkspaceShell from "./WorkspaceShell";
 import TestnetQuoteExecutionWalletConnect from "./TestnetQuoteExecutionWalletConnect";
 import TestnetQuoteGate from "./TestnetQuoteGate";
 import TestnetProviderSubmit from "./ProviderSubmit";
@@ -41,51 +42,33 @@ function TestnetExecutionHandoff() {
   }, []);
 
   return (
-    <div style={{ minHeight: "100vh", position: "relative" }}>
+    <WorkspaceShell>
       <MarketplaceWorkspace />
-      <a
-        href="/missions"
-        aria-label="Open Testnet mission history"
-        style={{
-          position: "fixed",
-          right: 18,
-          top: 18,
-          zIndex: 1000,
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 6,
-          padding: "10px 14px",
-          borderRadius: 999,
-          background: "#15181b",
-          border: "1px solid #343a40",
-          color: "#f0b90b",
-          textDecoration: "none",
-          fontSize: 12,
-          fontWeight: 800,
-          letterSpacing: "0.03em",
-          boxShadow: "0 10px 28px rgba(0,0,0,.3)",
-        }}
-      >
-        Missions →
-      </a>
-    </div>
+    </WorkspaceShell>
   );
 }
 
 function renderApp() {
-  // Public entry point: the polished AgentMarket landing page owns wallet
-  // connection/sign-in and redirects to /dashboard after authentication.
   if (path === "/") return <LandingEntry />;
-
-  // Authenticated workspace shell. UserDashboard performs the authenticated
-  // data load; the shell supplies the single workspace navigation/UX.
   if (path === "/dashboard") return <DashboardShell />;
 
-  // These routes already have real screens/components. They should not fall
-  // through to the Testnet sandbox when opened directly from the workspace nav.
-  if (path === "/agents/register") return <AgentRegistration />;
-  if (path === "/permissions") return <SessionPermissions />;
+  if (path === "/agents/register") {
+    return (
+      <WorkspaceShell>
+        <AgentRegistration />
+      </WorkspaceShell>
+    );
+  }
 
+  if (path === "/permissions") {
+    return (
+      <WorkspaceShell>
+        <SessionPermissions />
+      </WorkspaceShell>
+    );
+  }
+
+  if (path === "/testnet") return <TestnetSandbox />;
   if (path === "/testnet/execute") return <TestnetQuoteExecutionWalletConnect />;
   if (path === "/testnet/provider-submit") return <TestnetProviderSubmit />;
   if (path === "/testnet/quote-gate" && missionId && quoteId) return <TestnetQuoteGate />;
