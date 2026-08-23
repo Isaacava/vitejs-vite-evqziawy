@@ -1,4 +1,4 @@
-import { EthereumProvider } from "@walletconnect/ethereum-provider";
+import EthereumProvider from "@walletconnect/ethereum-provider";
 import { BSC_RPC_URL } from "./network";
 
 type Eip1193Provider = {
@@ -7,7 +7,6 @@ type Eip1193Provider = {
   removeListener?: (event: string, handler: (...args: unknown[]) => void) => void;
   disconnect?: () => Promise<void>;
   connect?: (args?: { chains?: number[] }) => Promise<void>;
-  connected?: boolean;
 };
 
 declare global { interface Window { ethereum?: Eip1193Provider } }
@@ -24,7 +23,7 @@ export type AuthUser = {
 export const WALLETCONNECT_PROJECT_ID = "1dbe8fd5e4974ae7c80d074c4082b5a0";
 export const AUTH_CHAIN_ID = 97;
 const AUTH_CHAIN_ID_HEX = `0x${AUTH_CHAIN_ID.toString(16)}`;
-const STORAGE = "agentmarket-testnet-wc-v7";
+const STORAGE = "agentmarket-testnet-wc-v8";
 const TESTNET_CHAIN_CONFIG = {
   chainId: AUTH_CHAIN_ID_HEX,
   chainName: "BNB Smart Chain Testnet",
@@ -34,8 +33,8 @@ const TESTNET_CHAIN_CONFIG = {
 };
 const AUTH_API = "/api/auth";
 
-let providerRef: Eip1193Provider | null = null;
-let initPromise: Promise<Eip1193Provider> | null = null;
+let walletConnectProvider: Eip1193Provider | null = null;
+let walletConnectInitPromise: Promise<Eip1193Provider> | null = null;
 
 function normalizeChainId(value: unknown): number {
   const text = String(value ?? "").trim().toLowerCase();
@@ -48,39 +47,42 @@ async function chainIdOf(provider: Eip1193Provider) {
   return normalizeChainId(await provider.request({ method: "eth_chainId" }));
 }
 
-async function dropProvider(provider: Eip1193Provider | null) {
-  try { await provider?.disconnect?.(); } catch { /* stale session */ }
-  providerRef = null;
-  initPromise = null;
+function getInjectedProvider() {
+  return window.ethereum ?? null;
 }
 
-async function makeProvider(forceFresh = false): Promise<Eip1193Provider> {
-  if (!forceFresh && initPromise) return initPromise;
-
-  initPromise = EthereumProvider.init({
-    projectId: WALLETCONNECT_PROJECT_ID,
-    optionalChains: [AUTH_CHAIN_ID],
-    optionalMethods: ["eth_sendTransaction", "personal_sign"],
-    optionalEvents: ["chainChanged", "accountsChanged"],
-    rpcMap: { [AUTH_CHAIN_ID]: BSC_RPC_URL },
-    showQrModal: true,
-    customStoragePrefix: STORAGE,
-    metadata: {
-      name: "AgentMarket Testnet",
-      description: "AgentMarket BSC Testnet marketplace",
-      url: window.location.origin,
-      icons: [`${window.location.origin}/favicon.svg`],
-    },
-  }).then((provider) => provider as unknown as Eip1193Provider);
-
-  try { return await initPromise; }
-  catch (error) { initPromise = null; throw error; }
+async function getWalletConnectProvider() {
+  if (walletConnectProvider) return walletConnectProvider;
+  if (!walletConnectInitPromise) {
+    walletConnectInitPromise = EthereumProvider.init({
+      projectId: WALLETCONNECT_PROJECT_ID,
+      chains: [AUTH_CHAIN_ID],
+      optionalChains: [AUTH_CHAIN_ID],
+      optionalMethods: ["eth_sendTransaction", "personal_sign"],
+      optionalEvents: ["chainChanged", "accountsChanged"],
+      rpcMap: { [AUTH_CHAIN_ID]: BSC_RPC_URL },
+      showQrModal: true,
+      customStoragePrefix: STORAGE,
+      metadata: {
+        name: "AgentMarket Testnet",
+        description: "AgentMarket BSC Testnet marketplace",
+        url: window.location.origin,
+        icons: [`${window.location.origin}/favicon.svg`],
+      },
+    }).then((provider) => provider as unknown as Eip1193Provider);
+  }
+  walletConnectProvider = await walletConnectInitPromise;
+  return walletConnectProvider;
 }
 
-async function ensureExpectedChain(provider: Eip1193Provider) {
+export async function getWalletProvider() {
+  const injected = getInjectedProvider();
+  if (injected) return injected;
+  return getWalletConnectProvider();
+}
+
+export async function ensureExpectedChain(provider: Eip1193Provider) {
   const current = await chainIdOf(provider);
-
-  // The wallet is already on BSC Testnet. Do nothing except continue.
   if (current === AUTH_CHAIN_ID) return;
 
   try {
@@ -103,68 +105,60 @@ async function ensureExpectedChain(provider: Eip1193Provider) {
       method: "wallet_addEthereumChain",
       params: [TESTNET_CHAIN_CONFIG],
     });
-
-    await provider.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: AUTH_CHAIN_ID_HEX }],
-    });
   }
 
-  const after = await chainIdOf(provider);
-  if (after !== AUTH_CHAIN_ID) {
+  if (await chainIdOf(provider) !== AUTH_CHAIN_ID) {
     throw new Error("Wallet did not switch to BSC Testnet (chain 97). Please approve the Testnet network and try again.");
   }
 }
 
-async function connectProvider(provider: Eip1193Provider) {
-  if (await chainIdOf(provider) === AUTH_CHAIN_ID) return provider;
-
-  if (provider.connect) {
-    await provider.connect({ chains: [AUTH_CHAIN_ID] });
-  }
-
-  await ensureExpectedChain(provider);
-  return provider;
-}
-
 export async function connectWallet() {
-  let provider = providerRef || await makeProvider();
+  const injected = getInjectedProvider();
 
-  try {
-    provider = await connectProvider(provider);
-  } catch (firstError) {
-    // A stale WalletConnect session may not be switchable. Drop only that
-    // session, start a fresh Testnet session, then negotiate chain 97 again.
-    await dropProvider(provider);
-    provider = await makeProvider(true);
-    try {
-      provider = await connectProvider(provider);
-    } catch {
-      throw firstError instanceof Error ? firstError : new Error("Unable to establish a BSC Testnet wallet session.");
+  // Preserve the previously working flow: use the wallet's injected
+  // provider first (MetaMask, Trust Wallet, Binance Wallet, etc.).
+  if (injected) {
+    let accounts = (await injected.request({ method: "eth_accounts" })) as string[];
+    if (!accounts?.[0]) {
+      accounts = (await injected.request({ method: "eth_requestAccounts" })) as string[];
     }
+    await ensureExpectedChain(injected);
+    const wallet = accounts?.[0];
+    if (!wallet) throw new Error("No wallet account was selected.");
+    return { provider: injected, address: wallet };
   }
 
-  let accounts = (await provider.request({ method: "eth_accounts" })) as string[];
-  if (!accounts?.[0]) {
-    if (provider.connect) await provider.connect({ chains: [AUTH_CHAIN_ID] });
-    else await provider.request({ method: "eth_requestAccounts" });
+  // No injected wallet: fall back to WalletConnect.
+  let provider = await getWalletConnectProvider();
+  try {
+    if (provider.connect) {
+      await provider.connect({ chains: [AUTH_CHAIN_ID] });
+    }
     await ensureExpectedChain(provider);
-    accounts = (await provider.request({ method: "eth_accounts" })) as string[];
+  } catch (error) {
+    try { await provider.disconnect?.(); } catch { /* stale session */ }
+    walletConnectProvider = null;
+    walletConnectInitPromise = null;
+    provider = await getWalletConnectProvider();
+    if (provider.connect) await provider.connect({ chains: [AUTH_CHAIN_ID] });
+    await ensureExpectedChain(provider);
   }
 
+  const accounts = (await provider.request({ method: "eth_accounts" })) as string[];
   const wallet = accounts?.[0];
-  if (!wallet) throw new Error("Wallet connected to BSC Testnet but no account was selected.");
+  if (!wallet) throw new Error("No wallet account was selected.");
 
-  providerRef = provider;
+  walletConnectProvider = provider;
   return { provider, address: wallet };
 }
 
 export async function ensureWalletConnectedProvider() { return connectWallet(); }
-export function getWalletProvider() {
-  if (!providerRef) throw new Error("WalletConnect is not connected. Connect your Testnet wallet first.");
-  return providerRef;
+export function getConnectedWalletProvider() {
+  if (getInjectedProvider()) return getInjectedProvider()!;
+  if (!walletConnectProvider) throw new Error("Wallet is not connected. Connect your Testnet wallet first.");
+  return walletConnectProvider;
 }
-export function getConnectedWalletProvider() { return getWalletProvider(); }
+export function getWalletProviderOrThrow() { return getConnectedWalletProvider(); }
 
 async function authRequest(action: "nonce" | "verify" | "me" | "logout", init?: RequestInit) {
   return fetch(`${AUTH_API}?action=${action}`, { credentials: "include", ...init });
@@ -203,10 +197,16 @@ export async function getCurrentUser() {
 
 export async function signOut() {
   try { await authRequest("logout", { method: "POST" }); }
-  finally { await dropProvider(providerRef); }
+  finally {
+    try { await walletConnectProvider?.disconnect?.(); } catch { /* stale session */ }
+    walletConnectProvider = null;
+    walletConnectInitPromise = null;
+  }
 }
 
 export async function resetWalletConnectSession() {
-  await dropProvider(providerRef);
-  return makeProvider(true);
+  try { await walletConnectProvider?.disconnect?.(); } catch { /* stale session */ }
+  walletConnectProvider = null;
+  walletConnectInitPromise = null;
+  return getWalletConnectProvider();
 }
