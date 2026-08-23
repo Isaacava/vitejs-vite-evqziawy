@@ -2,7 +2,18 @@ import { useCallback, useEffect, useState } from "react";
 import "./mission-console.css";
 
 type JobView = {
-  job: { id: string; status: string; description: string; budget: number; chain_job_id: number | null; deliverable: string | null };
+  job: {
+    id: string;
+    status: string;
+    description: string;
+    budget: number;
+    chain_job_id: number | null;
+    chain_status: string | null;
+    chain_last_synced_at: string | null;
+    chain_tx_hash: string | null;
+    chain_error: string | null;
+    deliverable: string | null;
+  };
   task: { id: string; status: string; title: string; role: string } | null;
   mission: { id: string; title: string; goal: string; status: string; category: string } | null;
   evaluation: { verdict: string; notes: string | null; evidence?: { source?: string; decision?: string; reasons?: string[] } | null } | null;
@@ -12,6 +23,16 @@ type JobView = {
 const STEPS = ["open", "funded", "accepted", "in_progress", "submitted", "terminal"];
 const human = (value: string) => value.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 const compact = (value?: string | null) => value ? `${value.slice(0, 8)}…${value.slice(-6)}` : "—";
+function timeAgo(value?: string | null) {
+  if (!value) return "never synced";
+  const diffMs = Date.now() - new Date(value).getTime();
+  const mins = Math.round(diffMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
 
 export default function MissionConsole() {
   const [jobId] = useState(() => new URLSearchParams(window.location.search).get("job") || "");
@@ -77,6 +98,7 @@ export default function MissionConsole() {
 
         {error && <div className="console-alert console-alert-error">{error}</div>}
         {message && <div className="console-alert console-alert-success">{message}</div>}
+        {data?.job.chain_error && <div className="console-alert console-alert-error">Chain sync error: {data.job.chain_error}</div>}
 
         {!data ? <section className="console-card console-loading">Loading mission…</section> : <>
           <section className="console-hero">
@@ -86,7 +108,17 @@ export default function MissionConsole() {
               <p>{data.mission?.goal || data.job.description}</p>
               <div className="console-tags"><span>{human(data.job.status)}</span><span>{data.mission?.category || "general"}</span><span>{data.task ? human(data.task.status) : "Task pending"}</span></div>
             </div>
-            <div className="console-state"><small>WORKFLOW STATE</small><strong>{human(data.job.status)}</strong><span>{data.job.chain_job_id ? `On-chain job #${data.job.chain_job_id}` : "No chain job yet"}</span></div>
+            <div className="console-state">
+              <small>WORKFLOW STATE</small>
+              <strong>{human(data.job.status)}</strong>
+              <span>{data.job.chain_job_id ? `On-chain job #${data.job.chain_job_id}` : "No chain job yet"}</span>
+              {data.job.chain_status && (
+                <span style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed var(--line)", display: "block" }}>
+                  Chain status: <strong style={{ font: "inherit", color: "var(--brass)" }}>{human(data.job.chain_status)}</strong>
+                  <br />Synced {timeAgo(data.job.chain_last_synced_at)}
+                </span>
+              )}
+            </div>
           </section>
 
           <section className="console-timeline">
@@ -112,9 +144,7 @@ export default function MissionConsole() {
                   </div>
                 </div>
               )}
-              {data.job.chain_job_id && data.job.status === "open" && (
-                <a href={`/prepare/execute?mission=${encodeURIComponent(data.mission?.id || "")}`} className="console-dark-button">Continue wallet execution →</a>
-              )}
+              {data.job.chain_job_id && data.job.status === "open" && <a href={`/prepare/execute?mission=${encodeURIComponent(data.mission?.id || "")}`} className="console-dark-button">Continue wallet execution →</a>}
               {data.job.status === "open" ? <button className="console-dark-button" disabled={busy} onClick={() => void action("accept")}>Accept job</button> : null}
               {data.job.status === "accepted" ? <button className="console-dark-button" disabled={busy} onClick={() => void action("start")}>Start execution</button> : null}
               {data.job.status === "in_progress" ? <><textarea value={deliverable} onChange={(event) => setDeliverable(event.target.value)} rows={6} className="console-textarea" /><button className="console-dark-button" disabled={busy || !deliverable.trim()} onClick={() => void action("submit")}>Submit deliverable</button></> : null}
@@ -129,12 +159,9 @@ export default function MissionConsole() {
               <div className="console-stat"><span>Chain job</span><strong>{data.job.chain_job_id ?? "Pending"}</strong></div>
               <div className="console-stat"><span>Evaluation</span><strong>{data.evaluation?.verdict || "Pending"}</strong></div>
               <div className="console-stat"><span>Payment TX</span><strong>{compact(data.payment?.tx_hash)}</strong></div>
+              {data.job.chain_tx_hash && <div className="console-stat"><span>Chain TX</span><strong><a href={`https://testnet.bscscan.com/tx/${data.job.chain_tx_hash}`} target="_blank" rel="noreferrer">{compact(data.job.chain_tx_hash)}</a></strong></div>}
               {riskEvidence?.source === "risk_guardian_runtime" && (
-                <div className="console-evidence">
-                  <small>RISK GUARDIAN</small>
-                  <strong>{human(riskEvidence.decision || "pending")}</strong>
-                  <p>{riskEvidence.reasons?.join(" ") || "Decision recorded without additional reasons."}</p>
-                </div>
+                <div className="console-evidence"><small>RISK GUARDIAN</small><strong>{human(riskEvidence.decision || "pending")}</strong><p>{riskEvidence.reasons?.join(" ") || "Decision recorded without additional reasons."}</p></div>
               )}
               <div className="console-evidence"><small>SOURCE OF TRUTH</small><p>Supabase stores marketplace workflow records. A blockchain job ID and transaction hash are shown only when real chain records exist.</p></div>
             </aside>
