@@ -23,7 +23,7 @@ function currentPage(): WorkspacePage {
   if (path === "/app") return "Discover";
   if (path === "/agents/register") return "Register agent";
   if (path === "/permissions") return "Permissions";
-  if (path === "/testnet/jobs" || path === "/testnet") return "Testnet";
+  if (path.startsWith("/testnet") || path === "/missions") return "Testnet";
   if (tab === "missions") return "Missions";
   if (tab === "activity") return "Activity";
   if (tab === "payments") return "Payments";
@@ -79,7 +79,8 @@ export default function WorkspaceShell({ children }: { children: ReactNode }) {
       <style>{`
         .workspace-host .workspace-nav,
         .workspace-host .agent-register-nav,
-        .workspace-host .permissions-nav { display:none !important; }
+        .workspace-host .permissions-nav,
+        .workspace-host .console-nav { display:none !important; }
         .workspace-host .workspace { padding-top: 28px; }
         .workspace-host .agent-register-shell,
         .workspace-host .permissions-shell { width:min(1240px,calc(100% - 48px)); margin:0 auto; }
