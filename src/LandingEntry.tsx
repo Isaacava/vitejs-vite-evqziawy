@@ -3,7 +3,11 @@ import LandingPage from "./LandingPage";
 import { connectWalletAndSignIn } from "./lib/walletAuth";
 import "./landing-auth.css";
 
-const ENTRY_SELECTOR = '.landing a[href="/dashboard"]';
+function isConnectWalletLink(target: HTMLAnchorElement) {
+  const label = target.textContent?.trim().toLowerCase() || "";
+  const href = target.getAttribute("href") || "";
+  return label.includes("connect wallet") || href === "/dashboard" || href.includes("agentmarket-topnav");
+}
 
 export default function LandingEntry() {
   const [connecting, setConnecting] = useState(false);
@@ -12,8 +16,8 @@ export default function LandingEntry() {
 
   useEffect(() => {
     const onClick = async (event: MouseEvent) => {
-      const target = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>(ENTRY_SELECTOR) : null;
-      if (!target || handled.current) return;
+      const target = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a") : null;
+      if (!target || !isConnectWalletLink(target) || handled.current) return;
 
       event.preventDefault();
       event.stopPropagation();
@@ -46,11 +50,15 @@ export default function LandingEntry() {
             <strong>{connecting ? "Connect your wallet" : "Sign-in could not be completed"}</strong>
             <p>
               {connecting
-                ? "WalletConnect will open now. Connect your wallet, then sign the AgentMarket authentication message. The signature does not authorize a transaction or move funds."
+                ? "Connect your wallet, approve BSC Testnet if needed, then sign the AgentMarket authentication message. The signature does not authorize a transaction or move funds."
                 : error}
             </p>
             {!connecting && (
-              <button type="button" onClick={() => setError("")} className="landing-auth-close">
+              <button
+                type="button"
+                onClick={() => setError("")}
+                className="landing-auth-close"
+              >
                 Close
               </button>
             )}
