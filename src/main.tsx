@@ -7,7 +7,7 @@ import AgentRegistration from "./AgentRegistration";
 import SessionPermissions from "./SessionPermissions";
 import DiscoverPage from "./DiscoverPage";
 import MarketplaceWorkspace from "./MarketplaceWorkspace";
-import MissionConsole from "./MissionConsole";
+import WorkspaceMissionConsole from "./WorkspaceMissionConsole";
 import WorkspaceMissionPage from "./WorkspaceMissionPage";
 import TestnetQuoteExecutionWalletConnect from "./TestnetQuoteExecutionWalletConnect";
 import TestnetQuoteGate from "./TestnetQuoteGate";
@@ -56,16 +56,15 @@ function renderWorkspace(element: React.ReactNode) {
 }
 
 function renderApp() {
-  // Keep the original root ?job compatibility while also exposing the proper
-  // /mission?job=<marketplace-job-id> route for the workspace navigation.
   if ((path === "/" || path === "/mission") && jobId) {
-    return renderWorkspace(<MissionConsole />);
+    return renderWorkspace(<WorkspaceMissionConsole />);
   }
 
   if (path === "/") return <LandingEntry />;
   if (path === "/dashboard") return <DashboardShell />;
   if (path === "/discover") return renderWorkspace(<DiscoverPage />);
   if (path === "/missions") return renderWorkspace(<WorkspaceMissionPage />);
+  if (path === "/mission") return renderWorkspace(<WorkspaceMissionConsole />);
   if (path === "/agents/register") return renderWorkspace(<AgentRegistration />);
   if (path === "/permissions") return renderWorkspace(<SessionPermissions />);
 
