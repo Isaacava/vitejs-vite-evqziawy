@@ -1,236 +1,86 @@
 import { useEffect, useMemo, useState } from "react";
 import { connectWalletAndSignIn, signOut, type AuthUser } from "./lib/walletAuth";
-import "./user-dashboard.css";
 
-type Mission = {
-  id: string;
-  title: string;
-  goal: string;
-  category: string;
-  budget: number;
-  status: string;
-  created_at: string;
-  updated_at: string;
-  jobs: Array<{
-    id: string;
-    status: string;
-    budget: number;
-    chain_job_id: number | null;
-    updated_at: string;
-    agent?: { agent_id: string; name: string | null; category: string; status: string; verification_status: string } | null;
-  }>;
-};
+type Job = { id: string; status: string; budget: number; chain_job_id: number | null; updated_at: string; agent?: { agent_id: string; name: string | null; category: string; status: string; verification_status: string } | null };
+type Mission = { id: string; title: string; goal: string; category: string; budget: number; status: string; created_at: string; updated_at: string; jobs: Job[] };
+type Activity = { id: string; mission_id: string | null; job_id: string | null; type: string; title: string; description: string | null; created_at: string };
+type Payment = { id: string; mission_id: string | null; job_id: string | null; amount: number; token_symbol: string | null; status: string; tx_hash: string | null; updated_at: string };
+type DashboardData = { user: AuthUser; stats: { active: number; completed: number; awaitingReview: number; escrow: number }; missions: Mission[]; activity: Activity[]; payments: Payment[] };
+type Tab = "overview" | "missions" | "activity" | "payments";
 
-type Activity = {
-  id: string;
-  mission_id: string | null;
-  job_id: string | null;
-  type: string;
-  title: string;
-  description: string | null;
-  created_at: string;
-};
+const human = (v: string) => v.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+const compact = (v?: string | null) => v ? `${v.slice(0, 6)}…${v.slice(-4)}` : "—";
+const terminal = ["completed", "rejected", "cancelled", "expired", "terminal"];
+const review = ["submitted", "awaiting_review"];
+const active = ["planning", "open", "funded", "accepted", "in_progress", "awaiting_review"];
+const ago = (v: string) => { const s = Math.max(1, Math.floor((Date.now() - new Date(v).getTime()) / 1000)); if (s < 60) return `${s}s ago`; const m = Math.floor(s / 60); if (m < 60) return `${m}m ago`; const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`; return `${Math.floor(h / 24)}d ago`; };
+const category = (v: string) => v.replace(/_/g, " ");
 
-type DashboardData = {
-  user: AuthUser;
-  stats: { active: number; completed: number; awaitingReview: number; escrow: number };
-  missions: Mission[];
-  activity: Activity[];
-  payments: Array<{ id: string; mission_id: string | null; job_id: string | null; amount: number; token_symbol: string | null; status: string; tx_hash: string | null; updated_at: string }>;
-  notifications: Array<{ id: string; title: string; body: string | null; created_at: string }>;
-};
-
-type DashboardTab = "overview" | "missions" | "activity" | "payments";
-
-const human = (value: string) => value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
-const compact = (value?: string | null) => value ? `${value.slice(0, 6)}…${value.slice(-4)}` : "—";
-const timeAgo = (value: string) => {
-  const seconds = Math.max(1, Math.floor((Date.now() - new Date(value).getTime()) / 1000));
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-};
-
-function parseTab(): DashboardTab {
-  const value = new URLSearchParams(window.location.search).get("tab");
-  return value === "missions" || value === "activity" || value === "payments" ? value : "overview";
-}
-
-function Status({ value }: { value: string }) {
-  const state = value === "completed" || value === "terminal" ? "green" : value === "cancelled" || value === "disputed" ? "rust" : "brass";
-  return <span className={`dashboard-status ${state}`}>{human(value)}</span>;
-}
+function Status({ value }: { value: string }) { const state = terminal.includes(value) ? "green" : ["disputed", "rejected", "cancelled", "expired"].includes(value) ? "rust" : "brass"; return <span className={`font-mono text-[9.5px] px-2.5 py-1 rounded-lg status-${state}`}>{human(value)}</span>; }
 
 export default function UserDashboard() {
-  const [user, setUser] = useState<AuthUser | null>(null);
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState<DashboardTab>(parseTab);
+  const [tab, setTab] = useState<Tab>(() => { const t = new URLSearchParams(location.search).get("tab"); return t === "missions" || t === "activity" || t === "payments" ? t : "overview"; });
 
-  function navigateTab(nextTab: DashboardTab) {
-    setTab(nextTab);
-    const url = new URL(window.location.href);
-    if (nextTab === "overview") url.searchParams.delete("tab");
-    else url.searchParams.set("tab", nextTab);
-    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
-  }
+  async function load() { setLoading(true); setError(""); try { const r = await fetch("/api/dashboard", { credentials: "include" }); const b = await r.json(); if (!r.ok) throw new Error(b?.error || "Unable to load dashboard"); setData(b); } catch (e) { setError(e instanceof Error ? e.message : "Unable to load dashboard"); } finally { setLoading(false); } }
+  useEffect(() => { void load(); }, []);
 
-  useEffect(() => {
-    const onPopState = () => setTab(parseTab());
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
-  }, []);
+  function navigate(next: Tab) { setTab(next); const u = new URL(location.href); next === "overview" ? u.searchParams.delete("tab") : u.searchParams.set("tab", next); history.pushState({}, "", u.pathname + u.search); }
+  const derived = useMemo(() => {
+    const missions = data?.missions || [];
+    const jobs = missions.flatMap(m => m.jobs);
+    const awaitingReview = missions.filter(m => review.includes(m.status) || m.jobs.some(j => review.includes(j.status))).length;
+    const completed = missions.filter(m => terminal.includes(m.status) || m.jobs.some(j => terminal.includes(j.status))).length;
+    const activeCount = missions.filter(m => !terminal.includes(m.status) && (active.includes(m.status) || m.jobs.some(j => active.includes(j.status)))).length;
+    const paymentEscrow = (data?.payments || []).filter(p => ["pending", "funded", "escrowed", "locked"].includes(String(p.status).toLowerCase())).reduce((s, p) => s + Number(p.amount || 0), 0);
+    const fundedJobs = jobs.filter(j => ["funded", "accepted", "in_progress", "submitted"].includes(j.status)).reduce((s, j) => s + Number(j.budget || 0), 0);
+    return { missions, jobs, activeCount, completed, awaitingReview, escrow: paymentEscrow || fundedJobs };
+  }, [data]);
 
-  async function loadDashboard() {
-    setLoading(true);
-    setError("");
-    try {
-      const response = await fetch("/api/dashboard", { credentials: "include" });
-      if (response.status === 401) {
-        setData(null);
-        setUser(null);
-        return;
-      }
-      const body = await response.json();
-      if (!response.ok) throw new Error(body?.error || "Unable to load dashboard");
-      setData(body as DashboardData);
-      setUser(body.user as AuthUser);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to load dashboard");
-    } finally {
-      setLoading(false);
-    }
-  }
+  const activeMissions = derived.missions.filter(m => !terminal.includes(m.status) && (active.includes(m.status) || m.jobs.some(j => active.includes(j.status)))).slice(0, 3);
+  const recent = derived.missions.slice(0, 8);
 
-  async function connect() {
-    setConnecting(true);
-    setError("");
-    try {
-      const nextUser = await connectWalletAndSignIn();
-      setUser(nextUser);
-      await loadDashboard();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to connect wallet");
-    } finally {
-      setConnecting(false);
-    }
-  }
+  const goConsole = (job?: Job) => { if (job?.id) location.assign(`/?job=${encodeURIComponent(job.id)}`); else location.assign("/missions"); };
 
-  async function logout() {
-    await signOut();
-    setUser(null);
-    setData(null);
-  }
+  return <div className="w-full px-0 pb-8 font-[Manrope,sans-serif]">
+    {error && <div className="mb-5 border border-[#cfad9f] bg-[#f3e6e1] text-[#9b4733] rounded-[14px_8px_15px_9px] px-4 py-3 text-[12px]">{error}</div>}
+    <div className="relative overflow-hidden">
+      <div className="pointer-events-none absolute right-[-180px] top-[-10px] h-[220px] w-[560px] rotate-[-8deg] rounded-[58%_42%_0_0/80%_74%_0_0] border border-[rgba(157,116,40,.14)]" />
+      <section className="relative z-10 grid gap-6 mb-8 lg:grid-cols-[1.5fr_.65fr]">
+        <div><span className="inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-[#9d7428] mb-3"><span className="w-1.5 h-1.5 rounded-full bg-[#9d7428]" /> User operating system / 01</span><h1 className="font-[Space_Grotesk,sans-serif] text-[32px] md:text-[42px] font-bold tracking-tight leading-[1.03] mb-3">Your missions,<br /><em className="not-italic text-[#9d7428]">at a glance.</em></h1><p className="text-[13.5px] text-[#6d6a61] max-w-[480px] leading-relaxed">One place for active work, agent progress, evaluation evidence, payment state and the activity trail behind each mission.</p></div>
+        <div className="bg-[#fbfaf5] border border-[#b9b09a] rounded-[20px_9px_22px_10px] shadow-[0_30px_60px_-36px_rgba(23,23,20,.35)] rotate-[1deg] overflow-hidden">
+          <div className="flex justify-between px-4 py-2.5 font-mono text-[8.5px] text-[#8a8477] border-b border-dashed border-[#c8c0af]"><span>CONNECTED WALLET</span><span className="text-[#2d6b4f]">● SIGNED IN</span></div>
+          <div className="px-4 py-4"><small className="block font-mono text-[9px] uppercase text-[#8a8477] mb-1.5">Address</small><strong className="block text-[16px] font-bold">{compact(data?.user.wallet_address)}</strong></div>
+          <div className="flex justify-between items-center px-4 py-3 border-t border-dashed border-[#d5cfbf] bg-[#f2f0e7]"><span className="text-[10.5px] text-[#6d6a61]">Escrow authority scoped</span><a href="/app" className="text-[11.5px] font-extrabold">New mission <span className="text-[#9d7428]">→</span></a></div>
+        </div>
+      </section>
 
-  useEffect(() => {
-    void loadDashboard();
-  }, []);
+      <nav className="relative z-10 flex gap-6 border-b border-[#d5cfbf] mb-6 overflow-x-auto">{(["overview", "missions", "activity", "payments"] as Tab[]).map(t => <button key={t} onClick={() => navigate(t)} className={`text-[12px] font-bold pb-2.5 border-b-2 whitespace-nowrap ${tab === t ? "border-[#9d7428] text-[#171714]" : "border-transparent text-[#8a8477]"}`}>{human(t)}</button>)}</nav>
 
-  const activeMissions = useMemo(() => data?.missions.filter((mission) => ["planning", "in_progress", "awaiting_review"].includes(mission.status)) || [], [data]);
-  const recentMissions = useMemo(() => data?.missions.slice(0, 6) || [], [data]);
-
-  return (
-    <main className="dashboard-page">
-      <div className="dashboard-curve dashboard-curve-a" aria-hidden="true" />
-      <div className="dashboard-curve dashboard-curve-b" aria-hidden="true" />
-      <div className="dashboard-shell">
-        <header className="dashboard-nav">
-          <a href="/" className="dashboard-brand">AgentMarket</a>
-          <div className="dashboard-nav-center">USER / OPERATIONS</div>
-          <div className="dashboard-nav-actions">
-            {user ? <><span className="dashboard-wallet">{compact(user.wallet_address)}</span><button onClick={() => void logout()}>Sign out</button></> : <button className="dashboard-connect-mini" onClick={() => void connect()} disabled={connecting}>{connecting ? "Connecting…" : "Connect wallet"}</button>}
-          </div>
-        </header>
-
-        {error && <div className="dashboard-alert">{error}</div>}
-
-        {!user ? (
-          <section className="dashboard-login">
-            <div className="dashboard-login-copy">
-              <span className="dashboard-kicker">YOUR AGENTMARKET OPERATING ROOM</span>
-              <h1>See every mission.<br /><em>Know what is happening.</em></h1>
-              <p>Connect your wallet to create a signed session. From there, missions, agent activity, escrow records and evidence are scoped to your account.</p>
-              <button className="dashboard-primary" onClick={() => void connect()} disabled={connecting}>{connecting ? "Waiting for wallet…" : "Connect & sign in →"}</button>
-              <span className="dashboard-safety">The sign-in signature authenticates your session. It does not authorize a transaction or move funds.</span>
-            </div>
-            <div className="dashboard-login-instrument">
-              <small>USER WORKSPACE</small>
-              <strong>MISSION CONTROL</strong>
-              <span>Active jobs</span><b>—</b>
-              <span>Awaiting review</span><b>—</b>
-              <span>Completed</span><b>—</b>
-              <span>Escrow tracked</span><b>—</b>
-            </div>
+      {loading ? <div className="py-16 text-[13px] text-[#6d6a61]">Loading your mission state…</div> : tab === "overview" ? <>
+        <div className="relative z-10 grid grid-cols-2 md:grid-cols-4 gap-3.5 mb-6">
+          <Metric label="Active missions" value={derived.activeCount} note="planning · executing · review" />
+          <Metric label="Completed" value={derived.completed} note="terminal missions" />
+          <Metric label="Awaiting review" value={derived.awaitingReview} note="submitted, not settled" />
+          <Metric label="Escrow tracked" value={derived.escrow.toLocaleString()} note="pending payment records" brass />
+        </div>
+        <div className="relative z-10 grid gap-4 lg:grid-cols-[1.5fr_1fr] mb-4">
+          <section className="bg-[#fbfaf5] border border-[#d5cfbf] rounded-[20px_9px_22px_10px] p-[18px]">
+            <div className="flex justify-between items-center pb-3 mb-1 border-b border-dashed border-[#c8c0af]"><span className="font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477]">02 / Current work</span><button onClick={() => navigate("missions")} className="text-[11px] font-extrabold text-[#9d7428] underline underline-offset-4">View all →</button></div>
+            {activeMissions.length ? activeMissions.map((m, idx) => { const job = m.jobs[0]; const state = job?.status || m.status; const steps = ["planning", "executing", "review", "settled"]; const progress = state === "in_progress" || state === "accepted" || state === "funded" ? 1 : review.includes(state) ? 2 : terminal.includes(state) ? 3 : 0; return <div key={m.id} className="py-4 border-b border-[#e2ddcf] last:border-b-0"><div className="flex justify-between gap-3.5"><div><div className="font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477]">{category(m.category)}</div><h3 className="font-[Space_Grotesk,sans-serif] text-[14.5px] font-bold mt-1 mb-0.5">{m.title}</h3><p className="text-[11.5px] text-[#6d6a61] max-w-[320px]">{m.goal}</p></div><div className="text-right shrink-0 min-w-[120px]"><Status value={state} /><div className="text-[11px] text-[#6d6a61] my-1.5">{job?.agent?.name || "Provider pending"}</div><button onClick={() => goConsole(job)} className="text-[11px] font-extrabold text-[#9d7428]">Open →</button></div></div><div className="grid grid-cols-4 mt-3 rounded-lg overflow-hidden bg-[#191a17]">{steps.map((s,i) => <div key={s} className="p-2 border-r border-white/10 last:border-r-0"><span className={`block font-mono text-[7.5px] uppercase ${i <= progress ? "text-[#d2b05e]" : "text-[#726f60]"}`}>{s}</span><i className={`block w-1.5 h-1.5 rounded-full mt-1.5 ${i <= progress ? "bg-[#d2b05e]" : "bg-[#3a3a30]"}`} /></div>)}</div></div>; }) : <Empty title="No active missions" text="Describe an outcome and hire an agent to create your first mission." href="/app" />}
           </section>
-        ) : (
-          <>
-            <section className="dashboard-hero">
-              <div>
-                <span className="dashboard-kicker">USER OPERATING SYSTEM / 01</span>
-                <h1>Your missions,<br /><em>at a glance.</em></h1>
-                <p>One place for active work, agent progress, evaluation evidence, payment state and the activity trail behind each mission.</p>
-              </div>
-              <div className="dashboard-identity">
-                <small>CONNECTED WALLET</small>
-                <strong>{compact(user.wallet_address)}</strong>
-                <span>Signed session active</span>
-                <a href="/app">+ New mission →</a>
-              </div>
-            </section>
-
-            <nav className="dashboard-tabs" aria-label="Dashboard sections">
-              {(["overview", "missions", "activity", "payments"] as const).map((item) => <button key={item} className={tab === item ? "active" : ""} onClick={() => navigateTab(item)}>{item}</button>)}
-            </nav>
-
-            {loading && <div className="dashboard-loading">Loading your mission state…</div>}
-
-            {!loading && data && tab === "overview" && (
-              <>
-                <section className="dashboard-stats">
-                  <article><span>ACTIVE MISSIONS</span><strong>{data.stats.active}</strong><small>planning · executing · review</small></article>
-                  <article><span>COMPLETED</span><strong>{data.stats.completed}</strong><small>terminal missions</small></article>
-                  <article><span>AWAITING REVIEW</span><strong>{data.stats.awaitingReview}</strong><small>submitted, not yet settled</small></article>
-                  <article><span>ESCROW TRACKED</span><strong>{data.stats.escrow.toLocaleString()}</strong><small>database view of pending payment records</small></article>
-                </section>
-
-                <div className="dashboard-grid">
-                  <section className="dashboard-card dashboard-missions-card">
-                    <div className="dashboard-card-head"><span>02 / CURRENT WORK</span><button onClick={() => navigateTab("missions")}>View all →</button></div>
-                    {activeMissions.length === 0 ? <div className="dashboard-empty"><strong>No active missions.</strong><p>Describe a goal and hire an agent from the marketplace to create your first mission.</p><a href="/app">Discover agents →</a></div> : activeMissions.slice(0, 3).map((mission) => {
-                      const job = mission.jobs[0];
-                      return <article className="mission-row" key={mission.id}>
-                        <div><span>{mission.category.replace(/_/g, " ")}</span><h3>{mission.title}</h3><p>{mission.goal}</p></div>
-                        <div className="mission-row-meta"><Status value={mission.status} /><small>{job?.agent?.name || "Agent pending"}</small><a href={job?.id ? `/?job=${encodeURIComponent(job.id)}` : `/app`}>Open →</a></div>
-                      </article>;
-                    })}
-                  </section>
-
-                  <aside className="dashboard-card dashboard-activity-card">
-                    <div className="dashboard-card-head"><span>03 / ACTIVITY</span><button onClick={() => navigateTab("activity")}>Full log →</button></div>
-                    {data.activity.length === 0 ? <div className="dashboard-empty compact"><strong>No activity yet.</strong><p>Your signed-in actions and mission events will appear here.</p></div> : data.activity.slice(0, 7).map((event) => <div className="activity-row" key={event.id}><i /><div><strong>{event.title}</strong><p>{event.description || human(event.type)}</p><small>{timeAgo(event.created_at)}</small></div></div>)}
-                  </aside>
-                </div>
-
-                <section className="dashboard-card dashboard-evidence-card">
-                  <div className="dashboard-card-head"><span>04 / RECENT MISSIONS</span><button onClick={() => navigateTab("missions")}>Mission log →</button></div>
-                  {recentMissions.length === 0 ? <div className="dashboard-empty"><strong>Your mission history will live here.</strong><p>Every mission keeps its task, provider, chain job, evaluation and evidence trail.</p></div> : recentMissions.map((mission) => <div className="history-row" key={mission.id}><div><strong>{mission.title}</strong><span>{mission.category.replace(/_/g, " ")}</span></div><Status value={mission.status} /><small>{new Date(mission.updated_at).toLocaleString()}</small></div>)}
-                </section>
-              </>
-            )}
-
-            {!loading && data && tab === "missions" && <section className="dashboard-card dashboard-list-page"><div className="dashboard-card-head"><span>MISSIONS / ALL</span><button onClick={() => window.location.href = "/app"}>+ New mission</button></div>{data.missions.length === 0 ? <div className="dashboard-empty"><strong>No missions yet.</strong><p>Go to Discover to hire your first agent.</p><a href="/app">Open marketplace →</a></div> : data.missions.map((mission) => <article className="dashboard-list-mission" key={mission.id}><div><span>{mission.category.replace(/_/g, " ")}</span><h2>{mission.title}</h2><p>{mission.goal}</p></div><div><Status value={mission.status} /><small>{mission.jobs[0]?.agent?.name || "Provider pending"}</small>{mission.jobs[0]?.id && <a href={`/?job=${encodeURIComponent(mission.jobs[0].id)}`}>Open console →</a>}</div></article>)}</section>}
-
-            {!loading && data && tab === "activity" && <section className="dashboard-card dashboard-list-page"><div className="dashboard-card-head"><span>ACTIVITY / AUDIT TRAIL</span><b>{data.activity.length} EVENTS</b></div>{data.activity.length === 0 ? <div className="dashboard-empty"><strong>No activity yet.</strong><p>Mission creation, agent events, evaluation and settlement evidence will appear here.</p></div> : data.activity.map((event) => <div className="activity-row activity-row-large" key={event.id}><i /><div><strong>{event.title}</strong><p>{event.description || human(event.type)}</p><small>{new Date(event.created_at).toLocaleString()}</small></div></div>)}</section>}
-
-            {!loading && data && tab === "payments" && <section className="dashboard-card dashboard-list-page"><div className="dashboard-card-head"><span>PAYMENTS / ESCROW</span><b>ON-CHAIN STATUS SEPARATE</b></div>{data.payments.length === 0 ? <div className="dashboard-empty"><strong>No payment records yet.</strong><p>Payment rows appear when missions have an escrow/payment record.</p></div> : data.payments.map((payment) => <div className="payment-row" key={payment.id}><div><strong>{payment.amount} {payment.token_symbol || "units"}</strong><span>{human(payment.status)}</span></div><small>{payment.tx_hash ? compact(payment.tx_hash) : "No chain TX recorded"}</small></div>)}</section>}
-          </>
-        )}
-      </div>
-    </main>
-  );
+          <aside className="bg-[#fbfaf5] border border-[#d5cfbf] rounded-[20px_9px_22px_10px] p-[18px]"><div className="flex justify-between items-center pb-3 mb-1 border-b border-dashed border-[#c8c0af]"><span className="font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477]">03 / Activity</span><button onClick={() => navigate("activity")} className="text-[11px] font-extrabold text-[#9d7428] underline underline-offset-4">Full log →</button></div>{(data?.activity || []).slice(0, 7).map(a => <div key={a.id} className="grid grid-cols-[1fr_auto] gap-2 py-3 border-b border-[#e2ddcf] last:border-b-0"><div><strong className="block text-[12px] font-bold">{a.title}</strong><p className="text-[10.5px] text-[#6d6a61] my-0.5 mb-1.5">{a.description || human(a.type)}</p><i className="block h-[3px] bg-[#e2ddcf] rounded-full overflow-hidden"><u className="block h-full rounded-full bg-[#9d7428]" style={{ width: `${Math.min(100, 25 + (a.title.length % 4) * 20)}%` }} /></i></div><small className="font-mono text-[9.5px] text-[#9aa3b1] whitespace-nowrap">{ago(a.created_at)}</small></div>)}</aside>
+        </div>
+        <section className="relative z-10 bg-[#fbfaf5] border border-[#d5cfbf] rounded-[20px_9px_22px_10px] p-[18px]"><div className="flex justify-between items-center pb-3 mb-1 border-b border-dashed border-[#c8c0af]"><span className="font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477]">04 / Recent missions</span><button onClick={() => navigate("missions")} className="text-[11px] font-extrabold text-[#9d7428] underline underline-offset-4">Mission log →</button></div>{recent.map(m => <div key={m.id} className="flex justify-between items-center py-3.5 border-b border-[#e2ddcf] last:border-b-0 gap-3"><div><strong className="text-[13px] font-bold">{m.title}</strong><span className="block text-[11px] text-[#6d6a61] mt-0.5">{category(m.category)}</span></div><Status value={m.jobs[0]?.status || m.status} /><small className="font-mono text-[10px] text-[#9aa3b1] min-w-[150px] text-right">{new Date(m.updated_at).toLocaleString()}</small></div>)}</section>
+      </> : tab === "missions" ? <MissionList missions={derived.missions} onOpen={goConsole} /> : tab === "activity" ? <ActivityList activity={data?.activity || []} /> : <PaymentList payments={data?.payments || []} funded={derived.escrow} />}
+    </div>
+  </div>;
 }
+
+function Metric({ label, value, note, brass }: { label: string; value: string | number; note: string; brass?: boolean }) { return <div className="bg-[#fbfaf5] border border-[#d5cfbf] rounded-[20px_9px_22px_10px] p-4 min-h-[112px] flex flex-col"><span className="font-mono text-[9px] uppercase tracking-wide text-[#8a8477]">{label}</span><strong className={`font-[Space_Grotesk,sans-serif] text-[29px] font-bold tracking-tight mt-2.5 ${brass ? "text-[#9d7428]" : ""}`}>{value}</strong><small className="text-[10.5px] text-[#6d6a61] mt-auto pt-1.5">{note}</small></div>; }
+function Empty({ title, text, href }: { title: string; text: string; href: string }) { return <div className="py-8 text-[#6d6a61]"><strong className="block font-[Space_Grotesk,sans-serif] text-[21px] font-bold text-[#171714]">{title}</strong><p className="text-[12px] mt-2 mb-3">{text}</p><a className="font-extrabold text-[#9d7428] text-[11px]" href={href}>Open →</a></div>; }
+function MissionList({ missions, onOpen }: { missions: Mission[]; onOpen: (job?: Job) => void }) { return <section><div className="flex justify-between items-center mb-4"><span className="font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477]">Missions / All</span><a href="/app" className="font-[Space_Grotesk,sans-serif] font-bold text-[11px] px-4 py-2.5 bg-[#171714] text-[#fbfaf5] rounded-[14px_8px_16px_9px]">+ New mission</a></div><div className="flex gap-2 flex-wrap mb-5 font-mono text-[10.5px]"><span className="px-3.5 py-1.5 rounded-full bg-[#171714] text-[#fbfaf5]">All</span><span className="px-3.5 py-1.5 rounded-full border border-[#d5cfbf] bg-[#fbfaf5] text-[#6d6a61]">Planning</span><span className="px-3.5 py-1.5 rounded-full border border-[#d5cfbf] bg-[#fbfaf5] text-[#6d6a61]">Executing</span><span className="px-3.5 py-1.5 rounded-full border border-[#d5cfbf] bg-[#fbfaf5] text-[#6d6a61]">Review</span><span className="px-3.5 py-1.5 rounded-full border border-[#d5cfbf] bg-[#fbfaf5] text-[#6d6a61]">Completed</span></div><div className="bg-[#fbfaf5] border border-[#d5cfbf] rounded-[20px_9px_22px_10px] p-[18px]">{missions.map(m => <div key={m.id} className="flex justify-between items-start gap-4 py-[19px] border-b border-[#d5cfbf] last:border-b-0"><div><div className="font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477]">{category(m.category)}</div><h2 className="font-[Space_Grotesk,sans-serif] text-[16px] font-bold my-1.5">{m.title}</h2><p className="text-[12px] text-[#6d6a61] max-w-[400px]">{m.goal}</p></div><div className="text-right shrink-0 min-w-[150px]"><Status value={m.jobs[0]?.status || m.status} /><small className="block text-[11px] text-[#6d6a61] my-2">{m.jobs[0]?.agent?.name || "Provider pending"}</small><button onClick={() => onOpen(m.jobs[0])} className="text-[11.5px] font-extrabold text-[#9d7428]">Open console →</button></div></div>)}</div></section>; }
+function ActivityList({ activity }: { activity: Activity[] }) { return <section><div className="flex justify-between items-center mb-4"><span className="font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477]">Activity / Audit trail</span><b className="font-mono text-[10.5px] text-[#6d6a61]">{activity.length} EVENTS</b></div><div className="bg-[#fbfaf5] border border-[#d5cfbf] rounded-[20px_9px_22px_10px] p-[18px]">{activity.map(a => <div key={a.id} className="grid grid-cols-[1fr_auto] gap-2 py-3 border-b border-[#e2ddcf] last:border-b-0"><div><strong className="block text-[12.5px] font-bold">{a.title}</strong><p className="text-[10.5px] text-[#6d6a61] my-0.5 mb-1.5">{a.description || human(a.type)}</p><i className="block h-[3px] bg-[#e2ddcf] rounded-full overflow-hidden"><u className="block h-full rounded-full bg-[#9d7428]" style={{ width: "70%" }} /></i></div><small className="font-mono text-[9.5px] text-[#9aa3b1] whitespace-nowrap">{new Date(a.created_at).toLocaleString()}</small></div>)}</div></section>; }
+function PaymentList({ payments, funded }: { payments: Payment[]; funded: number }) { const rows = payments.length ? payments : []; return <section><div className="flex justify-between items-center mb-6"><span className="font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477]">Payments / Escrow</span><b className="font-mono text-[10.5px] text-[#6d6a61]">ON-CHAIN STATUS SEPARATE</b></div><div className="relative min-h-[260px] grid place-items-center mb-8"><div className="relative w-[172px] h-[172px] rounded-full border border-[#c1b69d] bg-[#fbfaf5]/90 flex flex-col items-center justify-center text-center z-10 before:content-[''] before:absolute before:w-[222px] before:h-[222px] before:rounded-full before:border before:border-[#9d7428]/20 after:content-[''] after:absolute after:w-[272px] after:h-[272px] after:rounded-full after:border after:border-[#9d7428]/10"><span className="font-mono text-[9px] uppercase text-[#9d7428]">Escrow</span><strong className="font-[Space_Grotesk,sans-serif] text-[25px] font-bold mt-1">{funded.toLocaleString()}</strong><em className="not-italic text-[10px] text-[#6d6a61] mt-1">tracked Testnet value</em></div></div><div className="bg-[#fbfaf5] border border-[#d5cfbf] rounded-[20px_9px_22px_10px] p-[18px]">{rows.length ? rows.map(p => <div key={p.id} className="flex justify-between items-center py-4 border-b border-dashed border-[#c8c0af] last:border-b-0"><div><strong className="font-[Space_Grotesk,sans-serif] text-[16px] font-bold">{p.amount} {p.token_symbol || "units"}</strong><span className="block font-mono text-[10.5px] text-[#9aa3b1] mt-1">{compact(p.tx_hash)}</span></div><Status value={p.status} /></div>) : <Empty title="No payment rows yet" text="Funded Testnet jobs are still shown in the escrow headline; payment records appear here when the payment layer records them." href="/testnet/jobs" />}</div></section>; }
