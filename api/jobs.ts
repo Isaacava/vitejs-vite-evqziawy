@@ -28,7 +28,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const { data: job, error: jobError } = await supabase
         .from("jobs")
-        .select("id,mission_task_id,provider_agent_id,client_wallet,status,description,budget,chain_job_id,deliverable,created_at,funded_at,accepted_at,submitted_at,terminal_at,updated_at")
+        .select("id,mission_task_id,provider_agent_id,client_wallet,status,description,budget,chain_job_id,chain_status,chain_last_synced_at,chain_tx_hash,chain_error,deliverable,created_at,funded_at,accepted_at,submitted_at,terminal_at,updated_at")
         .eq("id", id)
         .maybeSingle();
       if (jobError) return res.status(500).json({ error: jobError.message });
