@@ -65,6 +65,9 @@ function renderApp() {
   if (path === "/agents/register") return renderWorkspace(<AgentRegistration />);
   if (path === "/permissions") return renderWorkspace(<SessionPermissions />);
 
+  // The marketplace workspace is the working mission-hiring UI.
+  if (path === "/app") return <TestnetExecutionHandoff />;
+
   if (path === "/testnet") return renderWorkspace(<TestnetSandbox />);
   if (path === "/testnet/execute") return renderWorkspace(<TestnetQuoteExecutionWalletConnect />);
   if (path === "/testnet/provider-submit") return renderWorkspace(<TestnetProviderSubmit />);
