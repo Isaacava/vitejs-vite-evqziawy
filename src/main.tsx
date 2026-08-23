@@ -3,10 +3,11 @@ import ReactDOM from "react-dom/client";
 
 import LandingEntry from "./LandingEntry";
 import DashboardShell from "./DashboardShell";
+import WorkspaceShell from "./WorkspaceShell";
 import AgentRegistration from "./AgentRegistration";
 import SessionPermissions from "./SessionPermissions";
 import MarketplaceWorkspace from "./MarketplaceWorkspace";
-import WorkspaceShell from "./WorkspaceShell";
+import MissionConsole from "./MissionConsole";
 import TestnetQuoteExecutionWalletConnect from "./TestnetQuoteExecutionWalletConnect";
 import TestnetQuoteGate from "./TestnetQuoteGate";
 import TestnetProviderSubmit from "./ProviderSubmit";
@@ -23,11 +24,8 @@ import "./index.css";
 const params = new URLSearchParams(window.location.search);
 const missionId = params.get("mission");
 const quoteId = params.get("quote");
+const jobId = params.get("job");
 const path = window.location.pathname;
-
-function WorkspacePage({ children }: { children: React.ReactNode }) {
-  return <WorkspaceShell>{children}</WorkspaceShell>;
-}
 
 function TestnetExecutionHandoff() {
   useEffect(() => {
@@ -45,39 +43,28 @@ function TestnetExecutionHandoff() {
     return () => document.removeEventListener("click", onClick, true);
   }, []);
 
-  return (
-    <WorkspacePage>
-      <MarketplaceWorkspace />
-    </WorkspacePage>
-  );
-}
-
-function renderWorkspacePage(element: React.ReactNode) {
-  return <WorkspacePage>{element}</WorkspacePage>;
+  return <WorkspaceShell><MarketplaceWorkspace /></WorkspaceShell>;
 }
 
 function renderApp() {
+  if (path === "/" && jobId) return <WorkspaceShell><MissionConsole /></WorkspaceShell>;
   if (path === "/") return <LandingEntry />;
-  if (path === "/dashboard") return <DashboardShell />;
+  if (path === "/dashboard") return <WorkspaceShell><DashboardShell /></WorkspaceShell>;
+  if (path === "/agents/register") return <WorkspaceShell><AgentRegistration /></WorkspaceShell>;
+  if (path === "/permissions") return <WorkspaceShell><SessionPermissions /></WorkspaceShell>;
 
-  if (path === "/agents/register") return renderWorkspacePage(<AgentRegistration />);
-  if (path === "/permissions") return renderWorkspacePage(<SessionPermissions />);
-
-  if (path === "/testnet") return renderWorkspacePage(<TestnetSandbox />);
-  if (path === "/testnet/execute") return renderWorkspacePage(<TestnetQuoteExecutionWalletConnect />);
-  if (path === "/testnet/provider-submit") return renderWorkspacePage(<TestnetProviderSubmit />);
-  if (path === "/testnet/quote-gate" && missionId && quoteId) return renderWorkspacePage(<TestnetQuoteGate />);
-  if (path === "/testnet/recover") return renderWorkspacePage(<TestnetRecovery />);
-  if (path === "/testnet/jobs" || path === "/missions") return renderWorkspacePage(<TestnetJobHistory />);
-  if (path === "/testnet/review") return renderWorkspacePage(<TestnetPolicyReview />);
-  if (path === "/testnet/result") return renderWorkspacePage(<TestnetJobResult />);
-  if (path === "/testnet/providers") return renderWorkspacePage(<TestnetProviderReadiness />);
-  if (path === "/testnet/preflight") return renderWorkspacePage(<TestnetTransactionPreflight />);
-  if (path === "/testnet/run") return renderWorkspacePage(<TestnetGridRun />);
+  if (path === "/testnet/execute") return <WorkspaceShell><TestnetQuoteExecutionWalletConnect /></WorkspaceShell>;
+  if (path === "/testnet/provider-submit") return <WorkspaceShell><TestnetProviderSubmit /></WorkspaceShell>;
+  if (path === "/testnet/quote-gate" && missionId && quoteId) return <WorkspaceShell><TestnetQuoteGate /></WorkspaceShell>;
+  if (path === "/testnet/recover") return <WorkspaceShell><TestnetRecovery /></WorkspaceShell>;
+  if (path === "/testnet/jobs" || path === "/missions") return <WorkspaceShell><TestnetJobHistory /></WorkspaceShell>;
+  if (path === "/testnet/review") return <WorkspaceShell><TestnetPolicyReview /></WorkspaceShell>;
+  if (path === "/testnet/result") return <WorkspaceShell><TestnetJobResult /></WorkspaceShell>;
+  if (path === "/testnet/providers") return <WorkspaceShell><TestnetProviderReadiness /></WorkspaceShell>;
+  if (path === "/testnet/preflight") return <WorkspaceShell><TestnetTransactionPreflight /></WorkspaceShell>;
+  if (path === "/testnet/run") return <WorkspaceShell><TestnetGridRun /></WorkspaceShell>;
   if (path === "/app") return <TestnetExecutionHandoff />;
-  return renderWorkspacePage(<TestnetSandbox />);
+  return <TestnetSandbox />;
 }
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>{renderApp()}</React.StrictMode>,
-);
+ReactDOM.createRoot(document.getElementById("root")!).render(<React.StrictMode>{renderApp()}</React.StrictMode>);
