@@ -1,575 +1,103 @@
 import { useEffect, useMemo, useState } from "react";
 import { parseMarketplaceIntent } from "./lib/intent";
-import "./marketplace-workspace.css";
 
-type Agent = {
-  id?: string;
-  agent_id: string;
-  name: string | null;
-  description: string | null;
-  category: string;
-  status?: string | null;
-  source?: string | null;
-  verification_status?: string | null;
-  is_first_party?: boolean;
-  owner?: string | null;
-};
+type Agent = { id?: string; agent_id: string; name: string | null; description: string | null; category: string; status?: string | null; verification_status?: string | null };
+type Match = { agent: Agent; score: number; breakdown: Record<string, number>; scoreConfidence?: "high" | "medium" | "low"; evidence?: { reputationAvailable?: boolean; completionAvailable?: boolean; livenessAvailable?: boolean }; hireability?: { status: "ready" | "degraded" | "discoverable_only"; canCreateJob: boolean; reason: string }; reasons?: string[] };
+type MatchResponse = { intent: ReturnType<typeof parseMarketplaceIntent>; bestMatch: Match | null; bestHireableMatch?: Match | null; alternatives: Match[] };
+type MissionResponse = { mission: { id: string; title?: string; category?: string; budget?: number }; task: { id: string }; job: { id: string; status: string } };
+type QuoteResponse = { ok: boolean; quote: { quote_id: string; price: string; currency: string; quote_hash: string | null; status: string; expires_at: string }; provider?: { agent_id: string; name: string | null; endpoint: string; status: string | null }; signature_present?: boolean };
+type PreparedResponse = { ok: boolean; payment: { symbol: string; decimals: number; budget_raw: string; balance_formatted: string; allowance_formatted: string }; quote: { quote_id: string; price: string; currency: string; quote_hash: string; expires_at: string; status: string }; agent: { agent_id: string; name: string | null; provider: string }; transactions: Record<string, unknown>; job_description: string };
 
-type Match = {
-  agent: Agent;
-  score: number;
-  scoreMax?: number;
-  scoreConfidence?: "high" | "medium" | "low";
-  breakdown: Record<string, number>;
-  evidence?: { reputationAvailable?: boolean; completionAvailable?: boolean; livenessAvailable?: boolean };
-  hireability?: { status: "ready" | "degraded" | "discoverable_only"; canCreateJob: boolean; reason: string };
-  reasons?: string[];
-};
-
-type MatchResponse = {
-  intent: ReturnType<typeof parseMarketplaceIntent>;
-  bestMatch: Match | null;
-  bestHireableMatch?: Match | null;
-  alternatives: Match[];
-};
-
-type MissionResponse = {
-  mission: { id: string };
-  task: { id: string };
-  job: { id: string; status: string };
-};
-
-type Quote = {
-  quote_id: string;
-  price: string;
-  currency: string;
-  quote_hash: string | null;
-  status: string;
-  expires_at: string;
-  requester_wallet?: string;
-  provider_quote?: Record<string, unknown>;
-  request_metadata?: Record<string, unknown>;
-};
-
-type QuoteResponse = {
-  ok: boolean;
-  quote: Quote;
-  provider?: { agent_id: string; name: string | null; endpoint: string; status: string | null };
-  signature_present?: boolean;
-};
-
-type PreparedResponse = {
-  ok: boolean;
-  payment: {
-    symbol: string;
-    decimals: number;
-    budget_raw: string;
-    balance_formatted: string;
-    allowance_formatted: string;
-  };
-  quote: {
-    quote_id: string;
-    price: string;
-    currency: string;
-    quote_hash: string;
-    expires_at: string;
-    status: string;
-  };
-  agent: { agent_id: string; name: string | null; provider: string };
-  transactions: Record<string, { to?: string; data?: string; data_builder?: string }>;
-  job_description: string;
-};
-
-const examples = [
-  "Manage my BNB portfolio conservatively",
-  "Find a safe yield strategy for my idle assets",
-  "Monitor my lending health factor and liquidation risk",
-  "Run a controlled grid strategy",
-];
-
-const labels: Record<string, string> = {
-  rebalancing: "Rebalancing",
-  grid_trading: "Grid Trading",
-  yield: "Yield",
-  health_factor: "Health Factor",
-  other: "General DeFi",
-};
-
-const breakdownWeights: Record<string, number> = {
-  capability: 35,
-  verification: 20,
-  endpointLiveness: 15,
-  completion: 10,
-  jobVolume: 5,
-  reputation: 15,
-};
-
-function categoryLabel(category: string) {
-  return labels[category] || category.replace(/_/g, " ");
-}
-
-function scoreColor(score: number) {
-  return score >= 85 ? "green" : score >= 70 ? "brass" : "rust";
-}
-
-function compactAddress(value?: string | null) {
-  return value ? `${value.slice(0, 6)}…${value.slice(-4)}` : "—";
-}
-
-function confidenceLabel(value?: Match["scoreConfidence"]) {
-  if (value === "high") return "HIGH CONFIDENCE";
-  if (value === "medium") return "MEDIUM CONFIDENCE";
-  return "LIMITED HISTORY";
-}
-
-function hireabilityLabel(match?: Match | null) {
-  if (!match?.hireability) return "READINESS UNKNOWN";
-  if (match.hireability.status === "ready") return "READY TO HIRE";
-  if (match.hireability.status === "degraded") return "PROVIDER DEGRADED";
-  return "DISCOVERABLE ONLY";
-}
-
-function gridTestParameters(category: string) {
-  if (category !== "grid_trading") return { category };
-  return {
-    category,
-    lower_price: 600,
-    upper_price: 700,
-    grid_levels: 12,
-    notional: 100,
-    max_slippage_bps: 50,
-  };
-}
-
-async function readApiResponse(response: Response) {
-  const raw = await response.text();
-  let data: unknown = null;
-
-  try {
-    data = raw ? JSON.parse(raw) : null;
-  } catch {
-    const compactRaw = raw.replace(/\s+/g, " ").trim();
-    throw new Error(
-      `${response.status} ${response.statusText}: ${compactRaw.slice(0, 240) || "Server returned a non-JSON response."}`,
-    );
-  }
-
-  return { data: data as Record<string, unknown> | null };
-}
+const examples = ["Manage my BNB portfolio conservatively", "Find a safe yield strategy for my idle assets", "Monitor my lending health factor and liquidation risk", "Run a controlled grid strategy"];
+const human = (v: string) => v.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+const compact = (v?: string | null) => v ? `${v.slice(0, 6)}…${v.slice(-4)}` : "—";
+const read = async (r: Response) => { const raw = await r.text(); let body: any = null; try { body = raw ? JSON.parse(raw) : null; } catch { throw new Error(`${r.status}: ${raw.replace(/\s+/g, " ").slice(0, 240)}`); } if (!r.ok) throw new Error(body?.error || "Request failed"); return body; };
+const categoryLabel = (v: string) => human(v);
+const gridParams = (category: string) => category === "grid_trading" ? { category, lower_price: 600, upper_price: 700, grid_levels: 12, notional: 100, max_slippage_bps: 50 } : { category };
 
 export default function MarketplaceWorkspace() {
   const [goal, setGoal] = useState(examples[0]);
   const [result, setResult] = useState<MatchResponse | null>(null);
   const [selected, setSelected] = useState<Match | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
   const [mission, setMission] = useState<MissionResponse | null>(null);
   const [quote, setQuote] = useState<QuoteResponse | null>(null);
-  const [quoteLoading, setQuoteLoading] = useState(false);
   const [prepared, setPrepared] = useState<PreparedResponse | null>(null);
+  const [step, setStep] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [quoteLoading, setQuoteLoading] = useState(false);
   const [prepareLoading, setPrepareLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [ttl, setTtl] = useState(0);
   const intent = useMemo(() => parseMarketplaceIntent(goal), [goal]);
 
+  useEffect(() => { void findAgent(); if (new URLSearchParams(location.search).get("funded") === "1") setStep(6); }, []);
+  useEffect(() => { if (!quote?.quote.expires_at) return; const tick = () => setTtl(Math.max(0, Math.floor((new Date(quote.quote.expires_at).getTime() - Date.now()) / 1000))); tick(); const id = window.setInterval(tick, 1000); return () => window.clearInterval(id); }, [quote?.quote.expires_at]);
+
   async function findAgent() {
-    setLoading(true);
-    setError("");
-    setMission(null);
-    setQuote(null);
-    setPrepared(null);
-
-    try {
-      const response = await fetch("/api/testnet/match", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ goal }),
-      });
-      const { data } = await readApiResponse(response);
-      if (!response.ok) throw new Error(data?.error ? String(data.error) : "Testnet matching API unavailable");
-
-      const next = data as unknown as MatchResponse;
-      setResult(next);
-      setSelected(next.bestHireableMatch || next.bestMatch);
-    } catch (cause) {
-      setResult(null);
-      setSelected(null);
-      setError(cause instanceof Error ? cause.message : "Unable to find a Testnet agent");
-    } finally {
-      setLoading(false);
-    }
+    setLoading(true); setError("");
+    try { const r = await fetch("/api/testnet/match", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal }) }); const b = await read(r); const next = b as MatchResponse; setResult(next); setSelected(next.bestHireableMatch || next.bestMatch); setStep(1); }
+    catch (e) { setError(e instanceof Error ? e.message : "Unable to find a Testnet agent"); setResult(null); setSelected(null); }
+    finally { setLoading(false); }
   }
 
-  async function createMission(match: Match) {
-    const authResponse = await fetch("/api/auth/me", { credentials: "include" });
-    const { data: authData } = await readApiResponse(authResponse);
-    if (!authResponse.ok || !(authData as { user?: unknown } | null)?.user) {
-      window.location.href = `/dashboard?return=${encodeURIComponent("/app")}`;
-      return null;
-    }
-
-    const response = await fetch("/api/missions", {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ goal, agent_id: match.agent.agent_id, budget: 0 }),
-    });
-    const { data } = await readApiResponse(response);
-    if (!response.ok) throw new Error(data?.error ? String(data.error) : "Mission creation failed");
-
-    const created = data as unknown as MissionResponse;
-    setMission(created);
-    return created;
-  }
-
-  async function requestQuote(match: Match, createdMission: MissionResponse) {
-    if (!match.agent.id) throw new Error("Selected Testnet agent is missing its marketplace database id");
-
-    setQuoteLoading(true);
-    setError("");
-    setPrepared(null);
-
+  async function hire() {
+    if (!selected) return;
+    if (!selected.hireability?.canCreateJob) { setError(selected.hireability?.reason || "This provider is not ready to accept jobs."); return; }
+    setLoading(true); setError("");
     try {
-      const response = await fetch("/api/testnet/quotes", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          goal,
-          agent_id: match.agent.id,
-          parameters: gridTestParameters(match.agent.category),
-          mission_id: createdMission.mission.id,
-        }),
-      });
-      const { data } = await readApiResponse(response);
-      if (!response.ok) throw new Error(data?.error ? String(data.error) : "Provider quote request failed");
-      setQuote(data as unknown as QuoteResponse);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Provider quote request failed");
-    } finally {
-      setQuoteLoading(false);
-    }
-  }
-
-  async function hire(match: Match | null = selected) {
-    if (!match) return;
-    if (!match.hireability?.canCreateJob) {
-      setError(match.hireability?.reason || "This Testnet agent is discoverable but is not ready to accept jobs.");
-      return;
-    }
-
-    setLoading(true);
-    setError("");
-    setQuote(null);
-    setPrepared(null);
-
-    try {
-      const created = await createMission(match);
-      if (created) await requestQuote(match, created);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Mission creation failed");
-    } finally {
-      setLoading(false);
-    }
+      const auth = await fetch("/api/auth/me", { credentials: "include" }); const authBody = await read(auth); if (!authBody?.user) { location.assign(`/dashboard?return=${encodeURIComponent("/app")}`); return; }
+      const created = await read(await fetch("/api/missions", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal, agent_id: selected.agent.agent_id, budget: 0 }) })) as MissionResponse;
+      setMission(created);
+      if (!selected.agent.id) throw new Error("Selected provider is missing its marketplace database id");
+      const quoted = await read(await fetch("/api/testnet/quotes", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal, agent_id: selected.agent.id, parameters: gridParams(selected.agent.category), mission_id: created.mission.id) })) as QuoteResponse;
+      setQuote(quoted); setStep(3);
+    } catch (e) { setError(e instanceof Error ? e.message : "Mission creation failed"); }
+    finally { setLoading(false); }
   }
 
   async function acceptQuote() {
-    const quoteId = quote?.quote.quote_id;
-    if (!quoteId) return;
-
-    setQuoteLoading(true);
-    setError("");
-
-    try {
-      const response = await fetch("/api/testnet/quotes", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "accept", quote_id: quoteId }),
-      });
-      const { data } = await readApiResponse(response);
-      if (!response.ok) throw new Error(data?.error ? String(data.error) : "Unable to accept quote");
-      setQuote(data as unknown as QuoteResponse);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to accept quote");
-    } finally {
-      setQuoteLoading(false);
-    }
+    if (!quote?.quote.quote_id) return; setQuoteLoading(true); setError("");
+    try { const b = await read(await fetch("/api/testnet/quotes", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "accept", quote_id: quote.quote.quote_id }) })) as QuoteResponse; setQuote(b); setStep(4); }
+    catch (e) { setError(e instanceof Error ? e.message : "Unable to accept quote"); }
+    finally { setQuoteLoading(false); }
   }
 
-  async function prepareAcceptedQuote() {
-    if (!quote?.quote.quote_id || !mission?.mission.id) return;
-
-    setPrepareLoading(true);
-    setError("");
-
+  async function prepare() {
+    if (!quote?.quote.quote_id || !mission?.mission.id) return; setPrepareLoading(true); setError("");
     try {
-      const auth = await fetch("/api/auth/me", { credentials: "include" });
-      const { data: sessionData } = await readApiResponse(auth);
-      const session = sessionData as { user?: { wallet_address?: string } } | null;
-      if (!auth.ok || !session?.user?.wallet_address) {
-        throw new Error("Connect and sign in with your Testnet wallet first.");
-      }
-
-      const response = await fetch("/api/testnet/prepare-quote", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mission_id: mission.mission.id,
-          quote_id: quote.quote.quote_id,
-          client_address: session.user.wallet_address,
-        }),
-      });
-      const { data } = await readApiResponse(response);
-      if (!response.ok) throw new Error(data?.error ? String(data.error) : "Unable to prepare the accepted Testnet quote");
-      setPrepared(data as unknown as PreparedResponse);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to prepare the accepted Testnet quote");
-    } finally {
-      setPrepareLoading(false);
-    }
+      const auth = await read(await fetch("/api/auth/me", { credentials: "include" })); if (!auth?.user?.wallet_address) throw new Error("Connect and sign in with your Testnet wallet first.");
+      const b = await read(await fetch("/api/testnet/prepare-quote", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mission_id: mission.mission.id, quote_id: quote.quote.quote_id, client_address: auth.user.wallet_address }) })) as PreparedResponse;
+      setPrepared(b); setStep(5);
+    } catch (e) { setError(e instanceof Error ? e.message : "Unable to prepare the accepted quote"); }
+    finally { setPrepareLoading(false); }
   }
 
-  useEffect(() => {
-    void findAgent();
-  }, []);
-
-  const candidates = result?.alternatives ?? [];
+  const labels = ["Goal", "Match", "Quote", "Mission", "Sign", "Fund"];
+  const mins = Math.floor(ttl / 60); const secs = String(ttl % 60).padStart(2, "0");
   const best = selected || result?.bestHireableMatch || result?.bestMatch;
-  const bestReady = Boolean(best?.hireability?.canCreateJob);
+  const scoreRows = best ? Object.entries(best.breakdown).slice(0, 6) : [];
 
-  return (
-    <main className="workspace">
-      <div className="workspace-orbit workspace-orbit-a" aria-hidden="true" />
-      <div className="workspace-orbit workspace-orbit-b" aria-hidden="true" />
+  return <main className="max-w-[1240px] mx-auto px-6 md:px-8 py-8 relative font-[Manrope,sans-serif] text-[#171714]">
+    <section className="flex items-center justify-between mb-5"><span className="font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477]">Create mission / Hiring flow</span><button className="text-[11px] font-bold text-[#6d6a61] hover:text-[#171714]" onClick={() => location.assign("/dashboard")}>✕ Close</button></section>
+    {error && <div className="mb-4 border border-[#cfad9f] bg-[#f3e6e1] text-[#9b4733] rounded-[14px_8px_15px_9px] px-4 py-3 text-[12px]">{error}</div>}
+    <div className="flex items-center gap-0 mb-8 overflow-x-auto">
+      {labels.map((label, i) => { const n = i + 1; return <div key={label} className={`flex items-center ${n === labels.length ? "" : "flex-1"} min-w-[86px]`}><div className="flex flex-col items-center shrink-0"><div className={`w-7 h-7 rounded-full flex items-center justify-center font-mono text-[10.5px] font-bold ${n <= step ? "bg-[#171714] text-[#fbfaf5]" : "bg-[#e2ddcf] text-[#6d6a61]"} ${n === step ? "ring-2 ring-[#9d7428] ring-offset-2 ring-offset-[#eeeade]" : ""}`}>{n}</div><span className={`font-mono text-[8.5px] uppercase tracking-wide mt-1.5 ${n <= step ? "text-[#171714]" : "text-[#9aa3b1]"}`}>{label}</span></div>{n !== labels.length && <div className={`flex-1 h-[2px] mx-2 mb-4 ${n < step ? "bg-[#9d7428]" : "bg-[#e2ddcf]"}`} />}</div>; })}
+    </div>
 
-      <header className="workspace-nav">
-        <a href="/testnet" className="workspace-brand">
-          <span className="workspace-glyph" aria-hidden="true">
-            <svg viewBox="0 0 28 28" fill="none">
-              <rect x="1.5" y="1.5" width="25" height="25" rx="7" stroke="currentColor" strokeWidth="1.5" />
-              <path d="M7 18L11.4 10.2L15.2 15L20.8 7.7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </span>
-          <span>AgentMarket</span>
-        </a>
-        <div className="workspace-breadcrumb">TESTNET / BSC 97 · DISCOVER / QUOTE</div>
-        <div className="workspace-nav-links">
-          <a href="/dashboard">Dashboard</a>
-          <a href="/testnet">Exit →</a>
-        </div>
-      </header>
+    <div className="bg-[#fbfaf5] border border-[#d5cfbf] rounded-[26px_10px_28px_13px] p-6 md:p-8 min-h-[420px]">
+      {step === 1 && <><span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-[#9d7428] mb-3"><span className="w-1.5 h-1.5 rounded-full bg-[#9d7428]" />Step 1 / 6 · Intent</span><h2 className="font-[Space_Grotesk,sans-serif] text-[24px] font-bold tracking-tight mb-2">State the outcome you want.</h2><p className="text-[13px] text-[#6d6a61] mb-5 max-w-[520px]">Plain language in, structured intent out. No directory to browse — the parser reads the goal and the matcher does the rest.</p><div className="border border-[#d5cfbf] rounded-[16px_8px_18px_9px] bg-[#eeeade] p-4 mb-4"><small className="block font-mono text-[9px] uppercase text-[#8a8477] mb-2">Your goal</small><textarea value={goal} onChange={e => setGoal(e.target.value)} className="w-full bg-transparent font-[Space_Grotesk,sans-serif] text-[17px] font-semibold resize-none outline-none" rows={2} /></div><div className="grid sm:grid-cols-3 gap-3 mb-6"><Info title="Category" value={categoryLabel(intent.category)} /><Info title="Risk profile" value={intent.risk} /><Info title="Keywords" value={goal.toLowerCase().split(/\s+/).filter(w => w.length >= 4).slice(0, 6).join(" · ") || "—"} mono /></div><button disabled={loading} onClick={() => { void findAgent(); setStep(2); }} className="font-[Space_Grotesk,sans-serif] font-bold text-[12px] px-5 py-3 bg-[#171714] text-[#fbfaf5] rounded-[14px_8px_16px_9px]">{loading ? "Finding…" : "Find matching agents →"}</button></>}
 
-      <section className="workspace-hero">
-        <div>
-          <div className="workspace-kicker"><span /> BSC TESTNET · DEVELOPMENT MARKETPLACE</div>
-          <h1>Find the agent.<br /><em>Not the profile.</em></h1>
-          <p>Describe the outcome. This build only matches ERC-8004 agents registered on BSC Testnet and only hires providers with a healthy Testnet endpoint.</p>
-        </div>
-        <div className="workspace-stat-block">
-          <div><span>Network</span><strong>BSC Testnet</strong></div>
-          <div><span>Chain</span><strong>97</strong></div>
-          <div><span>Commerce</span><strong>ERC-8183</strong></div>
-        </div>
-      </section>
+      {step === 2 && <><span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-[#9d7428] mb-3"><span className="w-1.5 h-1.5 rounded-full bg-[#9d7428]" />Step 2 / 6 · Explainable match</span><h2 className="font-[Space_Grotesk,sans-serif] text-[24px] font-bold tracking-tight mb-1">Top fit, with a paper trail.</h2><p className="text-[13px] text-[#6d6a61] mb-5 max-w-[560px]">Weighted, transparent scoring — the real Testnet matcher determines the ranking and hireability.</p>{best ? <><div className="border border-[#9d7428]/40 bg-[#f7ecd3]/60 rounded-[18px_9px_20px_10px] p-5 mb-4"><div className="flex justify-between items-start mb-4"><div><small className="block font-mono text-[8.5px] uppercase text-[#9d7428] mb-1">Best fit</small><strong className="font-[Space_Grotesk,sans-serif] text-[19px] font-bold">{best.agent.name || `Agent #${best.agent.agent_id}`}</strong><div className="text-[11.5px] text-[#6d6a61] mt-0.5">{best.agent.description || categoryLabel(best.agent.category)}</div></div><div className="w-16 h-16 rounded-full border-2 border-[#9d7428] flex flex-col items-center justify-center bg-[#fbfaf5] shrink-0"><b className="font-[Space_Grotesk,sans-serif] text-[19px] font-bold leading-none">{Math.round(best.score)}</b><span className="text-[8px] text-[#6d6a61]">/ 100</span></div></div><div className="grid grid-cols-2 sm:grid-cols-3 gap-x-5 gap-y-2.5 mb-4">{scoreRows.map(([k,v]) => { const max = k === "capability" ? 35 : k === "verification" ? 20 : k === "endpointLiveness" ? 15 : k === "reputation" ? 15 : k === "completion" ? 10 : 5; const pct = Math.min(100, Number(v) / max * 100); return <div key={k}><div className="flex justify-between text-[10px] mb-1"><span className="text-[#6d6a61]">{human(k)}</span><b className="font-mono">{v}/{max}</b></div><i className="block h-[3px] bg-[#e2ddcf] rounded-full overflow-hidden"><u className="block h-full bg-[#9d7428]" style={{ width: `${pct}%` }} /></i></div>; })}</div><div className="flex flex-wrap gap-2">{(best.reasons || []).slice(0, 4).map(r => <span key={r} className="font-mono text-[9.5px] px-2.5 py-1 rounded-full bg-[#fbfaf5] border border-[#d5cfbf] text-[#6d6a61]">{r}</span>)}</div></div><div className="grid sm:grid-cols-2 gap-3 mb-6">{(result?.alternatives || []).slice(0,2).map(a => <div key={a.agent.agent_id} className="border border-[#d5cfbf] rounded-[14px_8px_16px_9px] p-4"><div className="flex justify-between items-center mb-1"><strong className="text-[13px] font-bold">{a.agent.name || `Agent #${a.agent.agent_id}`}</strong><span className="font-mono text-[11px] text-[#6d6a61]">{Math.round(a.score)}</span></div><div className="text-[10.5px] text-[#6d6a61]">{a.reasons?.[0] || "Alternative match"}</div></div>)}</div><div className="flex gap-3"><button onClick={() => void hire()} disabled={loading || !best.hireability?.canCreateJob} className="font-[Space_Grotesk,sans-serif] font-bold text-[12px] px-5 py-3 bg-[#171714] text-[#fbfaf5] rounded-[14px_8px_16px_9px]">Hire {best.agent.name || "agent"} <span className="text-[#d2b05e]">→</span></button><button onClick={() => setStep(1)} className="font-bold text-[12px] px-4 py-3 text-[#6d6a61]">← Back</button></div></> : <div className="py-10 text-[13px] text-[#6d6a61]">{loading ? "Comparing Testnet capability, verification, liveness, history and reputation…" : "No suitable Testnet agent found."}</div>}</>}
 
-      <section className="mission-composer">
-        <div className="composer-copy">
-          <span className="small-label">YOUR TESTNET MISSION</span>
-          <div className="composer-intent"><span>{categoryLabel(intent.category)}</span><span>{intent.risk} risk</span></div>
-        </div>
-        <textarea value={goal} onChange={(event) => setGoal(event.target.value)} aria-label="Mission goal" />
-        <div className="composer-footer">
-          <div className="composer-examples">
-            {examples.map((example) => <button key={example} type="button" onClick={() => setGoal(example)}>{example}</button>)}
-          </div>
-          <button type="button" className="brass-button" onClick={() => void findAgent()} disabled={loading}>
-            {loading ? "Matching…" : "Find Testnet agent →"}
-          </button>
-        </div>
-      </section>
+      {step === 3 && quote && <><span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-[#9d7428] mb-3"><span className="w-1.5 h-1.5 rounded-full bg-[#9d7428]" />Step 3 / 6 · Provider quote</span><h2 className="font-[Space_Grotesk,sans-serif] text-[24px] font-bold tracking-tight mb-1">The agent sets the price.</h2><p className="text-[13px] text-[#6d6a61] mb-5 max-w-[560px]">Budget isn't something you type in. The agent's endpoint negotiates terms for this exact goal and returns a signed, time-boxed quote.</p><div className="border border-[#d5cfbf] rounded-[18px_9px_20px_10px] overflow-hidden mb-6 bg-[#eeeade]"><div className="flex justify-between items-center px-5 py-3 border-b border-dashed border-[#c8c0af]"><span className="font-mono text-[9px] uppercase text-[#8a8477]">marketplace_quotes</span><span className={`inline-block font-mono text-[9.5px] px-2.5 py-1 rounded-lg ${quote.quote.status === "accepted" ? "bg-[#e7efe9] text-[#2d6b4f]" : "bg-[#f7ecd3] text-[#9d7428]"}`}>{human(quote.quote.status)}</span></div><div className="grid sm:grid-cols-2 gap-4 p-5"><Info title="Quoted price" value={`${quote.quote.price} ${quote.quote.currency}`} mono /><Info title="Provider signature" value={quote.signature_present ? "Present ✓" : "Not present"} green /><Info title="Quote hash" value={compact(quote.quote.quote_hash)} mono /><Info title="Expires" value={ttl > 0 ? `in ${mins}:${secs}` : "expired"} /></div><div className="px-5 py-3 border-t border-dashed border-[#d5cfbf] text-[10.5px] text-[#6d6a61]">Endpoint negotiation: <code className="font-mono text-[10.5px] bg-[#fbfaf5] px-1 rounded">POST /erc8183/negotiate</code> · provider quote only</div></div><div className="flex gap-3"><button disabled={quoteLoading || ttl <= 0 || quote.quote.status === "accepted"} onClick={() => void acceptQuote()} className="font-[Space_Grotesk,sans-serif] font-bold text-[12px] px-5 py-3 bg-[#171714] text-[#fbfaf5] rounded-[14px_8px_16px_9px]">{quoteLoading ? "Accepting…" : quote.quote.status === "accepted" ? "Quote accepted" : "Accept quote →"}</button><button onClick={() => setStep(2)} className="font-bold text-[12px] px-4 py-3 text-[#6d6a61]">← Back</button></div></>}
 
-      {error && <div className="workspace-alert workspace-alert-error">{error}</div>}
+      {step === 4 && mission && quote && <><span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-[#9d7428] mb-3"><span className="w-1.5 h-1.5 rounded-full bg-[#9d7428]" />Step 4 / 6 · Mission</span><h2 className="font-[Space_Grotesk,sans-serif] text-[24px] font-bold tracking-tight mb-1">Mission created.</h2><p className="text-[13px] text-[#6d6a61] mb-5 max-w-[560px]">Recorded in the Supabase workflow layer. The number below is the accepted provider quote carried forward; on-chain budget is set during ERC-8183 preparation.</p><div className="border border-[#d5cfbf] rounded-[18px_9px_20px_10px] p-5 mb-6 bg-[#eeeade]"><div className="grid sm:grid-cols-2 gap-4 mb-4"><Info title="Title" value={mission.mission.title || `${selected?.agent.name || "Agent"} mission`} /><Info title="Category" value={human(mission.mission.category || intent.category)} /><Info title="Assigned agent" value={selected?.agent.name || "Provider"} /><Info title="Budget (from accepted quote)" value={`${quote.quote.price} ${quote.quote.currency}`} mono /></div><div className="flex justify-between items-end pt-4 border-t border-dashed border-[#d5cfbf]"><div><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1">Status</small><span className="inline-block font-mono text-[9.5px] px-2.5 py-1 rounded-lg bg-[#f7ecd3] text-[#9d7428]">Open — not yet funded</span></div><span className="font-mono text-[9.5px] text-[#9aa3b1]">quote_id: {compact(quote.quote.quote_id)}</span></div></div><div className="flex gap-3"><button onClick={() => void prepare()} disabled={prepareLoading || quote.quote.status !== "accepted"} className="font-[Space_Grotesk,sans-serif] font-bold text-[12px] px-5 py-3 bg-[#171714] text-[#fbfaf5] rounded-[14px_8px_16px_9px]">{prepareLoading ? "Preparing…" : "Prepare ERC-8183 job →"}</button><button onClick={() => setStep(3)} className="font-bold text-[12px] px-4 py-3 text-[#6d6a61]">← Back</button></div></>}
 
-      {mission && (
-        <div className="workspace-alert workspace-alert-success">
-          <div><strong>Testnet mission created.</strong> Marketplace job {mission.job.id.slice(0, 8)}… is open for quote negotiation.</div>
-          <span>Mission {mission.mission.id.slice(0, 8)}…</span>
-        </div>
-      )}
+      {step === 5 && prepared && <><span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-[#9d7428] mb-3"><span className="w-1.5 h-1.5 rounded-full bg-[#9d7428]" />Step 5 / 6 · ERC-8183 preparation</span><h2 className="font-[Space_Grotesk,sans-serif] text-[24px] font-bold tracking-tight mb-1">Your wallet signs five steps.</h2><p className="text-[13px] text-[#6d6a61] mb-5 max-w-[560px]">Nothing is custodied. The existing Testnet execution screen will request the real wallet transactions in order using the prepared quote and job data.</p><div className="border border-[#d5cfbf] rounded-[18px_9px_20px_10px] overflow-hidden mb-6">{[["createJob","Registers the job against the ERC-8183 commerce contract"],["registerJob","Uses the confirmed jobId from the createJob receipt"],["setBudget","Uses the accepted quote amount"],["approve","Runs only when allowance is insufficient"],["fund","Funds the same quoted budget"]].map(([a,b]) => <div key={a} className="flex items-center gap-3 p-4 border-b border-dashed border-[#c8c0af] last:border-b-0 bg-[#eeeade]"><span className="w-5 h-5 rounded-full border-2 border-[#d5cfbf] shrink-0" /><div><strong className="block font-mono text-[12px] font-medium">{a}</strong><span className="block text-[10.5px] text-[#6d6a61]">{b}</span></div></div>)}</div><div className="flex gap-3"><button onClick={() => location.assign(`/testnet/execute?mission=${encodeURIComponent(mission?.mission.id || "")}&quote=${encodeURIComponent(quote?.quote.quote_id || "")}`)} className="font-[Space_Grotesk,sans-serif] font-bold text-[12px] px-5 py-3 bg-[#171714] text-[#fbfaf5] rounded-[14px_8px_16px_9px]">Sign in wallet →</button><button onClick={() => setStep(4)} className="font-bold text-[12px] px-4 py-3 text-[#6d6a61]">← Back</button></div></>}
 
-      <section className="results-layout">
-        <div className="results-main">
-          <div className="section-marker"><span>01</span> TESTNET MATCH RESULT</div>
-          {loading && <div className="workspace-loading">Comparing Testnet capability, verification, liveness, history and reputation…</div>}
-
-          {!loading && best && (
-            <article className="best-agent-card">
-              <div className="best-agent-top">
-                <div>
-                  <div className="verified-line"><span className="status-dot" /> {hireabilityLabel(best)}</div>
-                  <h2>{best.agent.name || `Agent #${best.agent.agent_id}`}</h2>
-                  <p>{best.agent.description || "BSC Testnet DeFi specialist discovered through the ERC-8004 Testnet registry."}</p>
-                </div>
-                <div className={`score-chip ${scoreColor(best.score)}`}><b>{Math.round(best.score)}</b><span>/100</span></div>
-              </div>
-
-              <div className="agent-meta-row">
-                <span>{categoryLabel(best.agent.category)}</span>
-                <span>{best.agent.status || "unknown endpoint"}</span>
-                <span>{best.agent.source || "testnet indexed"}</span>
-                {best.agent.is_first_party && <span>first-party</span>}
-              </div>
-
-              {!bestReady && best.hireability && (
-                <div className="workspace-alert workspace-alert-error" style={{ marginTop: 16, marginBottom: 0 }}>
-                  {best.hireability.reason}
-                </div>
-              )}
-
-              <div className="why-block">
-                <div className="why-head"><span>WHY THIS TESTNET AGENT</span><strong>{confidenceLabel(best.scoreConfidence)}</strong></div>
-                <div className="why-summary">
-                  <span>Normalized match</span><b>{Math.round(best.score)}/100</b>
-                  <span>Available evidence ceiling</span><b>{Math.round(best.scoreMax ?? 100)}/100</b>
-                </div>
-                <div className="metric-list">
-                  {Object.entries(best.breakdown).map(([key, value]) => {
-                    const weight = breakdownWeights[key] || 1;
-                    const width = Math.max(0, Math.min(100, (value / weight) * 100));
-                    return (
-                      <div className="metric-row" key={key}>
-                        <span>{key.replace(/([A-Z])/g, " $1")}</span>
-                        <div className="metric-track"><i style={{ width: `${width}%` }} /></div>
-                        <b>{Math.round(value)}</b>
-                      </div>
-                    );
-                  })}
-                </div>
-                {best.reasons && <div className="evidence-reasons">{best.reasons.map((reason) => <span key={reason}>{reason}</span>)}</div>}
-              </div>
-
-              <div className="best-agent-actions">
-                <button type="button" className="dark-button" onClick={() => void hire(best)} disabled={loading || !!mission || !bestReady}>
-                  {mission ? "Quote in progress" : bestReady ? "Request provider quote" : "Provider not ready"}
-                </button>
-                <button type="button" className="outline-button" onClick={() => setSelected(best)}>Inspect agent</button>
-              </div>
-            </article>
-          )}
-        </div>
-
-        <aside className="alternatives-panel">
-          <div className="section-marker"><span>02</span> TESTNET ALTERNATIVES</div>
-          <div className="alternatives-list">
-            {candidates.length === 0 && !loading && <p className="empty-state">No additional compatible Testnet agents returned yet.</p>}
-            {candidates.map((match) => (
-              <button type="button" className="alternative-row" key={match.agent.agent_id} onClick={() => setSelected(match)}>
-                <span className="alternative-index">{match.agent.agent_id.slice(-3)}</span>
-                <span className="alternative-info"><strong>{match.agent.name || `Agent #${match.agent.agent_id}`}</strong><small>{categoryLabel(match.agent.category)} · {hireabilityLabel(match)}</small></span>
-                <strong className={`alternative-score ${scoreColor(match.score)}`}>{Math.round(match.score)}</strong>
-              </button>
-            ))}
-          </div>
-        </aside>
-      </section>
-
-      {quote && (
-        <section className="best-agent-card" style={{ marginTop: 18 }}>
-          <div className="best-agent-top">
-            <div>
-              <div className="verified-line"><span className="status-dot" /> PROVIDER QUOTE · BSC TESTNET</div>
-              <h2>Quoted terms</h2>
-              <p>The provider returned a Testnet quote before any ERC-8183 funding transaction. Only the accepted quote can be used to prepare the on-chain job.</p>
-            </div>
-            <div className="score-chip brass"><b>{quote.quote.price}</b><span>{quote.quote.currency}</span></div>
-          </div>
-          <div className="agent-meta-row">
-            <span>Quote {quote.quote.quote_id.slice(0, 8)}…</span>
-            <span>Status: {quote.quote.status}</span>
-            <span>Expires: {new Date(quote.quote.expires_at).toLocaleString()}</span>
-            <span>{quote.signature_present ? "provider signature present" : "unsigned provider response"}</span>
-          </div>
-          {quote.quote.quote_hash && <div className="workspace-alert workspace-alert-success" style={{ marginTop: 16, marginBottom: 0 }}>Integrity hash: {quote.quote.quote_hash}</div>}
-          <div className="best-agent-actions" style={{ marginTop: 16 }}>
-            {quote.quote.status === "offered" ? (
-              <button type="button" className="dark-button" onClick={() => void acceptQuote()} disabled={quoteLoading}>
-                {quoteLoading ? "Accepting…" : "Accept provider quote"}
-              </button>
-            ) : (
-              <button type="button" className="dark-button" onClick={() => void prepareAcceptedQuote()} disabled={prepareLoading || quote.quote.status !== "accepted"}>
-                {prepareLoading ? "Building plan…" : "Build ERC-8183 Testnet plan"}
-              </button>
-            )}
-            <button type="button" className="outline-button" onClick={() => { setQuote(null); setPrepared(null); }}>Cancel quote</button>
-          </div>
-        </section>
-      )}
-
-      {prepared && (
-        <section className="best-agent-card" style={{ marginTop: 18 }}>
-          <div className="best-agent-top">
-            <div>
-              <div className="verified-line"><span className="status-dot" /> ERC-8183 TESTNET PLAN READY</div>
-              <h2>Wallet review</h2>
-              <p>Every transaction below is derived from the accepted provider quote. Nothing is signed automatically.</p>
-            </div>
-            <div className="score-chip green"><b>{prepared.payment.budget_raw}</b><span>{prepared.payment.symbol}</span></div>
-          </div>
-          <div className="agent-meta-row">
-            <span>Provider {compactAddress(prepared.agent.provider)}</span>
-            <span>Balance {prepared.payment.balance_formatted} {prepared.payment.symbol}</span>
-            <span>Allowance {prepared.payment.allowance_formatted} {prepared.payment.symbol}</span>
-          </div>
-          <div className="metric-list" style={{ marginTop: 16 }}>
-            {Object.entries(prepared.transactions).map(([name, tx]) => (
-              <div className="metric-row" key={name}>
-                <span>{name.replace(/_/g, " ")}</span>
-                <div className="metric-track"><i style={{ width: tx.data ? "100%" : "60%" }} /></div>
-                <b>{tx.data ? "encoded" : "builder"}</b>
-              </div>
-            ))}
-          </div>
-          <div className="workspace-alert workspace-alert-success" style={{ marginTop: 16, marginBottom: 0 }}>
-            The job description contains the accepted quote hash and Testnet strategy parameters. Next step is wallet signing and on-chain create → register → budget → approve → fund.
-          </div>
-        </section>
-      )}
-
-      <section className="registry-note">
-        <div>
-          <span className="small-label">TESTNET REGISTRY CONTEXT</span>
-          <h3>ERC-8004 → negotiated quote → ERC-8183.</h3>
-          <p>The Testnet marketplace proves the provider negotiation boundary before any user funds enter escrow. Mainnet remains untouched.</p>
-        </div>
-        <div className="registry-path"><span>CHAIN</span><b>BSC 97</b><i>→</i><span>QUOTE</span><b>ERC-8183</b><i>→</i><span>JOB</span><b>ESCROW</b></div>
-      </section>
-
-      {selected && (
-        <div className="agent-drawer-backdrop" onClick={() => setSelected(null)}>
-          <aside className="agent-drawer" onClick={(event) => event.stopPropagation()}>
-            <button className="drawer-close" type="button" onClick={() => setSelected(null)} aria-label="Close agent details">×</button>
-            <span className="small-label">TESTNET AGENT PROFILE</span>
-            <div className="drawer-score"><b>{Math.round(selected.score)}</b><span>/100 match · {confidenceLabel(selected.scoreConfidence)}</span></div>
-            <h2>{selected.agent.name || `Agent #${selected.agent.agent_id}`}</h2>
-            <p>{selected.agent.description || "No description was published in the Testnet registration file yet."}</p>
-            <div className="drawer-facts">
-              <div><span>Readiness</span><b>{hireabilityLabel(selected)}</b></div>
-              <div><span>agentId</span><b>{selected.agent.agent_id}</b></div>
-              <div><span>Owner</span><b>{compactAddress(selected.agent.owner)}</b></div>
-              <div><span>Category</span><b>{categoryLabel(selected.agent.category)}</b></div>
-              <div><span>Identity</span><b>{selected.agent.verification_status || "indexed"}</b></div>
-              <div><span>Endpoint</span><b>{selected.agent.status || "unknown"}</b></div>
-              <div><span>History</span><b>{selected.evidence?.completionAvailable ? "Available" : "Insufficient"}</b></div>
-            </div>
-            <div className="drawer-breakdown">
-              {Object.entries(selected.breakdown).map(([key, value]) => <div className="metric-row" key={key}><span>{key.replace(/([A-Z])/g, " $1")}</span><b>{Math.round(value)}</b></div>)}
-            </div>
-            <button className="dark-button" type="button" onClick={() => void hire(selected)} disabled={loading || !!mission || !selected.hireability?.canCreateJob}>
-              {mission ? "Quote in progress" : selected.hireability?.canCreateJob ? "Request provider quote" : "Provider not ready"}
-            </button>
-          </aside>
-        </div>
-      )}
-    </main>
-  );
+      {step === 6 && <><span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-[#2d6b4f] mb-3"><span className="w-1.5 h-1.5 rounded-full bg-[#2d6b4f]" />Step 6 / 6 · Chain receipt</span><h2 className="font-[Space_Grotesk,sans-serif] text-[24px] font-bold tracking-tight mb-1">Funded, on-chain.</h2><p className="text-[13px] text-[#6d6a61] mb-5 max-w-[560px]">The execution page must confirm real transaction receipts and a real ERC-8183 chain state before this screen is considered complete.</p><div className="border border-[#d5cfbf] rounded-[18px_9px_20px_10px] p-5 mb-6 bg-[#eeeade] grid sm:grid-cols-2 gap-4"><Info title="Chain job ID" value={mission?.job.id || "Confirmed by execution page"} mono /><Info title="Status" value="Funded" green /><Info title="Network" value="BSC Testnet · Chain 97" /><Info title="Agent" value={selected?.agent.name || "Provider"} /></div><p className="text-[11.5px] text-[#6d6a61] mb-4 max-w-[520px]">From here the job lives with the provider. Track the job using the mission console linked from Missions.</p><div className="flex gap-3"><button onClick={() => location.assign(`/dashboard?tab=missions`)} className="font-[Space_Grotesk,sans-serif] font-bold text-[12px] px-5 py-3 bg-[#171714] text-[#fbfaf5] rounded-[14px_8px_16px_9px]">Go to Missions →</button><button onClick={() => location.assign("/app")} className="font-bold text-[12px] px-4 py-3 text-[#6d6a61]">Create another</button></div></>}
+    </div>
+  </main>;
 }
+
+function Info({ title, value, mono, green }: { title: string; value: string; mono?: boolean; green?: boolean }) { return <div><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1">{title}</small><strong className={`${mono ? "font-mono" : ""} ${green ? "text-[#2d6b4f]" : ""} text-[13px] font-bold`}>{value}</strong></div>; }
