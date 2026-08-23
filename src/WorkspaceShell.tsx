@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { signOut } from "./lib/walletAuth";
+import { getCurrentUser, signOut, type AuthUser } from "./lib/walletAuth";
 
 type WorkspacePage = "Overview" | "Discover" | "Missions" | "Activity" | "Payments" | "Testnet" | "Register agent" | "Permissions";
 
@@ -30,19 +30,29 @@ function currentPage(): WorkspacePage {
   return "Overview";
 }
 
+function compact(value?: string | null) {
+  return value ? `${value.slice(0, 6)}…${value.slice(-4)}` : "Wallet session";
+}
+
 export default function WorkspaceShell({ children }: { children: ReactNode }) {
   const [page, setPage] = useState<WorkspacePage>(currentPage);
   const [manageOpen, setManageOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+  const [user, setUser] = useState<AuthUser | null>(null);
 
   useEffect(() => {
     const onPopState = () => setPage(currentPage());
     const onDocumentClick = () => setManageOpen(false);
+    const onScroll = () => setScrolled(window.scrollY > 8);
     window.addEventListener("popstate", onPopState);
+    window.addEventListener("scroll", onScroll, { passive: true });
     document.addEventListener("click", onDocumentClick);
+    void getCurrentUser().then(setUser).catch(() => setUser(null));
     return () => {
       window.removeEventListener("popstate", onPopState);
+      window.removeEventListener("scroll", onScroll);
       document.removeEventListener("click", onDocumentClick);
     };
   }, []);
@@ -79,7 +89,7 @@ export default function WorkspaceShell({ children }: { children: ReactNode }) {
         }
       `}</style>
 
-      <header className="sticky top-0 z-50 border-b border-[#d5cfbf] bg-[rgba(238,234,222,.92)] backdrop-blur transition-shadow duration-200 hover:shadow-[0_8px_24px_rgba(23,23,20,.06)]">
+      <header className={`sticky top-0 z-50 border-b border-[#d5cfbf] bg-[rgba(238,234,222,.92)] backdrop-blur transition-shadow duration-200 ${scrolled ? "shadow-[0_8px_24px_rgba(23,23,20,.06)]" : ""}`}>
         <div className="mx-auto flex h-[72px] max-w-[1240px] items-center justify-between gap-6 px-6 md:px-8">
           <a href="/dashboard" className="flex shrink-0 items-center gap-2.5 no-underline" aria-label="AgentMarket home">
             <span className="h-7 w-7 text-[#9d7428]">
@@ -88,28 +98,18 @@ export default function WorkspaceShell({ children }: { children: ReactNode }) {
                 <path d="M7 18L11.4 10.2L15.2 15L20.8 7.7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </span>
-            <span className="font-[Space_Grotesk,sans-serif] text-[16px] font-bold tracking-tight">AgentMarket</span>
+            <span className="font-display text-[16px] font-bold tracking-tight">AgentMarket</span>
           </a>
 
           <nav className="hidden items-center gap-7 font-mono text-[11px] font-medium uppercase tracking-wide text-[#6d6a61] lg:flex" aria-label="Workspace navigation">
             {primaryLinks.map((link) => (
-              <button
-                key={link.label}
-                type="button"
-                onClick={() => navigate(link.href, link.label)}
-                className={`relative pb-1 transition-colors ${page === link.label ? "text-[#171714] after:scale-x-100" : "hover:text-[#171714] after:scale-x-0"} after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:origin-left after:bg-[#9d7428] after:transition-transform after:duration-200`}
-              >
+              <button key={link.label} type="button" onClick={() => navigate(link.href, link.label)} className={`relative pb-1 transition-colors ${page === link.label ? "text-[#171714] after:scale-x-100" : "hover:text-[#171714] after:scale-x-0"} after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:origin-left after:bg-[#9d7428] after:transition-transform after:duration-200`}>
                 {link.label}
               </button>
             ))}
 
             <div className="relative">
-              <button
-                type="button"
-                onClick={(event) => { event.stopPropagation(); setManageOpen((value) => !value); }}
-                className={`relative flex items-center gap-1.5 pb-1 transition-colors ${manageOpen ? "text-[#171714] after:scale-x-100" : "hover:text-[#171714] after:scale-x-0"} after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:origin-left after:bg-[#9d7428] after:transition-transform after:duration-200`}
-                aria-expanded={manageOpen}
-              >
+              <button type="button" onClick={(event) => { event.stopPropagation(); setManageOpen((value) => !value); }} className={`relative flex items-center gap-1.5 pb-1 transition-colors ${manageOpen ? "text-[#171714] after:scale-x-100" : "hover:text-[#171714] after:scale-x-0"} after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:origin-left after:bg-[#9d7428] after:transition-transform after:duration-200`} aria-expanded={manageOpen}>
                 Manage
                 <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
               </button>
@@ -131,8 +131,8 @@ export default function WorkspaceShell({ children }: { children: ReactNode }) {
             <span className="flex items-center gap-2 rounded-lg border border-[#d5cfbf] bg-[#fbfaf5] px-3 py-2 font-mono text-[9.5px] text-[#6d6a61]">
               <span className="h-1.5 w-1.5 rounded-full bg-[#2d6b4f]" /> CHAIN 97
             </span>
-            <button type="button" onClick={() => navigate("/dashboard", "Overview")} className="rounded-[14px_8px_16px_9px] bg-[#171714] px-3 py-2 font-mono text-[11.5px] font-semibold text-[#fbfaf5]">Wallet session</button>
-            <button type="button" onClick={() => navigate("/app", "Discover")} className="flex items-center gap-2 rounded-[14px_8px_16px_9px] bg-[#171714] px-4 py-2.5 font-[Space_Grotesk,sans-serif] text-[11px] font-bold text-[#fbfaf5] hover:bg-black">
+            <button type="button" onClick={() => navigate("/dashboard", "Overview")} className="rounded-[14px_8px_16px_9px] bg-[#171714] px-3 py-2 font-mono text-[11.5px] font-semibold text-[#fbfaf5]">{compact(user?.wallet_address)}</button>
+            <button type="button" onClick={() => navigate("/app", "Discover")} className="flex items-center gap-2 rounded-[14px_8px_16px_9px] bg-[#171714] px-4 py-2.5 font-display text-[11px] font-bold text-[#fbfaf5] hover:bg-black">
               Create mission <span className="text-[#d2b05e]">+</span>
             </button>
             <button type="button" onClick={() => void handleSignOut()} disabled={signingOut} className="font-mono text-[10px] font-medium uppercase tracking-wide text-[#6d6a61] hover:text-[#171714] disabled:opacity-50">
