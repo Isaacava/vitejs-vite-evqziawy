@@ -88,7 +88,13 @@ async function makeProvider(forceFresh = false): Promise<Eip1193Provider> {
   }).then(async (provider) => {
     const eip = provider as unknown as Eip1193Provider;
 
-    await eip.connect?.({ chains: [AUTH_CHAIN_ID] });
+    // EthereumProvider restores an existing WalletConnect session from its
+    // persistent storage during init. Do not call connect() again when that
+    // session is already a valid BSC Testnet session; doing so can reopen the
+    // wallet connection UI and makes users think AgentMarket lost their login.
+    if (!hasTestnetSession(eip)) {
+      await eip.connect?.({ chains: [AUTH_CHAIN_ID] });
+    }
 
     if (!hasTestnetSession(eip)) {
       await dropProvider(eip);
