@@ -1,7 +1,8 @@
 import React, { useEffect } from "react";
 import ReactDOM from "react-dom/client";
+
 import LandingEntry from "./LandingEntry";
-import DashboardShell from "./DashboardShell";
+import UserDashboard from "./UserDashboard";
 import WorkspaceShell from "./WorkspaceShell";
 import AgentRegistration from "./AgentRegistration";
 import SessionPermissions from "./SessionPermissions";
@@ -44,11 +45,7 @@ function TestnetExecutionHandoff() {
     return () => document.removeEventListener("click", onClick, true);
   }, []);
 
-  return (
-    <WorkspaceShell>
-      <MarketplaceWorkspace />
-    </WorkspaceShell>
-  );
+  return <WorkspaceShell><MarketplaceWorkspace /></WorkspaceShell>;
 }
 
 function renderWorkspace(element: React.ReactNode) {
@@ -61,7 +58,7 @@ function renderApp() {
   }
 
   if (path === "/") return <LandingEntry />;
-  if (path === "/dashboard") return <DashboardShell />;
+  if (path === "/dashboard") return <UserDashboard />;
   if (path === "/discover") return renderWorkspace(<DiscoverPage />);
   if (path === "/missions") return renderWorkspace(<WorkspaceMissionPage />);
   if (path === "/mission") return renderWorkspace(<WorkspaceMissionConsole />);
@@ -73,13 +70,12 @@ function renderApp() {
   if (path === "/testnet/provider-submit") return renderWorkspace(<TestnetProviderSubmit />);
   if (path === "/testnet/quote-gate" && missionId && quoteId) return renderWorkspace(<TestnetQuoteGate />);
   if (path === "/testnet/recover") return renderWorkspace(<TestnetRecovery />);
-  if (path === "/testnet/jobs") return renderWorkspace(<TestnetJobHistory />);
+  if (path === "/testnet/jobs" || path === "/missions/history") return renderWorkspace(<TestnetJobHistory />);
   if (path === "/testnet/review") return renderWorkspace(<TestnetPolicyReview />);
   if (path === "/testnet/result") return renderWorkspace(<TestnetJobResult />);
   if (path === "/testnet/providers") return renderWorkspace(<TestnetProviderReadiness />);
   if (path === "/testnet/preflight") return renderWorkspace(<TestnetTransactionPreflight />);
   if (path === "/testnet/run") return renderWorkspace(<TestnetGridRun />);
-  if (path === "/app") return <TestnetExecutionHandoff />;
 
   return renderWorkspace(<TestnetSandbox />);
 }
