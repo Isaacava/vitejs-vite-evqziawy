@@ -8,6 +8,7 @@ import SessionPermissions from "./SessionPermissions";
 import DiscoverPage from "./DiscoverPage";
 import MarketplaceWorkspace from "./MarketplaceWorkspace";
 import MissionConsole from "./MissionConsole";
+import WorkspaceMissionPage from "./WorkspaceMissionPage";
 import TestnetQuoteExecutionWalletConnect from "./TestnetQuoteExecutionWalletConnect";
 import TestnetQuoteGate from "./TestnetQuoteGate";
 import TestnetProviderSubmit from "./ProviderSubmit";
@@ -20,26 +21,70 @@ import TestnetGridRun from "./TestnetGridRun";
 import TestnetPolicyReview from "./TestnetPolicyReview";
 import TestnetJobResult from "./TestnetJobResult";
 import "./index.css";
-const params = new URLSearchParams(window.location.search); const missionId = params.get("mission"); const quoteId = params.get("quote"); const jobId = params.get("job"); const path = window.location.pathname;
-function TestnetExecutionHandoff(){ useEffect(()=>{ if(path!=="/app")return; const onClick=(e:MouseEvent)=>{ const t=e.target as HTMLElement|null; const b=t?.closest("button"); if(!b)return; if(!b.textContent?.toLowerCase().includes("build erc-8183 testnet plan"))return; e.preventDefault(); e.stopPropagation(); location.assign("/testnet/execute"); }; document.addEventListener("click",onClick,true); return()=>document.removeEventListener("click",onClick,true);},[]); return <WorkspaceShell><MarketplaceWorkspace/></WorkspaceShell>; }
-function renderApp(){
- if(path==="/"&&jobId)return <WorkspaceShell><MissionConsole/></WorkspaceShell>;
- if(path==="/")return <LandingEntry/>;
- if(path==="/dashboard")return <DashboardShell/>;
- if(path==="/discover")return <WorkspaceShell><DiscoverPage/></WorkspaceShell>;
- if(path==="/agents/register")return <WorkspaceShell><AgentRegistration/></WorkspaceShell>;
- if(path==="/permissions")return <WorkspaceShell><SessionPermissions/></WorkspaceShell>;
- if(path==="/testnet/execute")return <WorkspaceShell><TestnetQuoteExecutionWalletConnect/></WorkspaceShell>;
- if(path==="/testnet/provider-submit")return <WorkspaceShell><TestnetProviderSubmit/></WorkspaceShell>;
- if(path==="/testnet/quote-gate"&&missionId&&quoteId)return <WorkspaceShell><TestnetQuoteGate/></WorkspaceShell>;
- if(path==="/testnet/recover")return <WorkspaceShell><TestnetRecovery/></WorkspaceShell>;
- if(path==="/testnet/jobs"||path==="/missions")return <WorkspaceShell><TestnetJobHistory/></WorkspaceShell>;
- if(path==="/testnet/review")return <WorkspaceShell><TestnetPolicyReview/></WorkspaceShell>;
- if(path==="/testnet/result")return <WorkspaceShell><TestnetJobResult/></WorkspaceShell>;
- if(path==="/testnet/providers")return <WorkspaceShell><TestnetProviderReadiness/></WorkspaceShell>;
- if(path==="/testnet/preflight")return <WorkspaceShell><TestnetTransactionPreflight/></WorkspaceShell>;
- if(path==="/testnet/run")return <WorkspaceShell><TestnetGridRun/></WorkspaceShell>;
- if(path==="/app")return <TestnetExecutionHandoff/>;
- return <TestnetSandbox/>;
+
+const params = new URLSearchParams(window.location.search);
+const missionId = params.get("mission");
+const quoteId = params.get("quote");
+const jobId = params.get("job");
+const path = window.location.pathname;
+
+function TestnetExecutionHandoff() {
+  useEffect(() => {
+    if (path !== "/app") return;
+    const onClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      const button = target?.closest("button");
+      if (!button) return;
+      if (!button.textContent?.toLowerCase().includes("build erc-8183 testnet plan")) return;
+      event.preventDefault();
+      event.stopPropagation();
+      window.location.assign("/testnet/execute");
+    };
+    document.addEventListener("click", onClick, true);
+    return () => document.removeEventListener("click", onClick, true);
+  }, []);
+
+  return (
+    <WorkspaceShell>
+      <MarketplaceWorkspace />
+    </WorkspaceShell>
+  );
 }
-ReactDOM.createRoot(document.getElementById("root")!).render(<React.StrictMode>{renderApp()}</React.StrictMode>);
+
+function renderWorkspace(element: React.ReactNode) {
+  return <WorkspaceShell>{element}</WorkspaceShell>;
+}
+
+function renderApp() {
+  // Keep the original root ?job compatibility while also exposing the proper
+  // /mission?job=<marketplace-job-id> route for the workspace navigation.
+  if ((path === "/" || path === "/mission") && jobId) {
+    return renderWorkspace(<MissionConsole />);
+  }
+
+  if (path === "/") return <LandingEntry />;
+  if (path === "/dashboard") return <DashboardShell />;
+  if (path === "/discover") return renderWorkspace(<DiscoverPage />);
+  if (path === "/missions") return renderWorkspace(<WorkspaceMissionPage />);
+  if (path === "/agents/register") return renderWorkspace(<AgentRegistration />);
+  if (path === "/permissions") return renderWorkspace(<SessionPermissions />);
+
+  if (path === "/testnet") return renderWorkspace(<TestnetSandbox />);
+  if (path === "/testnet/execute") return renderWorkspace(<TestnetQuoteExecutionWalletConnect />);
+  if (path === "/testnet/provider-submit") return renderWorkspace(<TestnetProviderSubmit />);
+  if (path === "/testnet/quote-gate" && missionId && quoteId) return renderWorkspace(<TestnetQuoteGate />);
+  if (path === "/testnet/recover") return renderWorkspace(<TestnetRecovery />);
+  if (path === "/testnet/jobs") return renderWorkspace(<TestnetJobHistory />);
+  if (path === "/testnet/review") return renderWorkspace(<TestnetPolicyReview />);
+  if (path === "/testnet/result") return renderWorkspace(<TestnetJobResult />);
+  if (path === "/testnet/providers") return renderWorkspace(<TestnetProviderReadiness />);
+  if (path === "/testnet/preflight") return renderWorkspace(<TestnetTransactionPreflight />);
+  if (path === "/testnet/run") return renderWorkspace(<TestnetGridRun />);
+  if (path === "/app") return <TestnetExecutionHandoff />;
+
+  return renderWorkspace(<TestnetSandbox />);
+}
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>{renderApp()}</React.StrictMode>,
+);
