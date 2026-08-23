@@ -1,9 +1,9 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { signOut } from "./lib/walletAuth";
 
-type WorkspacePage = "Overview" | "Discover" | "Missions" | "Activity" | "Payments" | "Testnet" | "Register agent" | "Permissions";
+type WorkspacePage = "Overview" | "Discover" | "Missions" | "Activity" | "Payments" | "Create mission" | "Testnet" | "Register agent" | "Permissions";
 
-const primaryLinks: Array<{ label: WorkspacePage; href: string }> = [
+const primaryLinks: Array<{ label: Exclude<WorkspacePage, "Create mission" | "Testnet" | "Register agent" | "Permissions">; href: string }> = [
   { label: "Overview", href: "/dashboard" },
   { label: "Discover", href: "/discover" },
   { label: "Missions", href: "/missions" },
@@ -11,7 +11,7 @@ const primaryLinks: Array<{ label: WorkspacePage; href: string }> = [
   { label: "Payments", href: "/dashboard?tab=payments" },
 ];
 
-const manageLinks: Array<{ label: WorkspacePage; href: string; detail: string; icon: string }> = [
+const manageLinks: Array<{ label: Exclude<WorkspacePage, "Overview" | "Discover" | "Missions" | "Activity" | "Payments" | "Create mission">; href: string; detail: string; icon: string }> = [
   { label: "Testnet", href: "/testnet/jobs", detail: "BSC Testnet · Chain 97 sandbox", icon: "◎" },
   { label: "Register agent", href: "/agents/register", detail: "List a new provider", icon: "+" },
   { label: "Permissions", href: "/permissions", detail: "Session scopes & allowances", icon: "◈" },
@@ -23,7 +23,7 @@ function currentPage(): WorkspacePage {
   const path = window.location.pathname;
   const tab = new URLSearchParams(window.location.search).get("tab");
   if (path === "/discover") return "Discover";
-  if (path === "/app") return "Discover";
+  if (path === "/app") return "Create mission";
   if (path === "/missions" || path === "/mission") return "Missions";
   if (path === "/agents/register") return "Register agent";
   if (path === "/permissions") return "Permissions";
@@ -196,7 +196,7 @@ export default function WorkspaceShell({ children }: { children: ReactNode }) {
             </button>
             <button
               type="button"
-              onClick={() => navigate("/app", "Discover")}
+              onClick={() => navigate("/app", "Create mission")}
               className="btn-asym flex items-center gap-2 bg-ink px-4 py-2.5 font-display text-[11px] font-bold text-paperhi hover:bg-black"
             >
               Create mission <span className="text-brasslt">+</span>
