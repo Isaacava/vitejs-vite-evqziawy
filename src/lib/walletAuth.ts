@@ -47,8 +47,8 @@ async function chainIdOf(provider: Eip1193Provider) {
   return normalizeChainId(await provider.request({ method: "eth_chainId" }));
 }
 
-function getInjectedProvider() {
-  return window.ethereum ?? null;
+function providerConnected(provider: Eip1193Provider) {
+  return Boolean((provider as Eip1193Provider & { connected?: boolean }).connected);
 }
 
 async function getWalletConnectProvider() {
@@ -73,12 +73,6 @@ async function getWalletConnectProvider() {
   }
   walletConnectProvider = await walletConnectInitPromise;
   return walletConnectProvider;
-}
-
-export async function getWalletProvider() {
-  const injected = getInjectedProvider();
-  if (injected) return injected;
-  return getWalletConnectProvider();
 }
 
 export async function ensureExpectedChain(provider: Eip1193Provider) {
@@ -113,61 +107,51 @@ export async function ensureExpectedChain(provider: Eip1193Provider) {
 }
 
 export async function connectWallet() {
-  const injected = getInjectedProvider();
-
-  // Preserve the previously working flow: use the wallet's injected
-  // provider first (MetaMask, Trust Wallet, Binance Wallet, etc.).
-  if (injected) {
-    let accounts = (await injected.request({ method: "eth_accounts" })) as string[];
-    if (!accounts?.[0]) {
-      accounts = (await injected.request({ method: "eth_requestAccounts" })) as string[];
-    }
-    await ensureExpectedChain(injected);
-    const wallet = accounts?.[0];
-    if (!wallet) throw new Error("No wallet account was selected.");
-    return { provider: injected, address: wallet };
-  }
-
-  // No injected wallet: fall back to WalletConnect.
   let provider = await getWalletConnectProvider();
+
   try {
-    if (provider.connect) {
+    if (!providerConnected(provider) && provider.connect) {
       await provider.connect({ chains: [AUTH_CHAIN_ID] });
     }
     await ensureExpectedChain(provider);
   } catch (error) {
-    try { await provider.disconnect?.(); } catch { /* stale session */ }
+    try { await provider.disconnect?.(); } catch { /* stale WalletConnect session */ }
     walletConnectProvider = null;
     walletConnectInitPromise = null;
     provider = await getWalletConnectProvider();
-    if (provider.connect) await provider.connect({ chains: [AUTH_CHAIN_ID] });
+    if (provider.connect) {
+      await provider.connect({ chains: [AUTH_CHAIN_ID] });
+    }
     await ensureExpectedChain(provider);
   }
 
   const accounts = (await provider.request({ method: "eth_accounts" })) as string[];
   const wallet = accounts?.[0];
-  if (!wallet) throw new Error("No wallet account was selected.");
+  if (!wallet) throw new Error("No WalletConnect account was selected.");
 
   walletConnectProvider = provider;
-  // Make the active WalletConnect session the provider consumed by legacy
-  // lifecycle action code too. This prevents an unrelated injected provider
-  // from being selected on the console and falsely reporting chain 97 as wrong.
-  window.ethereum = provider;
   return { provider, address: wallet };
 }
 
-export async function ensureWalletConnectedProvider() { return connectWallet(); }
-export function getConnectedWalletProvider() {
-  // Prefer the provider belonging to the AgentMarket session. A browser may
-  // expose an unrelated injected wallet even when AgentMarket authenticated
-  // through WalletConnect, so injected-provider-first can select the wrong
-  // chain/session and produce the misleading "switch to chain 97" error.
-  if (walletConnectProvider) return walletConnectProvider;
-  const injected = getInjectedProvider();
-  if (injected) return injected;
-  throw new Error("Wallet is not connected. Connect your Testnet wallet first.");
+export async function ensureWalletConnectedProvider() {
+  return connectWallet();
 }
-export function getWalletProviderOrThrow() { return getConnectedWalletProvider(); }
+
+export async function getWalletProvider() {
+  const { provider } = await ensureWalletConnectedProvider();
+  return provider;
+}
+
+export function getConnectedWalletProvider() {
+  if (!walletConnectProvider) {
+    throw new Error("WalletConnect session is not initialized. Connect your AgentMarket wallet first.");
+  }
+  return walletConnectProvider;
+}
+
+export function getWalletProviderOrThrow() {
+  return getConnectedWalletProvider();
+}
 
 async function authRequest(action: "nonce" | "verify" | "me" | "logout", init?: RequestInit) {
   return fetch(`${AUTH_API}?action=${action}`, { credentials: "include", ...init });
@@ -209,9 +193,6 @@ export async function signOut() {
   finally {
     const activeWalletConnectProvider = walletConnectProvider;
     try { await activeWalletConnectProvider?.disconnect?.(); } catch { /* stale session */ }
-    if (activeWalletConnectProvider && window.ethereum === activeWalletConnectProvider) {
-      try { delete window.ethereum; } catch { window.ethereum = undefined; }
-    }
     walletConnectProvider = null;
     walletConnectInitPromise = null;
   }
