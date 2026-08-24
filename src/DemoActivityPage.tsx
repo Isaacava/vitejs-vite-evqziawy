@@ -21,20 +21,20 @@ export default function DemoActivityPage() {
 
   return (
     <main className="mx-auto max-w-[1240px] px-6 py-8 md:px-8 font-body text-ink">
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex items-center justify-between gap-4">
         <span className="font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477]">Activity / Audit trail</span>
-        <b className="font-mono text-[10.5px] text-inksoft">{events.length} EVENTS</b>
+        <b className="shrink-0 font-mono text-[10.5px] text-inksoft">{events.length} EVENTS</b>
       </div>
       {error && <div className="mb-4 rounded-[14px_8px_15px_9px] border border-[#cfad9f] bg-rustsoft px-4 py-3 text-[12px] text-rust">{error}</div>}
       <section className="card-asym border border-line bg-paperhi p-[18px]">
         {events.map((event, index) => (
-          <div key={event.id} className={`grid grid-cols-[1fr_auto] gap-2 py-3 ${index < events.length - 1 ? "border-b border-linesoft" : ""}`}>
-            <div>
+          <div key={event.id} className={`grid min-w-0 grid-cols-1 gap-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-4 ${index < events.length - 1 ? "border-b border-linesoft" : ""}`}>
+            <div className="min-w-0">
               <strong className="block text-[12.5px] font-bold">{event.title}</strong>
-              <p className="text-[10.5px] text-inksoft my-0.5 mb-1.5">{event.description || "AgentMarket event"}</p>
+              <p className="my-0.5 mb-1.5 text-[10.5px] text-inksoft">{event.description || "AgentMarket event"}</p>
               <i className="block h-[3px] overflow-hidden rounded-full bg-linesoft"><u className="bar-fill block h-full rounded-full" style={{ width: `${Math.max(20, 100 - index * 15)}%` }} /></i>
             </div>
-            <small className="font-mono text-[9.5px] text-[#9aa3b1] whitespace-nowrap">{new Date(event.created_at).toLocaleString()}</small>
+            <small className="font-mono text-[9.5px] text-[#9aa3b1] sm:whitespace-nowrap">{new Date(event.created_at).toLocaleString()}</small>
           </div>
         ))}
         {!events.length && !error && <div className="py-8 text-[12px] text-inksoft">No activity records yet.</div>}
