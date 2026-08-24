@@ -9,6 +9,8 @@ import MarketplaceWorkspace from "./MarketplaceWorkspace";
 import WorkspaceMissionConsole from "./WorkspaceMissionConsole";
 import WorkspaceMissionPage from "./WorkspaceMissionPage";
 import DemoManagePage from "./DemoManagePage";
+import DemoActivityPage from "./DemoActivityPage";
+import DemoPaymentsPage from "./DemoPaymentsPage";
 import TestnetQuoteExecutionWalletConnect from "./TestnetQuoteExecutionWalletConnect";
 import TestnetQuoteGate from "./TestnetQuoteGate";
 import TestnetProviderSubmit from "./ProviderSubmit";
@@ -32,15 +34,15 @@ function renderWorkspace(element: React.ReactNode) {
 }
 
 function renderApp() {
-  if ((path === "/" || path === "/mission") && jobId) {
-    return renderWorkspace(<WorkspaceMissionConsole />);
-  }
+  if ((path === "/" || path === "/mission") && jobId) return renderWorkspace(<WorkspaceMissionConsole />);
 
   if (path === "/") return <LandingEntry />;
   if (path === "/dashboard") return <UserDashboard />;
   if (path === "/discover") return renderWorkspace(<DiscoverPage />);
   if (path === "/missions") return renderWorkspace(<WorkspaceMissionPage />);
   if (path === "/mission") return renderWorkspace(<WorkspaceMissionConsole />);
+  if (path === "/activity") return renderWorkspace(<DemoActivityPage />);
+  if (path === "/payments") return renderWorkspace(<DemoPaymentsPage />);
   if (path === "/app") return renderWorkspace(<MarketplaceWorkspace />);
 
   if (path === "/testnet") return renderWorkspace(<DemoManagePage kind="testnet" />);
