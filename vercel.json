@@ -7,6 +7,10 @@
     {
       "path": "/api/check-agent-endpoints",
       "schedule": "15 2 * * *"
+    },
+    {
+      "path": "/api/sync-agent-stats",
+      "schedule": "30 2 * * *"
     }
   ],
   "rewrites": [
