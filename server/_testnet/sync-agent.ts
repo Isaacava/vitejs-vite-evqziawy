@@ -29,8 +29,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const agentId = BigInt(agentIdValue);
     const [onchainOwner, uri] = await Promise.all([
-      publicClient.readContract({ address: REGISTRY, abi: OWNER_OF_ABI, functionName: "ownerOf", args: [agentId], authorizationList: [] }),
-      publicClient.readContract({ address: REGISTRY, abi: TOKEN_URI_ABI, functionName: "tokenURI", args: [agentId], authorizationList: [] }),
+      publicClient.readContract({ address: REGISTRY, abi: OWNER_OF_ABI, functionName: "ownerOf", args: [agentId] }),
+      publicClient.readContract({ address: REGISTRY, abi: TOKEN_URI_ABI, functionName: "tokenURI", args: [agentId] }),
     ]);
     if (String(onchainOwner).toLowerCase() !== owner.toLowerCase()) return res.status(403).json({ error: "Owner does not match the BSC Testnet ERC-8004 identity" });
 
