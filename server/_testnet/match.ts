@@ -36,9 +36,23 @@ type AgentRow = {
   metadata?: Record<string, unknown> | null;
 };
 
-type EndpointRow = { agent_id: string; status: string; latency_ms: number | null; last_checked_at: string | null };
+type EndpointRow = { agent_id: string; status: string; latency_ms: number | null; last_checked_at: string | null; protocol?: string | null; metadata?: Record<string, unknown> | null; endpoint_url?: string | null };
 type ReputationRow = { agent_id: string; score: number; source: string };
 type OnchainStats = CachedOnchainStats & { feedback_count: number; reputation_score: number | null };
+
+type ExecutionProfile = {
+  wallet_provider: "altana" | "twak" | "evm" | "unknown";
+  wallet_model: "agent_owned" | "external" | "unknown";
+  transaction_authority: "scoped_session" | "agent_wallet" | "restricted_commands" | "unknown";
+  supports_spend_cap: boolean;
+  supports_call_allowlist: boolean;
+  supports_expiry: boolean;
+  supports_revocation: boolean;
+  evidence: string[];
+};
+
+type CommerceProfile = { erc8183: boolean; x402: boolean; b402: boolean };
+type CommunicationProfile = { a2a: boolean; mcp: boolean; http: boolean };
 
 const WEIGHTS = { capability: 35, verification: 20, endpointLiveness: 15, completion: 10, jobVolume: 5, reputation: 15 } as const;
 const TESTNET_CHAIN = "bsc-testnet";
@@ -47,6 +61,105 @@ const TESTNET_ENVIRONMENT = "testnet";
 const GRID_AGENT_ID = "grid-strategy";
 
 function clamp(value: number) { return Math.max(0, Math.min(100, value)); }
+
+function normalizedStrings(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (typeof item === "string") return [item.toLowerCase()];
+    if (item && typeof item === "object") {
+      const record = item as Record<string, unknown>;
+      return [record.name, record.id, record.protocol, record.type, record.kind]
+        .filter((part): part is string => typeof part === "string")
+        .map((part) => part.toLowerCase());
+    }
+    return [];
+  });
+}
+
+function metadataRegistration(agent: AgentRow): Record<string, unknown> {
+  const registration = agent.metadata?.registration;
+  return registration && typeof registration === "object" ? registration as Record<string, unknown> : {};
+}
+
+function deriveExecutionProfile(agent: AgentRow, endpoints: EndpointRow[]) {
+  const metadata = agent.metadata ?? {};
+  const execution = metadata.execution && typeof metadata.execution === "object" ? metadata.execution as Record<string, unknown> : {};
+  const commerce = metadata.commerce && typeof metadata.commerce === "object" ? metadata.commerce as Record<string, unknown> : {};
+  const communication = metadata.communication && typeof metadata.communication === "object" ? metadata.communication as Record<string, unknown> : {};
+  const registration = metadataRegistration(agent);
+  const declared = [
+    ...normalizedStrings(registration.capabilities),
+    ...normalizedStrings(registration.skills),
+    ...normalizedStrings(registration.services),
+    ...normalizedStrings(registration.endpoints),
+  ];
+  const endpointText = endpoints.map((endpoint) => `${endpoint.protocol ?? ""} ${endpoint.endpoint_url ?? ""} ${JSON.stringify(endpoint.metadata ?? {})}`).join(" ").toLowerCase();
+  const registrationText = JSON.stringify(registration).toLowerCase();
+  const text = `${registrationText} ${endpointText} ${declared.join(" ")}`;
+
+  const walletProvider = typeof execution.wallet_provider === "string" ? execution.wallet_provider.toLowerCase() : "";
+  const altana = walletProvider === "altana" || /altana/.test(text);
+  const twak = walletProvider === "twak" || /twak|trust wallet agent/.test(text);
+  const evm = walletProvider === "evm" || /evmwalletprovider|evm wallet/.test(text);
+
+  const a2a = Boolean(communication.a2a) || /a2a|agent2agent|message\/send/.test(text);
+  const mcp = Boolean(communication.mcp) || /mcp|model context protocol/.test(text);
+  const http = Boolean(communication.http) || endpoints.some((endpoint) => /^(http|https)$/i.test(String(endpoint.protocol ?? ""))) || endpoints.some((endpoint) => /^https?:\/\//i.test(String(endpoint.endpoint_url ?? "")));
+
+  const erc8183 = commerce.erc8183 === true || /erc[- ]?8183|agentic commerce|commerce/.test(text) || endpoints.some((endpoint) => /erc[- ]?8183/i.test(String(endpoint.protocol ?? "")));
+  const x402 = commerce.x402 === true || /x402/.test(text);
+  const b402 = commerce.b402 === true || /b402/.test(text);
+
+  const executionProfile: ExecutionProfile = altana
+    ? {
+        wallet_provider: "altana",
+        wallet_model: "agent_owned",
+        transaction_authority: "scoped_session",
+        supports_spend_cap: true,
+        supports_call_allowlist: true,
+        supports_expiry: true,
+        supports_revocation: true,
+        evidence: ["Altana wallet/session support was explicitly declared by agent metadata or endpoint metadata"],
+      }
+    : twak
+      ? {
+          wallet_provider: "twak",
+          wallet_model: "agent_owned",
+          transaction_authority: "restricted_commands",
+          supports_spend_cap: false,
+          supports_call_allowlist: false,
+          supports_expiry: false,
+          supports_revocation: false,
+          evidence: ["Trust Wallet Agent Kit support was explicitly declared by agent metadata or endpoint metadata"],
+        }
+      : evm
+        ? {
+            wallet_provider: "evm",
+            wallet_model: "agent_owned",
+            transaction_authority: "agent_wallet",
+            supports_spend_cap: false,
+            supports_call_allowlist: false,
+            supports_expiry: false,
+            supports_revocation: false,
+            evidence: ["EVM wallet support was explicitly declared by agent metadata or endpoint metadata"],
+          }
+        : {
+            wallet_provider: "unknown",
+            wallet_model: "unknown",
+            transaction_authority: "unknown",
+            supports_spend_cap: false,
+            supports_call_allowlist: false,
+            supports_expiry: false,
+            supports_revocation: false,
+            evidence: ["No supported wallet/execution provider was explicitly declared; AgentMarket does not infer one"],
+          };
+
+  return {
+    execution: executionProfile,
+    commerce: { erc8183, x402, b402 } satisfies CommerceProfile,
+    communication: { a2a, mcp, http } satisfies CommunicationProfile,
+  };
+}
 
 function isTestnetAgent(agent: AgentRow) {
   const metadata = agent.metadata ?? {};
@@ -79,13 +192,7 @@ function readCachedOnchainStats(agent: AgentRow): OnchainStats | null {
   };
 }
 
-function scoreAgent(
-  agent: AgentRow,
-  intent: ReturnType<typeof parseMarketplaceIntent>,
-  endpoint: EndpointRow | undefined,
-  reputationRows: ReputationRow[],
-  onchain: OnchainStats | null,
-) {
+function scoreAgent(agent: AgentRow, intent: ReturnType<typeof parseMarketplaceIntent>, endpoint: EndpointRow | undefined, reputationRows: ReputationRow[], onchain: OnchainStats | null, profile: ReturnType<typeof deriveExecutionProfile>) {
   const capability = agent.category === intent.category ? 100 : intent.category === "other" ? 60 : 25;
   const verification = agent.verification_status === "verified" ? 100 : agent.verification_status === "pending" ? 70 : agent.verification_status === "indexed" ? 55 : 0;
   const livenessAvailable = Boolean(endpoint);
@@ -110,9 +217,12 @@ function scoreAgent(
   const normalizedScore = scoreMax > 0 ? Math.round((score / scoreMax) * 10000) / 100 : 0;
 
   const reasons: string[] = [];
-  if (capability === 100) reasons.push("Strong capability match"); else if (intent.category === "other") reasons.push("General Testnet DeFi capability match");
+  if (capability === 100) reasons.push("Strong capability match"); else if (intent.category === "other") reasons.push("General Testnet capability match");
   if (verification >= 70) reasons.push(`ERC-8004 Testnet identity ${agent.verification_status}`);
   if (endpoint?.status === "online") reasons.push("Testnet endpoint is healthy");
+  if (profile.commerce.erc8183) reasons.push("ERC-8183 commerce declared");
+  if (profile.communication.a2a) reasons.push("A2A communication declared");
+  if (profile.execution.wallet_provider !== "unknown") reasons.push(`${profile.execution.wallet_provider.toUpperCase()} execution wallet declared`);
   if (onchain?.completed_jobs) reasons.push(`${onchain.completed_jobs} completed Testnet jobs verified onchain`);
   else if (onchain?.total_jobs) reasons.push(`${onchain.total_jobs} ERC-8183 Testnet jobs verified onchain`);
   if (reputationAvailable) reasons.push("On-chain reputation evidence available");
@@ -126,7 +236,7 @@ function scoreAgent(
     : isGrid && !gridIdentityReady
       ? { status: "discoverable_only" as const, canCreateJob: false, reason: "Grid Agent owner address is not a valid BSC Testnet address yet." }
       : endpoint?.status === "online"
-        ? { status: "ready" as const, canCreateJob: true, reason: "A live BSC Testnet provider endpoint is currently reporting healthy." }
+        ? { status: "ready" as const, canCreateJob: true, reason: "A live BSC Testnet provider endpoint is currently reporting healthy. Execution-wallet authority is reported separately and is not inferred." }
         : endpoint?.status === "degraded"
           ? { status: "degraded" as const, canCreateJob: false, reason: "The Testnet provider endpoint is reachable but degraded; do not fund a job yet." }
           : { status: "discoverable_only" as const, canCreateJob: false, reason: "The agent is discoverable on BSC Testnet, but no healthy Testnet provider endpoint is available." };
@@ -151,6 +261,9 @@ function scoreAgent(
       onchainJobHistoryAvailable: volumeAvailable,
       onchainSource: onchain?.source ?? null,
     },
+    execution: profile.execution,
+    commerce: profile.commerce,
+    communication: profile.communication,
     onchain: onchain ? {
       totalJobs: onchain.total_jobs,
       completedJobs: onchain.completed_jobs,
@@ -189,7 +302,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const [{ data: agents, error: agentsError }, { data: endpoints, error: endpointsError }, { data: reputation, error: reputationError }] = await Promise.all([
       agentsQuery,
-      supabase.from("agent_endpoints").select("agent_id,status,latency_ms,last_checked_at").order("last_checked_at", { ascending: false }),
+      supabase.from("agent_endpoints").select("agent_id,status,latency_ms,last_checked_at,protocol,metadata,endpoint_url").order("last_checked_at", { ascending: false }),
       supabase.from("reputation").select("agent_id,score,source").limit(500),
     ]);
 
@@ -198,7 +311,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (reputationError) throw new Error(reputationError.message);
 
     const endpointByAgent = new Map<string, EndpointRow>();
-    for (const endpoint of (endpoints ?? []) as EndpointRow[]) if (!endpointByAgent.has(endpoint.agent_id)) endpointByAgent.set(endpoint.agent_id, endpoint);
+    const endpointsByAgent = new Map<string, EndpointRow[]>();
+    for (const endpoint of (endpoints ?? []) as EndpointRow[]) {
+      if (!endpointByAgent.has(endpoint.agent_id)) endpointByAgent.set(endpoint.agent_id, endpoint);
+      endpointsByAgent.set(endpoint.agent_id, [...(endpointsByAgent.get(endpoint.agent_id) ?? []), endpoint]);
+    }
 
     const reputationByAgent = new Map<string, ReputationRow[]>();
     for (const row of (reputation ?? []) as ReputationRow[]) reputationByAgent.set(row.agent_id, [...(reputationByAgent.get(row.agent_id) ?? []), row]);
@@ -208,10 +325,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .filter(isTestnetAgent);
 
     const matches = candidateAgents
-      .map((agent) => ({
-        agent,
-        ...scoreAgent(agent, intent, endpointByAgent.get(agent.id), reputationByAgent.get(agent.id) ?? [], readCachedOnchainStats(agent)),
-      }))
+      .map((agent) => {
+        const profile = deriveExecutionProfile(agent, endpointsByAgent.get(agent.id) ?? []);
+        return {
+          agent,
+          ...scoreAgent(agent, intent, endpointByAgent.get(agent.id), reputationByAgent.get(agent.id) ?? [], readCachedOnchainStats(agent), profile),
+        };
+      })
       .sort((a, b) => a.hireability.canCreateJob !== b.hireability.canCreateJob ? (a.hireability.canCreateJob ? -1 : 1) : b.score - a.score)
       .slice(0, 10);
 
@@ -226,6 +346,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       scoring: {
         weights: WEIGHTS,
         hireabilityPolicy: "Only explicitly Testnet-tagged BSC Testnet agents with a healthy Testnet endpoint are hireable.",
+        capabilityProfilePolicy: "Wallet, execution, commerce and communication capabilities are only reported when explicitly declared by indexed registration or endpoint metadata. Unknown values are never inferred.",
         jobHistorySource: "ERC-8183 Commerce on BSC Testnet; cached in Supabase by the provider-wallet chain sync.",
       },
     });
