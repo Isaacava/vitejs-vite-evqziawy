@@ -5,9 +5,11 @@ import { BSC_RPC_URL } from "./network";
 type WalletProvider = EIP1193Provider & {
   disconnect?: () => Promise<void>;
   connect?: (args?: { chains?: number[] }) => Promise<void>;
+  request: (args: any) => Promise<any>;
 };
 
 type Eip1193Provider = WalletProvider;
+type WalletRequestProvider = { request: (args: any) => Promise<any> };
 
 declare global { interface Window { ethereum?: Eip1193Provider } }
 
@@ -43,7 +45,7 @@ function normalizeChainId(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-async function chainIdOf(provider: Eip1193Provider) {
+async function chainIdOf(provider: WalletRequestProvider) {
   return normalizeChainId(await provider.request({ method: "eth_chainId" }));
 }
 
@@ -75,7 +77,7 @@ async function getWalletConnectProvider() {
   return walletConnectProvider;
 }
 
-export async function ensureExpectedChain(provider: Eip1193Provider) {
+export async function ensureExpectedChain(provider: WalletRequestProvider) {
   const current = await chainIdOf(provider);
   if (current === AUTH_CHAIN_ID) return;
 
