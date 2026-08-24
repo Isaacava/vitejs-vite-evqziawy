@@ -1,0 +1,24 @@
+name: AgentMarket Testnet settlement worker
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  settle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger marketplace-testnet settlement worker
+        env:
+          AGENTMARKET_BASE_URL: ${{ secrets.AGENTMARKET_BASE_URL }}
+          CRON_SECRET: ${{ secrets.AGENTMARKET_CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          test -n "$AGENTMARKET_BASE_URL"
+          test -n "$CRON_SECRET"
+          curl --fail --silent --show-error --location \
+            --request POST \
+            --header "Authorization: Bearer $CRON_SECRET" \
+            --header "Content-Type: application/json" \
+            "$AGENTMARKET_BASE_URL/api/testnet/auto-settlement"
