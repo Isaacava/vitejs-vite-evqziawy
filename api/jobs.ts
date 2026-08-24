@@ -1,7 +1,58 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { createPublicClient, formatUnits, http, type Address } from "viem";
+import { bscTestnet } from "viem/chains";
 import { getAuthenticatedUser, serverClient } from "./_auth.js";
 
 const ACTIONS = new Set(["accept", "start", "submit", "approve", "reject", "cancel"]);
+const COMMERCE = "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address;
+const COMMERCE_ABI = [{
+  type: "function",
+  name: "paymentToken",
+  stateMutability: "view",
+  inputs: [],
+  outputs: [{ type: "address" }],
+}, {
+  type: "function",
+  name: "getJob",
+  stateMutability: "view",
+  inputs: [{ name: "jobId", type: "uint256" }],
+  outputs: [{
+    name: "job",
+    type: "tuple",
+    components: [
+      { name: "id", type: "uint256" },
+      { name: "client", type: "address" },
+      { name: "provider", type: "address" },
+      { name: "evaluator", type: "address" },
+      { name: "description", type: "string" },
+      { name: "budget", type: "uint256" },
+      { name: "expiredAt", type: "uint256" },
+      { name: "status", type: "uint8" },
+      { name: "hook", type: "address" },
+      { name: "submittedAt", type: "uint256" },
+      { name: "deliverable", type: "bytes32" },
+    ],
+  }],
+}] as const;
+const ERC20_ABI = [
+  { type: "function", name: "decimals", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] },
+  { type: "function", name: "symbol", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
+] as const;
+
+const publicClient = createPublicClient({
+  chain: bscTestnet,
+  transport: http("https://bsc-testnet-rpc.publicnode.com"),
+});
+
+const ACTION_CHAIN_REQUIRED = ["accept", "start", "submit"];
+const CHAIN_STATUS: Record<number, string> = {
+  0: "open",
+  1: "funded",
+  2: "submitted",
+  3: "completed",
+  4: "rejected",
+  5: "expired",
+};
 
 function transition(status: string, action: string) {
   const map: Record<string, Record<string, string>> = {
@@ -13,6 +64,50 @@ function transition(status: string, action: string) {
     disputed: {},
   };
   return map[status]?.[action] ?? null;
+}
+
+async function readChainSnapshot(chainJobId: number) {
+  if (!Number.isFinite(chainJobId) || chainJobId <= 0) return null;
+  try {
+    const chainJob = await publicClient.readContract({
+      address: COMMERCE,
+      abi: COMMERCE_ABI,
+      functionName: "getJob",
+      args: [BigInt(chainJobId)],
+    });
+    const token = await publicClient.readContract({
+      address: COMMERCE,
+      abi: COMMERCE_ABI,
+      functionName: "paymentToken",
+    });
+    const [decimals, symbol] = await Promise.all([
+      publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" }),
+      publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol" }),
+    ]);
+    const status = CHAIN_STATUS[Number(chainJob.status)] || "unknown";
+    const deliverable = chainJob.deliverable && chainJob.deliverable !== "0x0000000000000000000000000000000000000000000000000000000000000000"
+      ? chainJob.deliverable
+      : null;
+    return {
+      chain_job_id: Number(chainJob.id),
+      chain_status: status,
+      chain_client: chainJob.client,
+      chain_provider: chainJob.provider,
+      chain_evaluator: chainJob.evaluator,
+      chain_description: chainJob.description,
+      chain_budget_raw: chainJob.budget.toString(),
+      chain_budget: formatUnits(chainJob.budget, Number(decimals)),
+      token_address: token,
+      token_symbol: symbol,
+      token_decimals: Number(decimals),
+      chain_expired_at: Number(chainJob.expiredAt),
+      chain_submitted_at: chainJob.submittedAt > 0n ? new Date(Number(chainJob.submittedAt) * 1000).toISOString() : null,
+      chain_deliverable: deliverable,
+    };
+  } catch (error) {
+    console.error("Failed to read ERC-8183 job snapshot", chainJobId, error);
+    return null;
+  }
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -49,20 +144,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (missionError) return res.status(500).json({ error: missionError.message });
       if (!mission || mission.user_id !== auth.user.id) return res.status(403).json({ error: "You do not own this mission" });
 
-      const [evaluationResult, paymentResult] = await Promise.all([
+      const [evaluationResult, paymentResult, chain] = await Promise.all([
         supabase.from("evaluations").select("id,job_id,verdict,evaluator_address,evidence,notes,created_at,updated_at").eq("job_id", id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
         supabase.from("payments").select("id,job_id,mission_id,token_address,token_symbol,amount,status,tx_hash,created_at,updated_at").eq("job_id", id).maybeSingle(),
+        job.chain_job_id ? readChainSnapshot(Number(job.chain_job_id)) : Promise.resolve(null),
       ]);
 
       const safeMission = { ...mission };
       delete (safeMission as { user_id?: string }).user_id;
 
+      const effectiveStatus = chain?.chain_status || job.chain_status || job.status;
+      const effectiveBudget = chain?.chain_budget ?? job.budget ?? paymentResult.data?.amount ?? 0;
+      const effectiveDeliverable = chain?.chain_deliverable || job.deliverable || null;
+      const effectivePayment = {
+        ...(paymentResult.data || {}),
+        token_symbol: chain?.token_symbol || paymentResult.data?.token_symbol || "tBNB",
+        amount: chain?.chain_budget ?? paymentResult.data?.amount ?? job.budget ?? 0,
+      };
+
       return res.status(200).json({
-        job,
+        job: {
+          ...job,
+          status: effectiveStatus,
+          budget: effectiveBudget,
+          chain_status: chain?.chain_status || job.chain_status,
+          deliverable: effectiveDeliverable,
+          chain_live: Boolean(chain),
+        },
         task: taskResult.data,
         mission: safeMission,
         evaluation: evaluationResult.data,
-        payment: paymentResult.data,
+        payment: effectivePayment,
+        chain,
+        network: "bsc-testnet",
+        chain_id: 97,
+        source_of_truth: chain ? "erc8183_commerce" : "supabase_job",
       });
     }
 
@@ -98,6 +214,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { data: mission, error: missionError } = await supabase.from("missions").select("id,user_id,client_wallet").eq("id", task.mission_id).maybeSingle();
     if (missionError) return res.status(500).json({ error: missionError.message });
     if (!mission || mission.user_id !== auth.user.id) return res.status(403).json({ error: "You do not own this mission" });
+
+    const liveChain = job.chain_job_id ? await readChainSnapshot(Number(job.chain_job_id)) : null;
+    if (liveChain && ACTION_CHAIN_REQUIRED.includes(action)) {
+      return res.status(409).json({
+        error: "This job is backed by a live ERC-8183 chain record. Use the protocol-specific Testnet execution flow; the mission console is read-only for lifecycle state.",
+        protocol: { action, onChainRequired: true, chainJobId: Number(job.chain_job_id), chainStatus: liveChain.chain_status },
+      });
+    }
 
     const nextStatus = transition(job.status, action);
     if (!nextStatus) return res.status(409).json({ error: `Cannot ${action} a job in ${job.status} state` });
@@ -148,7 +272,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       state: nextStatus,
       protocol: {
         action,
-        onChainRequired: ["accept", "start", "submit"].includes(action),
+        onChainRequired: ACTION_CHAIN_REQUIRED.includes(action),
         note: "Marketplace workflow state is recorded separately from ERC-8183 chain state. Payment is never marked released here.",
       },
     });
