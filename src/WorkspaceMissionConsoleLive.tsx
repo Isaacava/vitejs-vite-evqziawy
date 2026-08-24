@@ -191,7 +191,7 @@ export default function WorkspaceMissionConsole() {
           } catch {
             verdict = null;
           }
-          setPolicy({ ...config, verdict });
+          setPolicy({ disputeWindow: BigInt(config.disputeWindow), voteQuorum: BigInt(config.voteQuorum), verdict });
         } catch {
           setPolicy(null);
         }
@@ -291,9 +291,7 @@ export default function WorkspaceMissionConsole() {
         <span className="font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477]">Missions / Mission console</span>
         <a href="/missions" className="text-[11px] font-bold text-inksoft no-underline hover:text-ink">← Back to missions</a>
       </div>
-
       {error && <div className="mb-4 rounded-[14px_8px_15px_9px] border border-[#cfad9f] bg-rustsoft px-4 py-3 text-[12px] text-rust break-words">{error}</div>}
-
       {!data ? (
         <section className="card-asym-lg bg-paperhi p-7 text-[13px] text-inksoft">Loading mission state…</section>
       ) : (
@@ -304,77 +302,15 @@ export default function WorkspaceMissionConsole() {
             <div><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1">Chain job ID</small><strong className="font-mono text-[14px]">{data.chain?.chain_job_id ? `#${data.chain.chain_job_id}` : data.job.chain_job_id == null ? "Not created" : `#${data.job.chain_job_id}`}</strong></div>
             <div><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1">Budget</small><strong className="font-mono text-[14px]">{formatBudget(budget, tokenSymbol)}</strong></div>
           </div>
-
-          <div className="mb-6 rounded-[16px_8px_18px_9px] border border-line bg-paper p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1">Live source</small><strong className="font-display text-[14px] font-bold">{data.source_of_truth === "erc8183_commerce" ? "ERC-8183 Commerce · BSC Testnet" : "Marketplace workflow fallback"}</strong></div>
-              <div className="flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-green" /><span className="font-mono text-[9.5px] uppercase text-green">CHAIN 97 VERIFIED</span></div>
-            </div>
-          </div>
-
+          <div className="mb-6 rounded-[16px_8px_18px_9px] border border-line bg-paper p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1">Live source</small><strong className="font-display text-[14px] font-bold">{data.source_of_truth === "erc8183_commerce" ? "ERC-8183 Commerce · BSC Testnet" : "Marketplace workflow fallback"}</strong></div><div className="flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-green" /><span className="font-mono text-[9.5px] uppercase text-green">CHAIN 97 VERIFIED</span></div></div></div>
           <span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-brass mb-3"><span className="w-1.5 h-1.5 rounded-full bg-brass" />Job lifecycle</span>
           <p className="text-[13px] text-inksoft mb-5 max-w-[650px]">{lifecycleCopy}</p>
           <div className="mb-6"><Lifecycle status={liveStatus} /></div>
-
-          <div className="grid sm:grid-cols-2 gap-3 mb-6">
-            <div className="border border-line rounded-[14px_8px_16px_9px] p-4 bg-paper"><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1.5">Current status</small><div className="flex items-center gap-2"><Status value={liveStatus} />{data.chain?.chain_job_id && <span className="font-mono text-[9px] text-inksoft">live</span>}</div></div>
-            <div className="border border-line rounded-[14px_8px_16px_9px] p-4 bg-paper"><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1.5">Provider</small><strong className="block font-mono text-[11px] break-all">{shortenHash(data.chain?.chain_provider || null)}</strong></div>
-          </div>
-
-          {(data.chain?.chain_submitted_at || deliverable) && (
-            <div className="border border-line rounded-[16px_8px_18px_9px] p-4 mb-6 bg-paper">
-              <div className="grid sm:grid-cols-2 gap-4">
-                {data.chain?.chain_submitted_at && <div><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1.5">Submitted at</small><strong className="text-[12px]">{new Date(data.chain.chain_submitted_at).toLocaleString()}</strong></div>}
-                {deliverable && <div><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1.5">Deliverable hash</small><strong className="font-mono text-[11px] break-all">{shortenHash(deliverable)}</strong></div>}
-              </div>
-            </div>
-          )}
-
-          {submitted && (
-            <div className="border border-line rounded-[16px_8px_18px_9px] p-4 mb-6 bg-paper">
-              <div className="flex flex-wrap justify-between items-center gap-3 mb-2"><small className="block font-mono text-[8.5px] uppercase text-[#8a8477]">Agent submission</small>{result && <Status value={result.verified ? "verified" : "pending"} />}</div>
-              {content ? <pre className="m-0 max-h-80 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-ink">{content}</pre> : <p className="m-0 text-[11.5px] text-inksoft">The provider response is not available yet. The on-chain deliverable hash is preserved above.</p>}
-              {result && <div className="mt-3 pt-3 dash-t flex flex-wrap gap-x-4 gap-y-1 font-mono text-[8.5px] text-[#8a8477]"><span>source: {result.evidence_source || "provider"}</span>{result.agent_name && <span>agent: {result.agent_name}</span>}{result.captured_at && <span>captured: {new Date(result.captured_at).toLocaleString()}</span>}</div>}
-            </div>
-          )}
-
-          <div className="flex flex-wrap gap-3 mb-2">
-            <button type="button" className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym disabled:opacity-60" disabled={refreshing} onClick={() => void load()}>{refreshing ? "Checking live state…" : "Refresh live state →"}</button>
-            <span className="self-center font-mono text-[9.5px] text-inksoft">Auto-refreshes every 10 seconds</span>
-          </div>
-
-          {submitted && (
-            <div className="mt-8 pt-8 dash-t">
-              <span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-green mb-3"><span className="w-1.5 h-1.5 rounded-full bg-green" />Evaluator & settlement</span>
-              <h2 className="font-display text-[20px] font-bold tracking-tight mb-1">Verified, then settled.</h2>
-              <p className="text-[13px] text-inksoft mb-5 max-w-[650px]">The submitted state has been detected from the live job. Evaluation and settlement remain protocol-controlled rather than simulated by this page.</p>
-
-              <div className="border border-line rounded-[18px_9px_20px_10px] p-5 mb-5 bg-paper">
-                <div className="flex flex-wrap justify-between items-center gap-3 mb-3"><strong className="text-[14px] font-bold">Evaluation verdict</strong><Status value={policyVerdictLabel(policy?.verdict ?? null)} /></div>
-                <p className="text-[12px] text-inksoft mb-3">{data.evaluation?.notes || "Awaiting the live evaluator decision."}</p>
-                {policy && <div className="grid sm:grid-cols-2 gap-3 mt-4 pt-4 dash-t"><div><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1">Dispute window</small><strong className="font-mono text-[12px]">{formatTime(disputeWindowSeconds || 0)}</strong></div><div><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1">Time until decision</small><strong className="font-mono text-[12px]">{remaining === null ? "—" : disputeExpired ? "Window elapsed" : formatTime(remaining)}</strong></div></div>}
-                {data.evaluation?.evidence && <div className="flex flex-wrap gap-2 mt-3">{data.evaluation.evidence.source && <span className="font-mono text-[9px] px-2 py-1 rounded-full border border-line text-inksoft">source: {data.evaluation.evidence.source}</span>}{data.evaluation.evidence.decision && <span className="font-mono text-[9px] px-2 py-1 rounded-full border border-line text-inksoft">decision: {data.evaluation.evidence.decision}</span>}</div>}
-              </div>
-
-              <div className="grid sm:grid-cols-2 gap-3 mb-6">
-                <div className="border border-green/30 bg-greensoft rounded-[14px_8px_16px_9px] p-4">
-                  <strong className="block text-[12.5px] font-bold text-green mb-1">settlement</strong>
-                  <span className="block text-[10.5px] text-inksoft mb-3">{settlementReady ? "The live policy is ready for settlement." : "Settlement becomes available according to the live evaluator verdict and dispute window."}</span>
-                  <button type="button" className="btn-asym bg-ink px-4 py-2.5 font-display text-[11px] font-bold text-paperhi disabled:cursor-not-allowed disabled:opacity-50" disabled={!settlementReady || !!workingAction} onClick={() => void runPolicyAction("settle")}>{workingAction === "settle" ? "Settling…" : "Settle job →"}</button>
-                </div>
-                <div className="border border-line rounded-[14px_8px_16px_9px] p-4">
-                  <strong className="block text-[12.5px] font-bold mb-1">dispute / refund</strong>
-                  <span className="block text-[10.5px] text-inksoft mb-3">{disputeOpen ? "Open dispute window — client can dispute the submitted result." : refundReady ? "Dispute window elapsed without a verdict — refund is available." : "Dispute is unavailable in the current live policy state."}</span>
-                  {disputeOpen && <button type="button" className="btn-asym border border-line bg-paperhi px-4 py-2.5 font-display text-[11px] font-bold text-ink disabled:cursor-not-allowed disabled:opacity-50" disabled={!!workingAction} onClick={() => void runPolicyAction("dispute")}>{workingAction === "dispute" ? "Opening dispute…" : "Dispute submission →"}</button>}
-                  {refundReady && <button type="button" className="btn-asym bg-ink px-4 py-2.5 font-display text-[11px] font-bold text-paperhi disabled:cursor-not-allowed disabled:opacity-50" disabled={!!workingAction} onClick={() => void runPolicyAction("refund")}>{workingAction === "refund" ? "Claiming refund…" : "Claim refund →"}</button>}
-                </div>
-              </div>
-
-              {txHash && <div className="mb-6 rounded-[16px_8px_18px_9px] border border-line bg-paper p-4"><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1.5">Latest policy transaction</small><a className="font-mono text-[10.5px] text-brass break-all" href={bscExplorerUrl(txHash as Hex)} target="_blank" rel="noreferrer">{txHash}</a></div>}
-
-              <div className="border border-line rounded-[16px_8px_18px_9px] p-4 bg-paper flex flex-wrap justify-between gap-4 items-center"><div><strong className="block text-[13px] font-bold">Terminal state</strong><span className="text-[11px] text-inksoft">Payment state and evidence continue to come from the live job record.</span></div><Status value={terminal ? liveStatus : "pending"} /></div>
-            </div>
-          )}
+          <div className="grid sm:grid-cols-2 gap-3 mb-6"><div className="border border-line rounded-[14px_8px_16px_9px] p-4 bg-paper"><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1.5">Current status</small><div className="flex items-center gap-2"><Status value={liveStatus} />{data.chain?.chain_job_id && <span className="font-mono text-[9px] text-inksoft">live</span>}</div></div><div className="border border-line rounded-[14px_8px_16px_9px] p-4 bg-paper"><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1.5">Provider</small><strong className="block font-mono text-[11px] break-all">{shortenHash(data.chain?.chain_provider || null)}</strong></div></div>
+          {(data.chain?.chain_submitted_at || deliverable) && <div className="border border-line rounded-[16px_8px_18px_9px] p-4 mb-6 bg-paper"><div className="grid sm:grid-cols-2 gap-4">{data.chain?.chain_submitted_at && <div><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1.5">Submitted at</small><strong className="text-[12px]">{new Date(data.chain.chain_submitted_at).toLocaleString()}</strong></div>}{deliverable && <div><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1.5">Deliverable hash</small><strong className="font-mono text-[11px] break-all">{shortenHash(deliverable)}</strong></div>}</div></div>}
+          {submitted && <div className="border border-line rounded-[16px_8px_18px_9px] p-4 mb-6 bg-paper"><div className="flex flex-wrap justify-between items-center gap-3 mb-2"><small className="block font-mono text-[8.5px] uppercase text-[#8a8477]">Agent submission</small>{result && <Status value={result.verified ? "verified" : "pending"} />}</div>{content ? <pre className="m-0 max-h-80 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-ink">{content}</pre> : <p className="m-0 text-[11.5px] text-inksoft">The provider response is not available yet. The on-chain deliverable hash is preserved above.</p>}{result && <div className="mt-3 pt-3 dash-t flex flex-wrap gap-x-4 gap-y-1 font-mono text-[8.5px] text-[#8a8477]"><span>source: {result.evidence_source || "provider"}</span>{result.agent_name && <span>agent: {result.agent_name}</span>}{result.captured_at && <span>captured: {new Date(result.captured_at).toLocaleString()}</span>}</div>}</div>}
+          <div className="flex flex-wrap gap-3 mb-2"><button type="button" className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym disabled:opacity-60" disabled={refreshing} onClick={() => void load()}>{refreshing ? "Checking live state…" : "Refresh live state →"}</button><span className="self-center font-mono text-[9.5px] text-inksoft">Auto-refreshes every 10 seconds</span></div>
+          {submitted && <div className="mt-8 pt-8 dash-t"><span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-green mb-3"><span className="w-1.5 h-1.5 rounded-full bg-green" />Evaluator & settlement</span><h2 className="font-display text-[20px] font-bold tracking-tight mb-1">Verified, then settled.</h2><p className="text-[13px] text-inksoft mb-5 max-w-[650px]">The submitted state has been detected from the live job. Evaluation and settlement remain protocol-controlled rather than simulated by this page.</p><div className="border border-line rounded-[18px_9px_20px_10px] p-5 mb-5 bg-paper"><div className="flex flex-wrap justify-between items-center gap-3 mb-3"><strong className="text-[14px] font-bold">Evaluation verdict</strong><Status value={policyVerdictLabel(policy?.verdict ?? null)} /></div><p className="text-[12px] text-inksoft mb-3">{data.evaluation?.notes || "Awaiting the live evaluator decision."}</p>{policy && <div className="grid sm:grid-cols-2 gap-3 mt-4 pt-4 dash-t"><div><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1">Dispute window</small><strong className="font-mono text-[12px]">{formatTime(disputeWindowSeconds || 0)}</strong></div><div><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1">Time until decision</small><strong className="font-mono text-[12px]">{remaining === null ? "—" : disputeExpired ? "Window elapsed" : formatTime(remaining)}</strong></div></div>}{data.evaluation?.evidence && <div className="flex flex-wrap gap-2 mt-3">{data.evaluation.evidence.source && <span className="font-mono text-[9px] px-2 py-1 rounded-full border border-line text-inksoft">source: {data.evaluation.evidence.source}</span>}{data.evaluation.evidence.decision && <span className="font-mono text-[9px] px-2 py-1 rounded-full border border-line text-inksoft">decision: {data.evaluation.evidence.decision}</span>}</div>}</div><div className="grid sm:grid-cols-2 gap-3 mb-6"><div className="border border-green/30 bg-greensoft rounded-[14px_8px_16px_9px] p-4"><strong className="block text-[12.5px] font-bold text-green mb-1">settlement</strong><span className="block text-[10.5px] text-inksoft mb-3">{settlementReady ? "The live policy is ready for settlement." : "Settlement becomes available according to the live evaluator verdict and dispute window."}</span><button type="button" className="btn-asym bg-ink px-4 py-2.5 font-display text-[11px] font-bold text-paperhi disabled:cursor-not-allowed disabled:opacity-50" disabled={!settlementReady || !!workingAction} onClick={() => void runPolicyAction("settle")}>{workingAction === "settle" ? "Settling…" : "Settle job →"}</button></div><div className="border border-line rounded-[14px_8px_16px_9px] p-4"><strong className="block text-[12.5px] font-bold mb-1">dispute / refund</strong><span className="block text-[10.5px] text-inksoft mb-3">{disputeOpen ? "Open dispute window — client can dispute the submitted result." : refundReady ? "Dispute window elapsed without a verdict — refund is available." : "Dispute is unavailable in the current live policy state."}</span>{disputeOpen && <button type="button" className="btn-asym border border-line bg-paperhi px-4 py-2.5 font-display text-[11px] font-bold text-ink disabled:cursor-not-allowed disabled:opacity-50" disabled={!!workingAction} onClick={() => void runPolicyAction("dispute")}>{workingAction === "dispute" ? "Opening dispute…" : "Dispute submission →"}</button>}{refundReady && <button type="button" className="btn-asym bg-ink px-4 py-2.5 font-display text-[11px] font-bold text-paperhi disabled:cursor-not-allowed disabled:opacity-50" disabled={!!workingAction} onClick={() => void runPolicyAction("refund")}>{workingAction === "refund" ? "Claiming refund…" : "Claim refund →"}</button>}</div></div>{txHash && <div className="mb-6 rounded-[16px_8px_18px_9px] border border-line bg-paper p-4"><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1.5">Latest policy transaction</small><a className="font-mono text-[10.5px] text-brass break-all" href={bscExplorerUrl(txHash as Hex)} target="_blank" rel="noreferrer">{txHash}</a></div>}<div className="border border-line rounded-[16px_8px_18px_9px] p-4 bg-paper flex flex-wrap justify-between gap-4 items-center"><div><strong className="block text-[13px] font-bold">Terminal state</strong><span className="text-[11px] text-inksoft">Payment state and evidence continue to come from the live job record.</span></div><Status value={terminal ? liveStatus : "pending"} /></div></div>}
         </section>
       )}
     </main>
