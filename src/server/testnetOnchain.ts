@@ -66,6 +66,8 @@ const JOB_ABI = [
 const publicClient = createPublicClient({ chain: bscTestnet, transport: http(RPC_URL) });
 const looseReadContract = (args: Record<string, unknown>) =>
   (publicClient.readContract as unknown as (value: Record<string, unknown>) => Promise<any>)(args);
+const looseMulticall = (args: Record<string, unknown>) =>
+  (publicClient.multicall as unknown as (value: Record<string, unknown>) => Promise<any[]>)(args);
 
 type JobStatus = "open" | "funded" | "submitted" | "completed" | "rejected" | "expired" | "unknown";
 
@@ -141,7 +143,7 @@ function normalizeReputation(value: bigint, decimals: number) {
 }
 
 async function readIdentity(agentId: bigint) {
-  const [owner, wallet, uri] = await publicClient.multicall({
+  const [owner, wallet, uri] = await looseMulticall({
     contracts: [
       { address: IDENTITY_REGISTRY, abi: IDENTITY_ABI, functionName: "ownerOf", args: [agentId] },
       { address: IDENTITY_REGISTRY, abi: IDENTITY_ABI, functionName: "getAgentWallet", args: [agentId] },
@@ -177,7 +179,7 @@ async function loadAllCommerceJobs(): Promise<OnchainJob[]> {
     const jobs: OnchainJob[] = [];
     for (let start = 0; start < ids.length; start += 100) {
       const chunk = ids.slice(start, start + 100);
-      const results = await publicClient.multicall({
+      const results = await looseMulticall({
         contracts: chunk.map((jobId) => ({ address: COMMERCE, abi: JOB_ABI, functionName: "getJob" as const, args: [jobId] })),
         allowFailure: true,
       });
