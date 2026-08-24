@@ -226,12 +226,19 @@ export async function settleJob(args: {
   providerWallet: EIP1193Provider;
   account: Address;
 }) {
-  const wallet = getWalletClient(args.providerWallet, args.account);
-  const hash = await wallet.writeContract({
+  // Simulate first so a user can safely press Settle while the optimistic
+  // policy is still pending without triggering a wallet confirmation that
+  // will certainly revert. The live contract remains the authority.
+  const simulation = await publicClient.simulateContract({
     address: ERC8183_ADDRESSES.router,
     abi: ROUTER_ABI,
     functionName: "settle",
     args: [args.jobId, "0x"],
+    account: args.account,
+  });
+  const wallet = getWalletClient(args.providerWallet, args.account);
+  const hash = await wallet.writeContract({
+    ...simulation.request,
     chain: undefined,
   });
   return { hash, receipt: await publicClient.waitForTransactionReceipt({ hash }) };

@@ -149,6 +149,11 @@ export async function connectWallet() {
   if (!wallet) throw new Error("No wallet account was selected.");
 
   walletConnectProvider = provider;
+  // The mission console still supports a shared EIP-1193 surface for actions.
+  // When WalletConnect is the active session, expose that same provider so
+  // lifecycle actions reuse the already-connected wallet instead of asking
+  // for a second connection.
+  if (!getInjectedProvider()) window.ethereum = provider;
   return { provider, address: wallet };
 }
 
@@ -198,7 +203,11 @@ export async function getCurrentUser() {
 export async function signOut() {
   try { await authRequest("logout", { method: "POST" }); }
   finally {
-    try { await walletConnectProvider?.disconnect?.(); } catch { /* stale session */ }
+    const activeWalletConnectProvider = walletConnectProvider;
+    try { await activeWalletConnectProvider?.disconnect?.(); } catch { /* stale session */ }
+    if (activeWalletConnectProvider && window.ethereum === activeWalletConnectProvider) {
+      try { delete window.ethereum; } catch { window.ethereum = undefined; }
+    }
     walletConnectProvider = null;
     walletConnectInitPromise = null;
   }

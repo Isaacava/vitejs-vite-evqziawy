@@ -95,7 +95,8 @@ export default function WorkspaceMissionConsole() {
   const remaining = disputeDeadline === null ? null : Math.max(disputeDeadline - now, 0);
   const disputeOpen = submitted && remaining !== null && remaining > 0;
   const disputeExpired = submitted && remaining !== null && remaining <= 0;
-  const settlementReady = submitted && policy?.verdict !== null && policy?.verdict !== 0n && (disputeExpired || policy?.verdict === 2n);
+  // Let the user press Settle whenever the job is SUBMITTED. The contract remains the authority: pending-policy calls are simulated first and will not open a wallet prompt unless settle is actually eligible.
+  const settlementReady = submitted;
   const refundReady = submitted && disputeExpired && policy?.verdict === 0n;
   const lifecycleCopy = useMemo(() => { if (!data) return "Reading the live job record…"; if (data.source_of_truth === "erc8183_commerce") return "State is read from the ERC-8183 commerce contract on BSC Testnet. The console never simulates lifecycle transitions."; return "Live chain state is unavailable, so the marketplace workflow record is shown as a fallback."; }, [data]);
 
