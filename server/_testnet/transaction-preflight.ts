@@ -100,12 +100,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     checks.push(check("Grid Agent ready", agentReady, agentReady ? "Selected provider is a verified BSC Testnet agent with an online endpoint." : "Selected provider must be a verified Testnet agent with a valid owner and current online endpoint."));
 
-    const token = await client.readContract({ address: COMMERCE, abi: COMMERCE_ABI, functionName: "paymentToken", authorizationList: [] });
+    const token = await client.readContract({ address: COMMERCE, abi: COMMERCE_ABI, functionName: "paymentToken" });
     const [decimals, symbol, balance, allowance] = await Promise.all([
-      client.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals", authorizationList: [] }),
-      client.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol", authorizationList: [] }),
-      client.readContract({ address: token, abi: ERC20_ABI, functionName: "balanceOf", args: [clientAddress], authorizationList: [] }),
-      client.readContract({ address: token, abi: ERC20_ABI, functionName: "allowance", args: [clientAddress, COMMERCE], authorizationList: [] }),
+      client.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" }),
+      client.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol" }),
+      client.readContract({ address: token, abi: ERC20_ABI, functionName: "balanceOf", args: [clientAddress] }),
+      client.readContract({ address: token, abi: ERC20_ABI, functionName: "allowance", args: [clientAddress, COMMERCE] }),
     ]);
 
     const budgetRaw = quoteAccepted && quote?.price ? parseUnits(String(quote.price), Number(decimals)) : 0n;
@@ -114,10 +114,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     checks.push(check("Testnet payment balance", hasBalance, hasBalance ? `${formatUnits(BigInt(balance), Number(decimals))} ${symbol} available; enough for the accepted quote.` : `Need at least ${formatUnits(budgetRaw, Number(decimals))} ${symbol}; current balance is ${formatUnits(BigInt(balance), Number(decimals))} ${symbol}.`));
     checks.push(check("Payment allowance", hasAllowance, hasAllowance ? `Allowance covers the accepted ${symbol} budget.` : `Approval is required before funding; current allowance is ${formatUnits(BigInt(allowance), Number(decimals))} ${symbol}.`));
 
-    const jobCounter = await client.readContract({ address: COMMERCE, abi: COMMERCE_ABI, functionName: "jobCounter", authorizationList: [] });
+    const jobCounter = await client.readContract({ address: COMMERCE, abi: COMMERCE_ABI, functionName: "jobCounter" });
     checks.push(check("ERC-8183 Commerce readable", jobCounter >= 0n, `Commerce contract is readable on Testnet; current job counter is ${jobCounter.toString()}.`));
 
-    const policyWhitelisted = await client.readContract({ address: ROUTER, abi: [{ type: "function", name: "policyWhitelist", stateMutability: "view", inputs: [{ name: "policy", type: "address" }], outputs: [{ type: "bool" }] }] as const, functionName: "policyWhitelist", args: [POLICY], authorizationList: [] });
+    const policyWhitelisted = await client.readContract({ address: ROUTER, abi: [{ type: "function", name: "policyWhitelist", stateMutability: "view", inputs: [{ name: "policy", type: "address" }], outputs: [{ type: "bool" }] }] as const, functionName: "policyWhitelist", args: [POLICY] });
     checks.push(check("Testnet policy whitelist", Boolean(policyWhitelisted), Boolean(policyWhitelisted) ? `Policy ${POLICY} is whitelisted by Router ${ROUTER}.` : `Policy ${POLICY} is not whitelisted by Router ${ROUTER}.`));
 
     const ready = checks.every((item) => item.passed);
