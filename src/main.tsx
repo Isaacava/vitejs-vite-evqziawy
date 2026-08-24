@@ -37,7 +37,7 @@ function renderApp() {
   if ((path === "/" || path === "/mission") && jobId) return renderWorkspace(<WorkspaceMissionConsole />);
 
   if (path === "/") return <LandingEntry />;
-  if (path === "/dashboard") return <UserDashboard />;
+  if (path === "/dashboard") return renderWorkspace(<UserDashboard />);
   if (path === "/discover") return renderWorkspace(<DiscoverPage />);
   if (path === "/missions") return renderWorkspace(<WorkspaceMissionPage />);
   if (path === "/mission") return renderWorkspace(<WorkspaceMissionConsole />);
