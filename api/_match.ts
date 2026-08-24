@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
-import { parseMarketplaceIntent } from "../../src/lib/intent";
-import { readAgentOnchainStats, type OnchainAgentStats } from "../../src/server/testnetOnchain";
+import { parseMarketplaceIntent } from "../../src/lib/intent.ts";
+import { readAgentOnchainStats, type OnchainAgentStats } from "../../src/server/testnetOnchain.ts";
 
 type CachedOnchainStats = {
   source: "erc8183_commerce";
