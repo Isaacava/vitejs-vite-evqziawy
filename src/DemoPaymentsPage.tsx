@@ -37,7 +37,6 @@ export default function DemoPaymentsPage() {
   }, []);
 
   const primary = jobs.find((job) => ["funded", "accepted", "in_progress", "submitted"].includes(String(job.chain_status).toLowerCase())) || jobs[0];
-  const primaryAmount = primary ? formatTbnb(primary.budget_raw) : "0";
 
   return (
     <main className="mx-auto max-w-[1240px] px-6 py-8 md:px-8 font-body text-ink">
@@ -66,8 +65,8 @@ export default function DemoPaymentsPage() {
       </div>
 
       <section className="bg-paperhi border border-line card-asym p-[18px]">
-        {jobs.filter((job) => ["funded", "accepted", "in_progress", "submitted"].includes(String(job.chain_status).toLowerCase())).map((job, index) => (
-          <div key={`job-${job.chain_job_id}`} className={`flex justify-between items-center py-4 ${index < jobs.length - 1 ? "dash-b" : ""}`}>
+        {jobs.filter((job) => ["funded", "accepted", "in_progress", "submitted"].includes(String(job.chain_status).toLowerCase())).map((job, index, rows) => (
+          <div key={`job-${job.chain_job_id}`} className={`flex justify-between items-center py-4 ${index < rows.length - 1 ? "dash-b" : ""}`}>
             <div><strong className="font-display text-[16px] font-bold">{formatTbnb(job.budget_raw)} tBNB</strong><span className="block font-mono text-[10.5px] text-[#9aa3b1] mt-1">#{job.chain_job_id}</span></div>
             <span className={`font-mono text-[9.5px] px-2.5 py-1 rounded-lg status-${statusClass(job.chain_status)}`}>{job.chain_status}</span>
           </div>
