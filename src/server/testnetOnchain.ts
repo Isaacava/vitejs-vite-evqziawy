@@ -8,7 +8,7 @@ const IDENTITY_REGISTRY = "0x8004A818BFB912233c491871b3d84c89A494BD9e" as Addres
 const REPUTATION_REGISTRY = "0x8004B663056A597Dffe9eCcC1965A193B7388713" as Address;
 const COMMERCE = "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as Address;
-const DEFAULT_FROM_BLOCK = 0n;
+const CACHE_TTL_MS = 30_000;
 
 const IDENTITY_ABI = [
   { type: "function", name: "ownerOf", stateMutability: "view", inputs: [{ name: "agentId", type: "uint256" }], outputs: [{ name: "", type: "address" }] },
@@ -36,47 +36,51 @@ const REPUTATION_ABI = [
   },
 ] as const;
 
-const JOB_ABI = [{
-  type: "function",
-  name: "getJob",
-  stateMutability: "view",
-  inputs: [{ name: "jobId", type: "uint256" }],
-  outputs: [{
-    name: "job",
-    type: "tuple",
-    components: [
-      { name: "id", type: "uint256" },
-      { name: "client", type: "address" },
-      { name: "provider", type: "address" },
-      { name: "evaluator", type: "address" },
-      { name: "description", type: "string" },
-      { name: "budget", type: "uint256" },
-      { name: "expiredAt", type: "uint256" },
-      { name: "status", type: "uint8" },
-      { name: "hook", type: "address" },
-      { name: "submittedAt", type: "uint256" },
-      { name: "deliverable", type: "bytes32" },
-    ],
-  }],
-}] as const;
-
-const JOB_CREATED_EVENT = {
-  type: "event",
-  name: "JobCreated",
-  inputs: [
-    { name: "jobId", type: "uint256", indexed: true },
-    { name: "client", type: "address", indexed: true },
-    { name: "provider", type: "address", indexed: true },
-    { name: "evaluator", type: "address", indexed: false },
-    { name: "expiredAt", type: "uint256", indexed: false },
-    { name: "hook", type: "address", indexed: false },
-  ],
-  anonymous: false,
-} as const;
+const JOB_ABI = [
+  { type: "function", name: "jobCounter", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
+  {
+    type: "function",
+    name: "getJob",
+    stateMutability: "view",
+    inputs: [{ name: "jobId", type: "uint256" }],
+    outputs: [{
+      name: "job",
+      type: "tuple",
+      components: [
+        { name: "id", type: "uint256" },
+        { name: "client", type: "address" },
+        { name: "provider", type: "address" },
+        { name: "evaluator", type: "address" },
+        { name: "description", type: "string" },
+        { name: "budget", type: "uint256" },
+        { name: "expiredAt", type: "uint256" },
+        { name: "status", type: "uint8" },
+        { name: "hook", type: "address" },
+        { name: "submittedAt", type: "uint256" },
+        { name: "deliverable", type: "bytes32" },
+      ],
+    }],
+  },
+] as const;
 
 const publicClient = createPublicClient({ chain: bscTestnet, transport: http(RPC_URL) });
+const looseReadContract = (args: Record<string, unknown>) =>
+  (publicClient.readContract as unknown as (value: Record<string, unknown>) => Promise<any>)(args);
 
 type JobStatus = "open" | "funded" | "submitted" | "completed" | "rejected" | "expired" | "unknown";
+
+type RawJob = {
+  id: bigint;
+  client: Address;
+  provider: Address;
+  evaluator: Address;
+  description: string;
+  budget: bigint;
+  expiredAt: bigint;
+  status: number;
+  submittedAt: bigint;
+  deliverable: Hex;
+};
 
 export type OnchainJob = {
   chain_job_id: string;
@@ -90,8 +94,8 @@ export type OnchainJob = {
   status: number;
   chain_status: JobStatus;
   deliverable: Hex;
-  transaction_hash: Hex;
-  block_number: string;
+  transaction_hash?: Hex;
+  block_number?: string;
 };
 
 export type OnchainAgentStats = {
@@ -119,11 +123,8 @@ export type OnchainAgentStats = {
   chain_id: typeof CHAIN_ID;
 };
 
-function envBlock(name: string): bigint {
-  const value = process.env[name]?.trim();
-  if (!value || !/^\d+$/.test(value)) return DEFAULT_FROM_BLOCK;
-  return BigInt(value);
-}
+let allJobsCache: { expiresAt: number; jobs: OnchainJob[]; counter: bigint } | null = null;
+let allJobsPromise: Promise<OnchainJob[]> | null = null;
 
 function statusName(status: number): JobStatus {
   return ({ 0: "open", 1: "funded", 2: "submitted", 3: "completed", 4: "rejected", 5: "expired" } as Record<number, JobStatus>)[status] || "unknown";
@@ -157,57 +158,74 @@ async function readIdentity(agentId: bigint) {
 }
 
 async function readReputation(agentId: bigint) {
-  const clients = await publicClient.readContract({ address: REPUTATION_REGISTRY, abi: REPUTATION_ABI, functionName: "getClients", args: [agentId] }) as Address[];
+  const clients = await looseReadContract({ address: REPUTATION_REGISTRY, abi: REPUTATION_ABI, functionName: "getClients", args: [agentId] }) as Address[];
   if (!clients.length) return { feedbackCount: 0, reputationValue: null, reputationDecimals: null, reputationScore: null };
-  const summary = await publicClient.readContract({ address: REPUTATION_REGISTRY, abi: REPUTATION_ABI, functionName: "getSummary", args: [agentId, clients, "", ""] }) as readonly [bigint, bigint, number];
+  const summary = await looseReadContract({ address: REPUTATION_REGISTRY, abi: REPUTATION_ABI, functionName: "getSummary", args: [agentId, clients, "", ""] }) as readonly [bigint, bigint, number];
   const [count, value, decimals] = summary;
   return { feedbackCount: Number(count), reputationValue: value.toString(), reputationDecimals: Number(decimals), reputationScore: normalizeReputation(value, Number(decimals)) };
 }
 
-async function readJobsForProvider(provider: Address) {
-  const logs = await publicClient.getLogs({ address: COMMERCE, event: JOB_CREATED_EVENT, args: { provider }, fromBlock: envBlock("ERC8183_COMMERCE_FROM_BLOCK"), toBlock: "latest" });
-  const unique = new Map<string, { transactionHash: Hex; blockNumber: bigint }>();
-  for (const log of logs) {
-    const jobId = log.args.jobId;
-    if (jobId === undefined || !log.transactionHash || log.blockNumber === null) continue;
-    unique.set(jobId.toString(), { transactionHash: log.transactionHash, blockNumber: log.blockNumber });
-  }
-  const ids = [...unique.keys()];
-  if (!ids.length) return [] as OnchainJob[];
-  const results: OnchainJob[] = [];
-  for (let start = 0; start < ids.length; start += 50) {
-    const chunk = ids.slice(start, start + 50);
-    const calls = await publicClient.multicall({
-      contracts: chunk.map((id) => ({ address: COMMERCE, abi: JOB_ABI, functionName: "getJob" as const, args: [BigInt(id)] })),
-      allowFailure: true,
-    });
-    calls.forEach((call, index) => {
-      if (call.status !== "success") return;
-      const job = call.result as { id: bigint; client: Address; provider: Address; evaluator: Address; description: string; budget: bigint; expiredAt: bigint; status: number; submittedAt: bigint; deliverable: Hex };
-      if (!job || job.id === 0n) return;
-      const log = unique.get(chunk[index]);
-      if (!log) return;
-      results.push({
-        chain_job_id: job.id.toString(), client: job.client, provider: job.provider, evaluator: job.evaluator, description: job.description, budget: job.budget.toString(),
-        expired_at: toDateString(job.expiredAt), submitted_at: toDateString(job.submittedAt), status: Number(job.status), chain_status: statusName(Number(job.status)),
-        deliverable: job.deliverable, transaction_hash: log.transactionHash, block_number: log.blockNumber.toString(),
+async function loadAllCommerceJobs(): Promise<OnchainJob[]> {
+  if (allJobsCache && allJobsCache.expiresAt > Date.now()) return allJobsCache.jobs;
+  if (allJobsPromise) return allJobsPromise;
+
+  allJobsPromise = (async () => {
+    const counter = BigInt(await looseReadContract({ address: COMMERCE, abi: JOB_ABI, functionName: "jobCounter" }));
+    const ids: bigint[] = [];
+    for (let id = 0n; id <= counter; id += 1n) ids.push(id);
+
+    const jobs: OnchainJob[] = [];
+    for (let start = 0; start < ids.length; start += 100) {
+      const chunk = ids.slice(start, start + 100);
+      const results = await publicClient.multicall({
+        contracts: chunk.map((jobId) => ({ address: COMMERCE, abi: JOB_ABI, functionName: "getJob" as const, args: [jobId] })),
+        allowFailure: true,
       });
-    });
+      results.forEach((result, index) => {
+        if (result.status !== "success") return;
+        const job = result.result as RawJob;
+        if (!job || job.id === 0n) return;
+        jobs.push({
+          chain_job_id: job.id.toString(),
+          client: job.client,
+          provider: job.provider,
+          evaluator: job.evaluator,
+          description: job.description,
+          budget: job.budget.toString(),
+          expired_at: toDateString(job.expiredAt),
+          submitted_at: toDateString(job.submittedAt),
+          status: Number(job.status),
+          chain_status: statusName(Number(job.status)),
+          deliverable: job.deliverable,
+        });
+      });
+    }
+
+    jobs.sort((a, b) => Number(BigInt(b.chain_job_id) - BigInt(a.chain_job_id)));
+    allJobsCache = { expiresAt: Date.now() + CACHE_TTL_MS, jobs, counter };
+    return jobs;
+  })();
+
+  try {
+    return await allJobsPromise;
+  } finally {
+    allJobsPromise = null;
   }
-  results.sort((a, b) => Number(BigInt(b.chain_job_id) - BigInt(a.chain_job_id)));
-  return results;
 }
 
 export async function readAgentOnchainStats(agentIdValue: string | number) {
   const agentId = BigInt(String(agentIdValue).trim());
   if (agentId < 0n) throw new Error("agentId must be non-negative");
-  const identity = await readIdentity(agentId);
-  const reputation = await readReputation(agentId);
-  const providerAddresses = [...new Set([identity.agentWallet, identity.owner].map((address) => address.toLowerCase()))].map((address) => address as Address);
-  const grouped = await Promise.all(providerAddresses.map((provider) => readJobsForProvider(provider)));
-  const jobMap = new Map<string, OnchainJob>();
-  for (const jobs of grouped) for (const job of jobs) jobMap.set(job.chain_job_id, job);
-  const jobs = [...jobMap.values()].sort((a, b) => Number(BigInt(b.chain_job_id) - BigInt(a.chain_job_id)));
+
+  const [identity, reputation, allJobs] = await Promise.all([
+    readIdentity(agentId),
+    readReputation(agentId),
+    loadAllCommerceJobs(),
+  ]);
+
+  const providers = new Set([identity.agentWallet.toLowerCase(), identity.owner.toLowerCase()]);
+  const jobs = allJobs.filter((job) => providers.has(job.provider.toLowerCase()));
+
   const counts = jobs.reduce((acc, job) => {
     acc.total += 1;
     if (job.chain_status === "completed") acc.completed += 1;
@@ -219,11 +237,29 @@ export async function readAgentOnchainStats(agentIdValue: string | number) {
     if (["completed", "rejected", "expired"].includes(job.chain_status)) acc.terminal += 1;
     return acc;
   }, { total: 0, completed: 0, submitted: 0, funded: 0, open: 0, rejected: 0, expired: 0, terminal: 0 });
+
   return {
-    agent_id: agentId.toString(), owner: identity.owner, agent_wallet: identity.agentWallet, agent_uri: identity.agentUri, job_provider_addresses: providerAddresses,
-    total_jobs: counts.total, completed_jobs: counts.completed, submitted_jobs: counts.submitted, funded_jobs: counts.funded, open_jobs: counts.open, rejected_jobs: counts.rejected, expired_jobs: counts.expired, terminal_jobs: counts.terminal,
+    agent_id: agentId.toString(),
+    owner: identity.owner,
+    agent_wallet: identity.agentWallet,
+    agent_uri: identity.agentUri,
+    job_provider_addresses: [...providers].map((address) => address as Address),
+    total_jobs: counts.total,
+    completed_jobs: counts.completed,
+    submitted_jobs: counts.submitted,
+    funded_jobs: counts.funded,
+    open_jobs: counts.open,
+    rejected_jobs: counts.rejected,
+    expired_jobs: counts.expired,
+    terminal_jobs: counts.terminal,
     success_rate: counts.terminal > 0 ? Number(((counts.completed / counts.terminal) * 100).toFixed(1)) : null,
-    feedback_count: reputation.feedbackCount, reputation_value: reputation.reputationValue, reputation_decimals: reputation.reputationDecimals, reputation_score: reputation.reputationScore,
-    jobs, source: "erc8004_identity+erc8183_commerce" as const, network: NETWORK, chain_id: CHAIN_ID,
+    feedback_count: reputation.feedbackCount,
+    reputation_value: reputation.reputationValue,
+    reputation_decimals: reputation.reputationDecimals,
+    reputation_score: reputation.reputationScore,
+    jobs,
+    source: "erc8004_identity+erc8183_commerce" as const,
+    network: NETWORK,
+    chain_id: CHAIN_ID,
   } satisfies OnchainAgentStats;
 }
