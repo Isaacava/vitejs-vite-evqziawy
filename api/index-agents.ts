@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 import { getAddress, parseAbiItem, type Address, type Hex } from "viem";
 import { ERC8004_REGISTRY_ADDRESS, publicClient } from "../src/lib/erc8183.js";
+import { readAgentOnchainStats, type OnchainAgentStats } from "../src/server/testnetOnchain.js";
 
 const TRANSFER_EVENT = parseAbiItem(
   "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
@@ -24,6 +25,7 @@ type RegistrationFile = {
 
 type Endpoint = { url: string; protocol: string; version?: string; metadata?: Record<string, unknown> };
 type TransferLog = { data: Hex; topics: readonly Hex[] };
+type AgentStatsRow = { id: string; agent_id: string; metadata: Record<string, unknown> | null };
 
 function supabaseServer() {
   const url = process.env.SUPABASE_URL;
@@ -131,6 +133,75 @@ const readContract = publicClient.readContract.bind(publicClient) as unknown as 
 const OWNER_OF_ABI = [{ type: "function", name: "ownerOf", stateMutability: "view", inputs: [{ name: "tokenId", type: "uint256" }], outputs: [{ type: "address" }] }] as const;
 const TOKEN_URI_ABI = [{ type: "function", name: "tokenURI", stateMutability: "view", inputs: [{ name: "tokenId", type: "uint256" }], outputs: [{ type: "string" }] }] as const;
 
+function buildCachedStats(stats: OnchainAgentStats, syncedAt: string) {
+  return {
+    source: "erc8183_commerce" as const,
+    network: stats.network,
+    chain_id: stats.chain_id,
+    synced_at: syncedAt,
+    provider_address: stats.agent_wallet,
+    owner_address: stats.owner,
+    job_provider_addresses: stats.job_provider_addresses,
+    total_jobs: stats.total_jobs,
+    completed_jobs: stats.completed_jobs,
+    submitted_jobs: stats.submitted_jobs,
+    funded_jobs: stats.funded_jobs,
+    open_jobs: stats.open_jobs,
+    rejected_jobs: stats.rejected_jobs,
+    expired_jobs: stats.expired_jobs,
+    terminal_jobs: stats.terminal_jobs,
+    success_rate: stats.success_rate,
+    feedback_count: stats.feedback_count,
+    reputation_value: stats.reputation_value,
+    reputation_decimals: stats.reputation_decimals,
+    reputation_score: stats.reputation_score,
+    job_counter_scope: "full_erc8183_commerce_scan",
+  };
+}
+
+async function syncTestnetAgentStats(supabase: ReturnType<typeof supabaseServer>, syncedAt: string) {
+  const { data: agents, error: agentsError } = await supabase
+    .from("agents")
+    .select("id,agent_id,metadata")
+    .eq("chain", "bsc-testnet")
+    .not("agent_id", "is", null);
+  if (agentsError) throw new Error(agentsError.message);
+
+  const agentRows = (agents || []) as AgentStatsRow[];
+  if (agentRows.length === 0) return { agents_scanned: 0, agents_updated: 0, agents_failed: 0, jobs_scanned: 0, errors: [] as Array<{ agent_id: string; error: string }> };
+
+  const statsResults = await Promise.allSettled(agentRows.map((agent) => readAgentOnchainStats(agent.agent_id)));
+  let updated = 0;
+  let failed = 0;
+  let jobsScanned = 0;
+  const errors: Array<{ agent_id: string; error: string }> = [];
+
+  for (let i = 0; i < agentRows.length; i += 1) {
+    const agent = agentRows[i];
+    const result = statsResults[i];
+    if (result.status === "rejected") {
+      failed += 1;
+      errors.push({ agent_id: agent.agent_id, error: result.reason instanceof Error ? result.reason.message : String(result.reason) });
+      continue;
+    }
+
+    const stats = result.value;
+    jobsScanned = Math.max(jobsScanned, stats.jobs.length);
+    const nextMetadata = {
+      ...(agent.metadata || {}),
+      onchain_stats: buildCachedStats(stats, syncedAt),
+    };
+    const { error: updateError } = await supabase
+      .from("agents")
+      .update({ metadata: nextMetadata, last_indexed_at: syncedAt })
+      .eq("id", agent.id);
+    if (updateError) throw new Error(`Agent ${agent.agent_id}: ${updateError.message}`);
+    updated += 1;
+  }
+
+  return { agents_scanned: agentRows.length, agents_updated: updated, agents_failed: failed, jobs_scanned: jobsScanned, errors };
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET" && req.method !== "POST") { res.setHeader("Allow", "GET, POST"); return res.status(405).json({ error: "Method not allowed" }); }
   const cronSecret = process.env.CRON_SECRET;
@@ -145,14 +216,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const bootstrapStart = configuredStart ? BigInt(configuredStart) : 0n;
     const start = previous?.to_block != null ? BigInt(previous.to_block) + 1n : bootstrapStart;
     const end = start + BLOCKS_PER_RUN - 1n > latest ? latest : start + BLOCKS_PER_RUN - 1n;
-    if (start > latest) return res.status(200).json({ ok: true, message: "Indexer already caught up", latest: latest.toString(), discovered_source: "erc8004_transfer_events" });
+    if (start > latest) {
+      const syncedAt = new Date().toISOString();
+      const stats = await syncTestnetAgentStats(supabase, syncedAt);
+      return res.status(200).json({ ok: stats.agents_failed === 0, message: "Indexer already caught up; Testnet agent statistics synchronized", latest: latest.toString(), discovered_source: "erc8004_transfer_events", testnet_stats: { ...stats, synced_at: syncedAt, network: "bsc-testnet", chain_id: 97, source: "erc8183_commerce" } });
+    }
     const { data: sync, error: syncError } = await supabase.from("agent_registry_syncs").insert({ network: "bsc", from_block: start.toString(), to_block: end.toString(), status: "running" }).select("id").single();
     if (syncError) throw new Error(syncError.message);
     const logs = (await publicClient.getLogs({ address: ERC8004_REGISTRY_ADDRESS, event: TRANSFER_EVENT, fromBlock: start, toBlock: end })) as unknown as TransferLog[];
     const mintedIds = [...new Set(logs.map((log) => { try { const fromTopic = log.topics[1]; const tokenTopic = log.topics[3]; if (!fromTopic || !tokenTopic) return null; const from = getAddress(`0x${fromTopic.slice(-40)}`); if (from.toLowerCase() !== ZERO_ADDRESS.toLowerCase()) return null; return BigInt(tokenTopic); } catch { return null; } }).filter((id): id is bigint => id !== null).map((id) => id.toString()))];
     let upserted = 0; let errors = 0;
-    for (const agentId of mintedIds) { try { const tokenId = BigInt(agentId); const [owner, uri] = await Promise.all([readContract({ address: ERC8004_REGISTRY_ADDRESS, abi: OWNER_OF_ABI, functionName: "ownerOf", args: [tokenId], authorizationList: [] }), readContract({ address: ERC8004_REGISTRY_ADDRESS, abi: TOKEN_URI_ABI, functionName: "tokenURI", args: [tokenId], authorizationList: [] })]); await syncAgent(supabase, agentId, String(owner), String(uri)); upserted += 1; } catch { errors += 1; } }
+    for (const agentId of mintedIds) { try { const tokenId = BigInt(agentId); const [owner, uri] = await Promise.all([readContract({ address: ERC8004_REGISTRY_ADDRESS, abi: OWNER_OF_ABI, functionName: "ownerOf", args: [tokenId] }), readContract({ address: ERC8004_REGISTRY_ADDRESS, abi: TOKEN_URI_ABI, functionName: "tokenURI", args: [tokenId] })]); await syncAgent(supabase, agentId, String(owner), String(uri)); upserted += 1; } catch { errors += 1; } }
     await supabase.from("agent_registry_syncs").update({ completed_at: new Date().toISOString(), agents_seen: mintedIds.length, agents_upserted: upserted, errors, status: errors ? "completed_with_errors" : "completed" }).eq("id", sync.id);
-    return res.status(200).json({ ok: true, network: "bsc", from_block: start.toString(), to_block: end.toString(), latest_block: latest.toString(), agents_seen: mintedIds.length, agents_upserted: upserted, errors, next_run_from_block: end < latest ? (end + 1n).toString() : null, discovered_source: "erc8004_transfer_events", inventory_policy: "automatic_discovery_first" });
+    const syncedAt = new Date().toISOString();
+    const stats = await syncTestnetAgentStats(supabase, syncedAt);
+    return res.status(200).json({ ok: errors === 0 && stats.agents_failed === 0, network: "bsc", from_block: start.toString(), to_block: end.toString(), latest_block: latest.toString(), agents_seen: mintedIds.length, agents_upserted: upserted, errors, next_run_from_block: end < latest ? (end + 1n).toString() : null, discovered_source: "erc8004_transfer_events", inventory_policy: "automatic_discovery_first", testnet_stats: { ...stats, synced_at: syncedAt, network: "bsc-testnet", chain_id: 97, source: "erc8183_commerce" } });
   } catch (error) { return res.status(500).json({ error: error instanceof Error ? error.message : "Indexer failed" }); }
 }
