@@ -1,10 +1,12 @@
+import { useEffect, useState } from "react";
+
 type ActivityEvent = { id: string; title: string; description: string | null; created_at: string };
 
 export default function DemoActivityPage() {
-  const [events, setEvents] = React.useState<ActivityEvent[]>([]);
-  const [error, setError] = React.useState("");
+  const [events, setEvents] = useState<ActivityEvent[]>([]);
+  const [error, setError] = useState("");
 
-  React.useEffect(() => {
+  useEffect(() => {
     void (async () => {
       try {
         const response = await fetch("/api/dashboard", { credentials: "include" });
