@@ -15,23 +15,19 @@ const COMMERCE_ABI = [{
   name: "getJob",
   stateMutability: "view",
   inputs: [{ name: "jobId", type: "uint256" }],
-  outputs: [{
-    name: "job",
-    type: "tuple",
-    components: [
-      { name: "id", type: "uint256" },
-      { name: "client", type: "address" },
-      { name: "provider", type: "address" },
-      { name: "evaluator", type: "address" },
-      { name: "description", type: "string" },
-      { name: "budget", type: "uint256" },
-      { name: "expiredAt", type: "uint256" },
-      { name: "status", type: "uint8" },
-      { name: "hook", type: "address" },
-      { name: "submittedAt", type: "uint256" },
-      { name: "deliverable", type: "bytes32" },
-    ],
-  }],
+  outputs: [{ name: "job", type: "tuple", components: [
+    { name: "id", type: "uint256" },
+    { name: "client", type: "address" },
+    { name: "provider", type: "address" },
+    { name: "evaluator", type: "address" },
+    { name: "description", type: "string" },
+    { name: "budget", type: "uint256" },
+    { name: "expiredAt", type: "uint256" },
+    { name: "status", type: "uint8" },
+    { name: "hook", type: "address" },
+    { name: "submittedAt", type: "uint256" },
+    { name: "deliverable", type: "bytes32" },
+  ] }],
 }] as const;
 
 const ROUTER_ABI = [{
@@ -48,12 +44,6 @@ const ROUTER_POLICY_ABI = [{
   stateMutability: "view",
   inputs: [{ name: "jobId", type: "uint256" }],
   outputs: [{ type: "address" }],
-}, {
-  type: "function",
-  name: "settle",
-  stateMutability: "nonpayable",
-  inputs: [{ name: "jobId", type: "uint256" }, { name: "optParams", type: "bytes" }],
-  outputs: [],
 }] as const;
 
 const POLICY_ABI = [{
@@ -84,15 +74,21 @@ function authorized(req: VercelRequest) {
 
 function getOperator() {
   const raw = process.env.ERC8183_SETTLEMENT_PRIVATE_KEY?.trim();
-  if (!raw || !/^0x[a-fA-F0-9]{64}$/.test(raw)) {
-    throw new Error("ERC8183_SETTLEMENT_PRIVATE_KEY is not configured");
-  }
+  if (!raw || !/^0x[a-fA-F0-9]{64}$/.test(raw)) throw new Error("ERC8183_SETTLEMENT_PRIVATE_KEY is not configured");
   const account = privateKeyToAccount(raw as Hex);
   const wallet = createWalletClient({ account, chain: bscTestnet, transport: http(RPC_URL) });
   return { account, wallet };
 }
 
-async function syncTerminalJob(supabase: ReturnType<typeof serverClient>, job: any, chainJobId: string, txHash: Hex, blockNumber: bigint, chainStatus: string) {
+async function syncTerminalJob(
+  supabase: ReturnType<typeof serverClient>,
+  job: { id: string; mission_id: string; user_id: string },
+  chainJobId: string,
+  txHash: Hex,
+  blockNumber: bigint,
+  chainStatus: string,
+  evaluator: Address,
+) {
   const now = new Date().toISOString();
   const { data: existingTx } = await supabase.from("transactions").select("id").eq("tx_hash", txHash).maybeSingle();
   if (!existingTx) {
@@ -120,11 +116,26 @@ async function syncTerminalJob(supabase: ReturnType<typeof serverClient>, job: a
 
   const verdict = chainStatus === "completed" ? "approve" : "reject";
   const { data: evaluation } = await supabase.from("evaluations").select("id").eq("job_id", job.id).maybeSingle();
-  const evidence = { source: "erc8183_chain", tx_hash: txHash, chain_job_id: chainJobId, chain_status: chainStatus, block_number: Number(blockNumber), chain_id: CHAIN_ID, network: NETWORK, settlement: "permissionless_operator" };
+  const evidence = {
+    source: "erc8183_chain",
+    tx_hash: txHash,
+    chain_job_id: chainJobId,
+    chain_status: chainStatus,
+    block_number: Number(blockNumber),
+    chain_id: CHAIN_ID,
+    network: NETWORK,
+    settlement: "permissionless_operator",
+  };
   if (evaluation?.id) {
     await supabase.from("evaluations").update({ verdict, evidence, updated_at: now }).eq("id", evaluation.id);
   } else {
-    await supabase.from("evaluations").insert({ job_id: job.id, verdict, evaluator_address: job.evaluator_address || null, evidence, notes: "Terminal ERC-8183 state verified by the AgentMarket settlement worker." });
+    await supabase.from("evaluations").insert({
+      job_id: job.id,
+      verdict,
+      evaluator_address: evaluator,
+      evidence,
+      notes: "Terminal ERC-8183 state verified by the AgentMarket settlement worker.",
+    });
   }
 
   const paymentStatus = chainStatus === "completed" ? "released" : "refunded";
@@ -151,7 +162,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { account, wallet } = getOperator();
     const { data: jobs, error } = await supabase
       .from("jobs")
-      .select("id,mission_id,user_id,chain_job_id,chain_status,status,evaluator_address")
+      .select("id,mission_id,user_id,chain_job_id,chain_status,status")
       .eq("chain_status", "submitted")
       .not("chain_job_id", "is", null)
       .limit(50);
@@ -169,7 +180,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           abi: COMMERCE_ABI,
           functionName: "getJob",
           args: [BigInt(chainJobId)],
-        }) as unknown as { id: bigint; status: number; submittedAt: bigint; deliverable: Hex };
+        }) as unknown as {
+          id: bigint;
+          evaluator: Address;
+          status: number;
+        };
 
         const status = Number(chainJob.status);
         if (CHAIN_STATUS[status] !== "submitted") {
@@ -191,7 +206,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           args: [BigInt(chainJobId)],
         }));
 
-        // OptimisticPolicy: 0 = PENDING, 1 = APPROVE, 2 = REJECT.
+        // BNB OptimisticPolicy: 0 = PENDING, 1 = APPROVE, 2 = REJECT.
         if (verdict === 0) {
           results.push({ job_id: job.id, chain_job_id: chainJobId, action: "wait", policy: "pending" });
           continue;
@@ -204,7 +219,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           args: [BigInt(chainJobId), "0x"],
           account: account.address,
         });
-
         const txHash = await wallet.writeContract(simulation.request);
         const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
         if (receipt.status !== "success") throw new Error("Settlement transaction reverted");
@@ -214,13 +228,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           abi: COMMERCE_ABI,
           functionName: "getJob",
           args: [BigInt(chainJobId)],
-        }) as unknown as { id: bigint; status: number };
+        }) as unknown as { id: bigint; evaluator: Address; status: number };
         const terminalStatus = CHAIN_STATUS[Number(terminal.status)];
         if (!["completed", "rejected", "expired"].includes(terminalStatus || "")) {
           throw new Error(`Settlement receipt confirmed but job ${chainJobId} is still non-terminal`);
         }
 
-        await syncTerminalJob(supabase, job, chainJobId, txHash, receipt.blockNumber, terminalStatus!);
+        await syncTerminalJob(supabase, job, chainJobId, txHash, receipt.blockNumber, terminalStatus!, terminal.evaluator);
         results.push({ job_id: job.id, chain_job_id: chainJobId, action: "settled", policy: verdict === 1 ? "approve" : "reject", chain_status: terminalStatus, tx_hash: txHash, operator: account.address });
       } catch (cause) {
         results.push({ job_id: job.id, chain_job_id: chainJobId, action: "error", error: cause instanceof Error ? cause.message : "Settlement attempt failed" });
