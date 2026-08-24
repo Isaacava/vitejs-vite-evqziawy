@@ -1,49 +1,67 @@
 import { useEffect, useMemo, useState } from "react";
 
 type MissionJob = {
-  id: string;
+  id: string | null;
   mission_id: string | null;
-  mission_title: string;
-  mission_status: string;
-  task_title: string;
-  job_status: string;
+  mission_title: string | null;
+  mission_status: string | null;
+  task_title: string | null;
+  job_status: string | null;
   chain_job_id: number | null;
   chain_status: string | null;
   budget: string | number | null;
-  created_at: string;
+  created_at: string | null;
   funded_at: string | null;
   submitted_at: string | null;
   terminal_at: string | null;
-  updated_at: string;
+  updated_at: string | null;
 };
 
 const human = (value: string) => value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 const terminalStates = new Set(["completed", "rejected", "cancelled", "expired", "terminal"]);
 const reviewStates = new Set(["submitted", "awaiting_review"]);
+const JSON_LABEL_KEYS = ["title", "mission_title", "task_title", "name", "goal", "description", "summary", "label"];
+
+function cleanDisplay(value: unknown, fallback = "Untitled mission") {
+  if (typeof value !== "string") return fallback;
+  let text = value.trim();
+  if (!text) return fallback;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (!(text.startsWith("{") || text.startsWith("["))) break;
+    try {
+      const parsed: unknown = JSON.parse(text);
+      if (typeof parsed === "string") {
+        text = parsed.trim();
+        continue;
+      }
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const record = parsed as Record<string, unknown>;
+        for (const key of JSON_LABEL_KEYS) {
+          const candidate = record[key];
+          if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+        }
+        const nested = record.mission;
+        if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+          for (const key of JSON_LABEL_KEYS) {
+            const candidate = (nested as Record<string, unknown>)[key];
+            if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+          }
+        }
+      }
+      break;
+    } catch {
+      break;
+    }
+  }
+
+  return text;
+}
 
 function Status({ value }: { value: string }) {
   const lower = value.toLowerCase();
   const state = terminalStates.has(lower) ? "green" : ["rejected", "cancelled", "expired", "disputed"].includes(lower) ? "rust" : "brass";
   return <span className={`font-mono text-[9.5px] px-2.5 py-1 rounded-lg status-${state}`}>{human(value)}</span>;
-}
-
-function Lifecycle({ status }: { status: string }) {
-  const lower = status.toLowerCase();
-  const active = terminalStates.has(lower) ? 3 : reviewStates.has(lower) ? 2 : ["funded", "accepted", "in_progress"].includes(lower) ? 1 : 0;
-  return (
-    <div className="grid grid-cols-4 overflow-hidden rounded-lg bg-deep">
-      {["Planning", "Executing", "Review", "Settled"].map((label, index) => (
-        <div key={label} className="border-r border-white/10 p-2 last:border-r-0">
-          <span className={`block font-mono text-[7.5px] uppercase ${index <= active ? "text-brasslt" : "text-[#726f60]"}`}>{label}</span>
-          <i className={`mt-1.5 block h-1.5 w-1.5 rounded-full ${index <= active ? "bg-brasslt" : "bg-[#3a3a30]"}`} />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function date(value: string | null) {
-  return value ? new Date(value).toLocaleString() : "—";
 }
 
 export default function WorkspaceMissionPage() {
@@ -71,7 +89,7 @@ export default function WorkspaceMissionPage() {
   const filtered = useMemo(() => {
     if (filter === "all") return jobs;
     return jobs.filter((job) => {
-      const state = String(job.chain_status || job.job_status).toLowerCase();
+      const state = String(job.chain_status || job.job_status || "").toLowerCase();
       if (filter === "planning") return ["open", "planning"].includes(state);
       if (filter === "executing") return ["funded", "accepted", "in_progress"].includes(state);
       if (filter === "review") return reviewStates.has(state);
@@ -84,18 +102,19 @@ export default function WorkspaceMissionPage() {
     <main className="mx-auto max-w-[1240px] px-6 py-8 font-body text-ink md:px-8">
       <div className="mb-4 flex items-center justify-between gap-4">
         <span className="font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477]">Missions / All</span>
-        <a href="/app" className="btn-asym inline-flex items-center gap-2 bg-ink px-4 py-2.5 font-display text-[11px] font-bold text-paperhi no-underline hover:bg-black">+ New mission</a>
+        <a href="/app" className="btn-asym inline-flex shrink-0 items-center gap-2 bg-ink px-4 py-2.5 font-display text-[11px] font-bold text-paperhi no-underline hover:bg-black">+ New mission</a>
       </div>
 
       <div className="mb-5 flex flex-wrap gap-2 font-mono text-[10.5px]">
         {["all", "planning", "executing", "review", "completed"].map((value) => (
-          <span
+          <button
             key={value}
+            type="button"
             onClick={() => setFilter(value)}
-            className={`cursor-pointer rounded-full px-3.5 py-1.5 ${filter === value ? "bg-ink text-paperhi" : "border border-line bg-paperhi text-inksoft"}`}
+            className={`cursor-pointer rounded-full border-0 px-3.5 py-1.5 ${filter === value ? "bg-ink text-paperhi" : "border border-line bg-paperhi text-inksoft"}`}
           >
             {value === "all" ? "All" : human(value)}
-          </span>
+          </button>
         ))}
       </div>
 
@@ -106,18 +125,24 @@ export default function WorkspaceMissionPage() {
       ) : (
         <section className="card-asym bg-paperhi p-[18px]">
           {filtered.map((job, index) => {
-            const state = job.chain_status || job.job_status;
+            const state = String(job.chain_status || job.job_status || "open");
+            const fallbackTitle = cleanDisplay(job.task_title || job.mission_title, job.chain_job_id ? `Chain job #${job.chain_job_id}` : "Testnet mission");
+            const title = cleanDisplay(job.mission_title, fallbackTitle);
+            const subtitle = cleanDisplay(job.task_title, title);
+            const consoleTarget = job.id || (job.chain_job_id != null ? String(job.chain_job_id) : "");
+            const rowKey = job.id || `chain-${job.chain_job_id ?? index}`;
+
             return (
-              <article key={job.id} className={`flex justify-between items-start gap-4 py-[19px] ${index < filtered.length - 1 ? "border-b border-line" : ""}`}>
-                <div className="min-w-0">
-                  <div className="font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477]">{job.task_title || job.mission_title}</div>
-                  <h2 className="text-[16px] font-bold my-1.5">{job.mission_title}</h2>
-                  <p className="text-[12px] text-inksoft max-w-[460px]">{job.task_title || job.mission_title}</p>
+              <article key={rowKey} className={`flex min-w-0 flex-col gap-5 py-[19px] sm:flex-row sm:items-start sm:justify-between ${index < filtered.length - 1 ? "border-b border-line" : ""}`}>
+                <div className="min-w-0 flex-1">
+                  <div className="font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477]">{subtitle}</div>
+                  <h2 className="my-1.5 text-[16px] font-bold">{title}</h2>
+                  <p className="max-w-[520px] text-[12px] text-inksoft">{subtitle}</p>
                 </div>
-                <div className="text-right shrink-0 min-w-[150px]">
+                <div className="min-w-0 shrink-0 text-left sm:min-w-[150px] sm:text-right">
                   <Status value={state} />
-                  <small className="block text-[11px] text-inksoft my-2">{job.chain_job_id == null ? "Marketplace job" : `Chain job #${job.chain_job_id}`}</small>
-                  <a href={`/mission?job=${encodeURIComponent(job.id)}`} className="text-[11.5px] font-extrabold text-brass no-underline">Open console →</a>
+                  <small className="my-2 block text-[11px] text-inksoft">{job.chain_job_id == null ? "Marketplace job" : `Chain job #${job.chain_job_id}`}</small>
+                  {consoleTarget && <a href={`/mission?job=${encodeURIComponent(consoleTarget)}`} className="text-[11.5px] font-extrabold text-brass no-underline">Open console →</a>}
                 </div>
               </article>
             );
