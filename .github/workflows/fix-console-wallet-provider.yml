@@ -1,0 +1,107 @@
+name: Fix console wallet provider
+
+on:
+  push:
+    branches:
+      - marketplace-testnet
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: "!contains(github.event.head_commit.message, 'fix: console wallet provider and settlement action')"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Patch console and wallet provider
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          console = Path('src/WorkspaceMissionConsoleLive.tsx')
+          text = console.read_text()
+
+          old_import = '''import {
+            bscExplorerUrl,
+            claimRefundJob,
+            disputeJob,
+            readPolicyConfig,
+            readPolicyVerdict,
+            settleJob,
+          } from "./lib/erc8183Adapter";'''
+          new_import = '''import {
+            bscExplorerUrl,
+            claimRefundJob,
+            disputeJob,
+            readPolicyConfig,
+            readPolicyVerdict,
+            settleJob,
+          } from "./lib/erc8183Adapter";
+          import { ensureExpectedChain, getConnectedWalletProvider } from "./lib/walletAuth";'''
+          if old_import not in text:
+              raise SystemExit('console import block not found')
+          text = text.replace(old_import, new_import, 1)
+
+          old_wallet = '''  async function walletAccount() {
+    const provider = (window as Window & { ethereum?: EIP1193Provider }).ethereum;
+    if (!provider) throw new Error("A browser wallet is required for this action.");
+    const chainId = await provider.request({ method: "eth_chainId" });
+    if (String(chainId).toLowerCase() !== "0x61") throw new Error("Switch your wallet to BSC Testnet (chain 97) first.");
+    const accounts = await provider.request({ method: "eth_requestAccounts" });
+    const account = Array.isArray(accounts) ? accounts[0] : undefined;
+    if (!account || typeof account !== "string") throw new Error("Connect the client wallet to continue.");
+    return { provider, account: account as `0x${string}` };
+  }'''
+          new_wallet = '''  async function walletAccount() {
+    // Reuse the wallet session AgentMarket already established. This is
+    // important for WalletConnect: there may be no browser-injected provider,
+    // and for injected wallets it avoids a second independent chain check.
+    const provider = getConnectedWalletProvider();
+    await ensureExpectedChain(provider);
+    const accounts = await provider.request({ method: "eth_accounts" });
+    const account = Array.isArray(accounts) ? accounts[0] : undefined;
+    if (!account || typeof account !== "string") throw new Error("Connect the Testnet wallet to continue.");
+    return { provider, account: account as `0x${string}` };
+  }'''
+          if old_wallet not in text:
+              raise SystemExit('console walletAccount block not found')
+          text = text.replace(old_wallet, new_wallet, 1)
+          console.write_text(text)
+
+          wallet = Path('src/lib/walletAuth.ts')
+          text = wallet.read_text()
+
+          old_get = '''export function getConnectedWalletProvider() {
+  if (getInjectedProvider()) return getInjectedProvider()!;
+  if (!walletConnectProvider) throw new Error("Wallet is not connected. Connect your Testnet wallet first.");
+  return walletConnectProvider;
+}'''
+          new_get = '''export function getConnectedWalletProvider() {
+  // Prefer the provider belonging to the AgentMarket session. A browser may
+  // expose an unrelated injected wallet even when AgentMarket authenticated
+  // through WalletConnect, so injected-provider-first can select the wrong
+  // chain/session and produce the misleading "switch to chain 97" error.
+  if (walletConnectProvider) return walletConnectProvider;
+  const injected = getInjectedProvider();
+  if (injected) return injected;
+  throw new Error("Wallet is not connected. Connect your Testnet wallet first.");
+}'''
+          if old_get not in text:
+              raise SystemExit('walletAuth getter block not found')
+          text = text.replace(old_get, new_get, 1)
+          wallet.write_text(text)
+          PY
+
+      - name: Commit and remove workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/WorkspaceMissionConsoleLive.tsx src/lib/walletAuth.ts .github/workflows/fix-console-wallet-provider.yml
+          git rm .github/workflows/fix-console-wallet-provider.yml
+          git commit -m "fix: console wallet provider and settlement action"
+          git push
