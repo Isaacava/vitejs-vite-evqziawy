@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React from "react";
 import ReactDOM from "react-dom/client";
 
 import LandingEntry from "./LandingEntry";
@@ -29,25 +29,6 @@ const quoteId = params.get("quote");
 const jobId = params.get("job");
 const path = window.location.pathname;
 
-function TestnetExecutionHandoff() {
-  useEffect(() => {
-    if (path !== "/app") return;
-    const onClick = (event: MouseEvent) => {
-      const target = event.target as HTMLElement | null;
-      const button = target?.closest("button");
-      if (!button) return;
-      if (!button.textContent?.toLowerCase().includes("build erc-8183 testnet plan")) return;
-      event.preventDefault();
-      event.stopPropagation();
-      window.location.assign("/testnet/execute");
-    };
-    document.addEventListener("click", onClick, true);
-    return () => document.removeEventListener("click", onClick, true);
-  }, []);
-
-  return <WorkspaceShell><MarketplaceWorkspace /></WorkspaceShell>;
-}
-
 function renderWorkspace(element: React.ReactNode) {
   return <WorkspaceShell>{element}</WorkspaceShell>;
 }
@@ -65,8 +46,7 @@ function renderApp() {
   if (path === "/agents/register") return renderWorkspace(<AgentRegistration />);
   if (path === "/permissions") return renderWorkspace(<SessionPermissions />);
 
-  // The marketplace workspace is the working mission-hiring UI.
-  if (path === "/app") return <TestnetExecutionHandoff />;
+  if (path === "/app") return renderWorkspace(<MarketplaceWorkspace />);
 
   if (path === "/testnet") return renderWorkspace(<TestnetSandbox />);
   if (path === "/testnet/execute") return renderWorkspace(<TestnetQuoteExecutionWalletConnect />);
