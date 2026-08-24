@@ -4,16 +4,14 @@ import ReactDOM from "react-dom/client";
 import LandingEntry from "./LandingEntry";
 import UserDashboard from "./UserDashboard";
 import WorkspaceShell from "./WorkspaceShell";
-import AgentRegistration from "./AgentRegistration";
-import SessionPermissions from "./SessionPermissions";
 import DiscoverPage from "./DiscoverPage";
 import MarketplaceWorkspace from "./MarketplaceWorkspace";
 import WorkspaceMissionConsole from "./WorkspaceMissionConsole";
 import WorkspaceMissionPage from "./WorkspaceMissionPage";
+import DemoManagePage from "./DemoManagePage";
 import TestnetQuoteExecutionWalletConnect from "./TestnetQuoteExecutionWalletConnect";
 import TestnetQuoteGate from "./TestnetQuoteGate";
 import TestnetProviderSubmit from "./ProviderSubmit";
-import TestnetSandbox from "./TestnetSandbox";
 import TestnetRecovery from "./TestnetRecovery";
 import TestnetJobHistory from "./TestnetJobHistory";
 import TestnetProviderReadiness from "./TestnetProviderReadiness";
@@ -43,12 +41,12 @@ function renderApp() {
   if (path === "/discover") return renderWorkspace(<DiscoverPage />);
   if (path === "/missions") return renderWorkspace(<WorkspaceMissionPage />);
   if (path === "/mission") return renderWorkspace(<WorkspaceMissionConsole />);
-  if (path === "/agents/register") return renderWorkspace(<AgentRegistration />);
-  if (path === "/permissions") return renderWorkspace(<SessionPermissions />);
-
   if (path === "/app") return renderWorkspace(<MarketplaceWorkspace />);
 
-  if (path === "/testnet") return renderWorkspace(<TestnetSandbox />);
+  if (path === "/testnet") return renderWorkspace(<DemoManagePage kind="testnet" />);
+  if (path === "/agents/register") return renderWorkspace(<DemoManagePage kind="register" />);
+  if (path === "/permissions") return renderWorkspace(<DemoManagePage kind="permissions" />);
+
   if (path === "/testnet/execute") return renderWorkspace(<TestnetQuoteExecutionWalletConnect />);
   if (path === "/testnet/provider-submit") return renderWorkspace(<TestnetProviderSubmit />);
   if (path === "/testnet/quote-gate" && missionId && quoteId) return renderWorkspace(<TestnetQuoteGate />);
@@ -60,7 +58,7 @@ function renderApp() {
   if (path === "/testnet/preflight") return renderWorkspace(<TestnetTransactionPreflight />);
   if (path === "/testnet/run") return renderWorkspace(<TestnetGridRun />);
 
-  return renderWorkspace(<TestnetSandbox />);
+  return renderWorkspace(<DemoManagePage kind="testnet" />);
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
