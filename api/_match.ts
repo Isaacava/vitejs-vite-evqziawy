@@ -3,6 +3,23 @@ import { createClient } from "@supabase/supabase-js";
 import { parseMarketplaceIntent } from "../../src/lib/intent";
 import { readAgentOnchainStats, type OnchainAgentStats } from "../../src/server/testnetOnchain";
 
+type CachedOnchainStats = {
+  source: "erc8183_commerce";
+  network: "bsc-testnet";
+  chain_id: 97;
+  synced_at: string;
+  provider_address: string;
+  total_jobs: number;
+  completed_jobs: number;
+  submitted_jobs: number;
+  funded_jobs: number;
+  open_jobs: number;
+  rejected_jobs: number;
+  expired_jobs: number;
+  terminal_jobs: number;
+  success_rate: number | null;
+};
+
 type AgentRow = {
   id: string;
   agent_id: string;
@@ -17,6 +34,7 @@ type AgentRow = {
   source: string;
   verification_status: string;
   is_first_party: boolean;
+  metadata: Record<string, unknown> | null;
 };
 
 type EndpointRow = { agent_id: string; status: string; latency_ms: number | null; last_checked_at: string | null };
@@ -25,6 +43,41 @@ type ReputationRow = { agent_id: string; score: number; source: string };
 const WEIGHTS = { capability: 35, verification: 20, endpointLiveness: 15, completion: 10, jobVolume: 5, reputation: 15 } as const;
 
 function clamp(value: number) { return Math.max(0, Math.min(100, value)); }
+
+function isCachedStats(value: unknown): value is CachedOnchainStats {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Partial<CachedOnchainStats>;
+  return row.source === "erc8183_commerce" && row.network === "bsc-testnet" && row.chain_id === 97 && typeof row.total_jobs === "number" && typeof row.completed_jobs === "number" && typeof row.terminal_jobs === "number";
+}
+
+function cachedToStats(agent: AgentRow, cached: CachedOnchainStats): OnchainAgentStats {
+  const owner = agent.owner as OnchainAgentStats["owner"];
+  const provider = cached.provider_address as OnchainAgentStats["agent_wallet"];
+  return {
+    agent_id: agent.agent_id,
+    owner,
+    agent_wallet: provider,
+    agent_uri: agent.uri || null,
+    job_provider_addresses: [provider],
+    total_jobs: cached.total_jobs,
+    completed_jobs: cached.completed_jobs,
+    submitted_jobs: cached.submitted_jobs,
+    funded_jobs: cached.funded_jobs,
+    open_jobs: cached.open_jobs,
+    rejected_jobs: cached.rejected_jobs,
+    expired_jobs: cached.expired_jobs,
+    terminal_jobs: cached.terminal_jobs,
+    success_rate: cached.success_rate,
+    feedback_count: 0,
+    reputation_value: null,
+    reputation_decimals: null,
+    reputation_score: null,
+    jobs: [],
+    source: "erc8004_identity+erc8183_commerce",
+    network: "bsc-testnet",
+    chain_id: 97,
+  };
+}
 
 function scoreAgent(agent: AgentRow, intent: ReturnType<typeof parseMarketplaceIntent>, endpoint: EndpointRow | undefined, reputationRows: ReputationRow[], onchain: OnchainAgentStats | null) {
   const capability = agent.category === intent.category ? 100 : intent.category === "other" ? 60 : 25;
@@ -99,17 +152,11 @@ function serverClient() {
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
-async function readOnchainBatch(agents: AgentRow[]) {
-  const results = new Map<string, OnchainAgentStats | null>();
-  for (let start = 0; start < agents.length; start += 10) {
-    const batch = agents.slice(start, start + 10);
-    const values = await Promise.all(batch.map(async (agent) => {
-      try { return [agent.agent_id, await readAgentOnchainStats(agent.agent_id)] as const; }
-      catch { return [agent.agent_id, null] as const; }
-    }));
-    for (const [agentId, stats] of values) results.set(agentId, stats);
-  }
-  return results;
+async function getStats(agent: AgentRow): Promise<OnchainAgentStats | null> {
+  const cached = agent.metadata?.onchain_stats;
+  if (isCachedStats(cached)) return cachedToStats(agent, cached);
+  try { return await readAgentOnchainStats(agent.agent_id); }
+  catch { return null; }
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -119,7 +166,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const supabase = serverClient();
     const intent = parseMarketplaceIntent(input);
-    let agentsQuery = supabase.from("agents").select("id,agent_id,owner,uri,name,description,image,chain,category,status,source,verification_status,is_first_party").eq("chain", "bsc-testnet").limit(100);
+    let agentsQuery = supabase.from("agents").select("id,agent_id,owner,uri,name,description,image,chain,category,status,source,verification_status,is_first_party,metadata").eq("chain", "bsc-testnet").limit(100);
     if (intent.category !== "other") agentsQuery = agentsQuery.eq("category", intent.category);
     const [{ data: agents, error: agentsError }, { data: endpoints, error: endpointsError }, { data: reputation, error: reputationError }] = await Promise.all([
       agentsQuery,
@@ -134,7 +181,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const reputationByAgent = new Map<string, ReputationRow[]>();
     for (const row of (reputation ?? []) as ReputationRow[]) reputationByAgent.set(row.agent_id, [...(reputationByAgent.get(row.agent_id) ?? []), row]);
     const candidateAgents = ((agents ?? []) as AgentRow[]).filter((agent) => agent.verification_status !== "revoked");
-    const onchainByAgent = await readOnchainBatch(candidateAgents);
+    const stats = await Promise.all(candidateAgents.map(async (agent) => [agent.agent_id, await getStats(agent)] as const));
+    const onchainByAgent = new Map(stats);
     const matches = candidateAgents.map((agent) => ({ agent, ...scoreAgent(agent, intent, endpointByAgent.get(agent.id), reputationByAgent.get(agent.id) ?? [], onchainByAgent.get(agent.agent_id) ?? null) }))
       .sort((a, b) => a.hireability.canCreateJob !== b.hireability.canCreateJob ? (a.hireability.canCreateJob ? -1 : 1) : b.score - a.score)
       .slice(0, 10);
@@ -148,7 +196,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       scoring: {
         weights: WEIGHTS,
         hireabilityPolicy: "Only BSC Testnet agents with a currently healthy Testnet provider endpoint are hireable.",
-        jobHistorySource: "ERC-8183 Commerce on BSC Testnet",
+        jobHistorySource: "ERC-8183 Commerce on BSC Testnet; cached in Supabase by scheduled chain sync with live RPC fallback",
         reputationSource: "ERC-8004 Reputation Registry on BSC Testnet; Supabase reputation rows are fallback cache only",
       },
     });
