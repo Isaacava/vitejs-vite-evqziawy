@@ -136,7 +136,7 @@ export default function EvaluatorConsole() {
     setError("");
     if (automatic) setNotice("Policy verdict is ready. Finalizing the submitted job on-chain…");
     try {
-      const provider = await connectedProvider(false);
+      await connectedProvider(false);
       const data = encodeFunctionData({ abi: ROUTER_ABI, functionName: "settle", args: [BigInt(jobId), "0x"] });
       const receipt = await sendAndConfirm({ to: ROUTER, data });
       setTxHash(receipt.hash);
