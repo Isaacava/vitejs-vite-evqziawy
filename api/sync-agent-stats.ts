@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
-import { readAgentOnchainStats, type OnchainAgentStats } from "../src/server/testnetOnchain.js";
+import { readAgentOnchainStats, type OnchainAgentStats } from "../src/server/testnetOnchain.ts";
 
 type Agent = {
   id: string;
@@ -79,10 +79,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const syncedAt = new Date().toISOString();
-
-    // Use the exact same on-chain reader used by the marketplace matcher.
-    // It resolves ERC-8004 owner + configured agent wallet and scans the full
-    // ERC-8183 Commerce jobCounter, so the cron cannot drift from matching.
     const statsResults = await Promise.allSettled(
       agentRows.map((agent) => readAgentOnchainStats(agent.agent_id)),
     );
