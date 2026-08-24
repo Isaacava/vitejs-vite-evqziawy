@@ -181,7 +181,7 @@ async function loadAllCommerceJobs(): Promise<OnchainJob[]> {
         contracts: chunk.map((jobId) => ({ address: COMMERCE, abi: JOB_ABI, functionName: "getJob" as const, args: [jobId] })),
         allowFailure: true,
       });
-      results.forEach((result, index) => {
+      results.forEach((result) => {
         if (result.status !== "success") return;
         const job = result.result as RawJob;
         if (!job || job.id === 0n) return;
