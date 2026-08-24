@@ -70,6 +70,12 @@ function normalizedExpiry(value: unknown, fallback: string) {
   return fallback;
 }
 
+function normalizedCurrency(value: unknown, fallback: string) {
+  if (typeof value !== "string" || !value.trim()) return fallback;
+  const currency = value.trim();
+  return /^0x[a-fA-F0-9]{40}$/.test(currency) ? fallback : currency;
+}
+
 async function resolveTestnetAgent(supabase: ReturnType<typeof serverClient>, agentIdentifier: string) {
   const query = supabase.from("agents").select("id,agent_id,owner,name,status,verification_status").eq("chain", "bsc-testnet");
   const result = UUID_RE.test(agentIdentifier) ? await query.eq("id", agentIdentifier).maybeSingle() : await query.eq("agent_id", agentIdentifier).maybeSingle();
@@ -126,7 +132,7 @@ async function requestQuote(req: VercelRequest, res: VercelResponse, user: NonNu
   if (priceRaw <= 0n) return res.status(409).json({ error: "Provider returned a non-positive quote" });
   if (priceRaw > payment.balance) return res.status(409).json({ error: `Provider quote is ${formatUnits(priceRaw, payment.decimals)} ${payment.symbol}, but your connected Testnet wallet has only ${formatUnits(payment.balance, payment.decimals)} ${payment.symbol}.`, price_raw: price, balance_raw: payment.balance.toString(), decimals: payment.decimals });
 
-  const currency = typeof providerQuote.currency === "string" ? providerQuote.currency : payment.symbol;
+  const currency = normalizedCurrency(providerQuote.currency, payment.symbol);
   const expiresAt = normalizedExpiry(providerQuote.quote_expires_at, new Date(Date.now() + QUOTE_TTL_MS).toISOString());
   if (new Date(expiresAt).getTime() <= Date.now()) return res.status(409).json({ error: "Provider returned an already-expired quote" });
 
@@ -154,7 +160,8 @@ async function acceptQuote(req: VercelRequest, res: VercelResponse, user: NonNul
   if (!accepted) return res.status(409).json({ error: "Quote could not be accepted; it may have changed state" });
   const payment = await paymentContext(user.user.wallet_address as Address);
   const rawPrice = BigInt(accepted.price);
-  return res.status(200).json({ ok: true, network: "bsc-testnet", chain_id: TESTNET_CHAIN_ID, environment: TESTNET_ENVIRONMENT, quote: { ...accepted, price: formatUnits(rawPrice, payment.decimals), price_raw: rawPrice.toString(), price_formatted: formatUnits(rawPrice, payment.decimals) }, payment: { symbol: payment.symbol, decimals: payment.decimals }, next: "Use quote_id with /api/testnet/prepare-quote to prepare the accepted Testnet job." });
+  const currency = normalizedCurrency(accepted.currency, payment.symbol);
+  return res.status(200).json({ ok: true, network: "bsc-testnet", chain_id: TESTNET_CHAIN_ID, environment: TESTNET_ENVIRONMENT, quote: { ...accepted, currency, price: formatUnits(rawPrice, payment.decimals), price_raw: rawPrice.toString(), price_formatted: formatUnits(rawPrice, payment.decimals) }, payment: { symbol: payment.symbol, decimals: payment.decimals }, next: "Use quote_id with /api/testnet/prepare-quote to prepare the accepted Testnet job." });
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
