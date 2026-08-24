@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPublicClient, encodeFunctionData, http, type Address } from "viem";
 import { bscTestnet } from "viem/chains";
+import { ensureExpectedChain, getWalletProvider } from "./lib/walletAuth";
 import { sendAndConfirm } from "./lib/onchainExecutor";
 import "./evaluator-console.css";
 
 const COMMERCE = "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address;
 const ROUTER = "0xd7d36d66d2f1b608a0f943f722d27e3744f66f25" as Address;
+const POLICY = "0x4f4678d4439fec812ac7674bb3efb4c8f5fb78a6" as Address;
 
 const COMMERCE_ABI = [{
   type: "function", name: "getJob", stateMutability: "view",
@@ -24,28 +26,50 @@ const ROUTER_ABI = [{
   type: "function", name: "settle", stateMutability: "nonpayable", inputs: [{ name: "jobId", type: "uint256" }, { name: "optParams", type: "bytes" }], outputs: [],
 }] as const;
 
+const POLICY_ABI = [{
+  type: "function", name: "check", stateMutability: "view", inputs: [{ name: "jobId", type: "uint256" }, { name: "evidence", type: "bytes" }], outputs: [{ name: "verdict", type: "uint8" }, { name: "reason", type: "bytes32" }],
+}, {
+  type: "function", name: "disputeWindow", stateMutability: "view", inputs: [], outputs: [{ type: "uint64" }],
+}] as const;
+
 const publicClient = createPublicClient({ chain: bscTestnet, transport: http() });
 const STATUS: Record<number, string> = { 0: "OPEN", 1: "FUNDED", 2: "SUBMITTED", 3: "COMPLETED", 4: "REJECTED", 5: "EXPIRED" };
+const VERDICT: Record<number, string> = { 0: "PENDING", 1: "APPROVE", 2: "REJECT" };
 const compact = (value?: string | null) => value ? `${value.slice(0, 8)}…${value.slice(-6)}` : "—";
 
-async function requireTestnetWallet() {
-  if (!window.ethereum) throw new Error("No compatible browser wallet was detected.");
-  const chainId = String(await window.ethereum.request({ method: "eth_chainId" })).toLowerCase();
-  if (chainId !== "0x61") throw new Error("Switch the connected wallet to BSC Testnet (chain ID 97) before settlement.");
+type Eip1193Provider = {
+  request(args: { method: string; params?: unknown[] }): Promise<unknown>;
+};
+
+async function connectedProvider(requestConnection = false): Promise<Eip1193Provider> {
+  const provider = await getWalletProvider() as Eip1193Provider;
+  let accounts = await provider.request({ method: "eth_accounts" }) as string[];
+  if (!accounts?.[0] && requestConnection) {
+    await provider.request({ method: "eth_requestAccounts" });
+    accounts = await provider.request({ method: "eth_accounts" }) as string[];
+  }
+  await ensureExpectedChain(provider);
+  if (!accounts?.[0]) throw new Error("No connected wallet is available to execute settlement.");
+  return provider;
 }
 
 export default function EvaluatorConsole() {
-  const jobId = new URLSearchParams(window.location.search).get("job") || "";
-  const missionId = new URLSearchParams(window.location.search).get("mission") || "";
-  const marketplaceJobId = new URLSearchParams(window.location.search).get("market_job") || "";
+  const params = new URLSearchParams(window.location.search);
+  const jobId = params.get("job") || "";
+  const missionId = params.get("mission") || "";
+  const marketplaceJobId = params.get("market_job") || "";
   const [job, setJob] = useState<any>(null);
   const [policy, setPolicy] = useState<string>("");
+  const [policyVerdict, setPolicyVerdict] = useState(0);
+  const [disputeWindow, setDisputeWindow] = useState<bigint | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [settling, setSettling] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [txHash, setTxHash] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const settleAttemptedRef = useRef(false);
+  const autoSettleTimerRef = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
     if (!jobId || !/^\d+$/.test(jobId)) {
@@ -60,6 +84,14 @@ export default function EvaluatorConsole() {
       const jobPolicy = await publicClient.readContract({ address: ROUTER, abi: ROUTER_ABI, functionName: "jobPolicy", args: [BigInt(jobId)] });
       setJob(chainJob);
       setPolicy(jobPolicy);
+      setDisputeWindow(await publicClient.readContract({ address: POLICY, abi: POLICY_ABI, functionName: "disputeWindow" }));
+      const policyAddress = String(jobPolicy).toLowerCase();
+      if (policyAddress === POLICY.toLowerCase()) {
+        const checked = await publicClient.readContract({ address: POLICY, abi: POLICY_ABI, functionName: "check", args: [BigInt(jobId), "0x"] });
+        setPolicyVerdict(Number(checked[0]));
+      } else {
+        setPolicyVerdict(0);
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to read evaluator state");
     } finally {
@@ -67,7 +99,12 @@ export default function EvaluatorConsole() {
     }
   }, [jobId]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    void refresh();
+    return () => {
+      if (autoSettleTimerRef.current !== null) window.clearTimeout(autoSettleTimerRef.current);
+    };
+  }, [refresh]);
 
   async function syncSettlement(hash: string) {
     if (!missionId || !marketplaceJobId) {
@@ -92,16 +129,14 @@ export default function EvaluatorConsole() {
     }
   }
 
-  async function settle() {
-    if (!job || Number(job.status) !== 2) {
-      setError("Settlement is only prepared after the chain reports SUBMITTED.");
-      return;
-    }
+  const settleOnChain = useCallback(async (automatic = false) => {
+    if (!job || Number(job.status) !== 2 || policyVerdict === 0 || settling || syncing || settleAttemptedRef.current) return;
+    settleAttemptedRef.current = true;
     setSettling(true);
     setError("");
-    setNotice("");
+    if (automatic) setNotice("Policy verdict is ready. Finalizing the submitted job on-chain…");
     try {
-      await requireTestnetWallet();
+      const provider = await connectedProvider(false);
       const data = encodeFunctionData({ abi: ROUTER_ABI, functionName: "settle", args: [BigInt(jobId), "0x"] });
       const receipt = await sendAndConfirm({ to: ROUTER, data });
       setTxHash(receipt.hash);
@@ -113,10 +148,43 @@ export default function EvaluatorConsole() {
         setError(cause instanceof Error ? cause.message : "Marketplace settlement sync failed");
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Settlement transaction failed");
+      settleAttemptedRef.current = false;
+      const detail = cause instanceof Error ? cause.message : "Settlement transaction failed";
+      if (automatic) {
+        setNotice("The on-chain verdict is ready. Settlement is permissionless; the browser will finalize it when a connected wallet is available.");
+      }
+      setError(detail);
     } finally {
       setSettling(false);
     }
+  }, [job, jobId, policyVerdict, refresh, settling, syncing, missionId, marketplaceJobId]);
+
+  useEffect(() => {
+    if (!job || Number(job.status) !== 2 || policyVerdict !== 0 || !disputeWindow || !job.submittedAt) return;
+    const deadline = Number(job.submittedAt) * 1000 + Number(disputeWindow) * 1000;
+    const delay = Math.max(1000, deadline - Date.now() + 250);
+    if (autoSettleTimerRef.current !== null) window.clearTimeout(autoSettleTimerRef.current);
+    autoSettleTimerRef.current = window.setTimeout(() => {
+      void refresh();
+    }, Math.min(delay, 15_000));
+    return () => {
+      if (autoSettleTimerRef.current !== null) window.clearTimeout(autoSettleTimerRef.current);
+    };
+  }, [job, policyVerdict, disputeWindow, refresh]);
+
+  useEffect(() => {
+    if (!job || Number(job.status) !== 2 || policyVerdict === 0) return;
+    void settleOnChain(true);
+  }, [job, policyVerdict, settleOnChain]);
+
+  async function settleManually() {
+    settleAttemptedRef.current = false;
+    await refresh();
+    if (policyVerdict === 0) {
+      setError("The optimistic policy is still PENDING. Settlement becomes valid after the dispute window closes or a rejection quorum is reached.");
+      return;
+    }
+    await settleOnChain(false);
   }
 
   return (
@@ -170,14 +238,14 @@ export default function EvaluatorConsole() {
           <div>
             <span className="evaluator-kicker">03 / SETTLEMENT</span>
             <h2>{job && Number(job.status) === 2 ? "Submitted job detected." : "Waiting for SUBMITTED."}</h2>
-            <p>{job && Number(job.status) === 2 ? "The wallet can prepare router.settle(jobId). The policy and contract determine whether it succeeds now or must wait for the dispute window." : "Settlement is intentionally unavailable until the chain reports SUBMITTED."}</p>
+            <p>{job && Number(job.status) === 2 ? `Policy verdict: ${VERDICT[policyVerdict] || "PENDING"}. The settlement call is permissionless; AgentMarket uses the already-connected browser wallet as the transaction executor when available.` : "Settlement is intentionally unavailable until the chain reports SUBMITTED."}</p>
           </div>
           <div className="evaluator-actions">
             <button onClick={() => void refresh()} disabled={refreshing}>{refreshing ? "Reading chain…" : "Refresh chain state"}</button>
-            <button onClick={() => void settle()} disabled={settling || syncing || !job || Number(job.status) !== 2}>{settling ? "Confirming…" : syncing ? "Syncing…" : "Settle via wallet →"}</button>
+            <button onClick={() => void settleManually()} disabled={settling || syncing || !job || Number(job.status) !== 2 || policyVerdict === 0}>{settling ? "Confirming…" : syncing ? "Syncing…" : "Settle via wallet →"}</button>
           </div>
           {txHash && <div className="evaluator-tx"><small>CONFIRMED TX</small><strong>{txHash}</strong></div>}
-          <small className="evaluator-note">Development mode: BSC Testnet only. The browser wallet remains the signer; AgentMarket never receives a private key. Terminal settlement is mirrored into marketplace history only after receipt verification and a fresh chain read.</small>
+          <small className="evaluator-note">BSC Testnet only. Dispute uses the connected client wallet; settlement itself is permissionless and does not require the client to be the signer. AgentMarket never receives a private key. Terminal settlement is mirrored into marketplace history only after receipt verification and a fresh chain read.</small>
         </section>
       </div>
     </main>
