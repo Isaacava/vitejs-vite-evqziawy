@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
-import { readAgentOnchainStats, type OnchainAgentStats } from "../src/server/testnetOnchain";
+import { readAgentOnchainStats, type OnchainAgentStats } from "../src/server/testnetOnchain.js";
 
 type Agent = {
   id: string;
