@@ -148,7 +148,6 @@ export default function EvaluatorConsole() {
         setError(cause instanceof Error ? cause.message : "Marketplace settlement sync failed");
       }
     } catch (cause) {
-      settleAttemptedRef.current = false;
       const detail = cause instanceof Error ? cause.message : "Settlement transaction failed";
       if (automatic) {
         setNotice("The on-chain verdict is ready. Settlement is permissionless; the browser will finalize it when a connected wallet is available.");
