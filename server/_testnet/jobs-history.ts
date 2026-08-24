@@ -51,6 +51,7 @@ const STATUS: Record<number, string> = {
 const TERMINAL = new Set(["COMPLETED", "REJECTED", "EXPIRED"]);
 const BATCH_SIZE = 25;
 const MAX_SCAN = 2000;
+const JSON_LABEL_KEYS = ["title", "mission_title", "task_title", "name", "goal", "description", "summary", "label"];
 
 type ChainJob = {
   id: bigint;
@@ -66,15 +67,52 @@ type ChainJob = {
   deliverable: `0x${string}`;
 };
 
+function cleanLabel(value: unknown, fallback: string) {
+  if (typeof value !== "string") return fallback;
+  let text = value.trim();
+  if (!text) return fallback;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (!(text.startsWith("{") || text.startsWith("["))) break;
+    try {
+      const parsed: unknown = JSON.parse(text);
+      if (typeof parsed === "string") {
+        text = parsed.trim();
+        continue;
+      }
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const record = parsed as Record<string, unknown>;
+        for (const key of JSON_LABEL_KEYS) {
+          const candidate = record[key];
+          if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+        }
+        const nested = record.mission;
+        if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+          for (const key of JSON_LABEL_KEYS) {
+            const candidate = (nested as Record<string, unknown>)[key];
+            if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+          }
+        }
+      }
+      break;
+    } catch {
+      break;
+    }
+  }
+
+  return text;
+}
+
 function serializeChainJob(job: ChainJob) {
   const chainStatus = STATUS[Number(job.status)] || "UNKNOWN";
+  const description = cleanLabel(job.description, `Testnet mission #${Number(job.id)}`);
   return {
     chain_job_id: Number(job.id),
     chain_status: chainStatus,
     client_wallet: job.client,
     provider: job.provider,
     evaluator: job.evaluator,
-    description: job.description,
+    description,
     budget_raw: job.budget.toString(),
     expired_at: Number(job.expiredAt),
     submitted_at: job.submittedAt > 0n ? new Date(Number(job.submittedAt) * 1000).toISOString() : null,
@@ -168,15 +206,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const task = db ? taskById.get(db.mission_task_id) : undefined;
         const mission = task ? missionById.get(task.mission_id) : undefined;
         const submitted = ["SUBMITTED", "COMPLETED", "REJECTED"].includes(chain.chain_status);
+        const missionTitle = cleanLabel(mission?.title, chain.description);
+        const taskTitle = cleanLabel(task?.title, missionTitle);
 
         return {
           ...chain,
           id: db?.id ?? null,
           mission_id: mission?.id ?? null,
-          mission_title: mission?.title ?? null,
+          mission_title: missionTitle,
           mission_status: mission?.status ?? null,
-          task_title: task?.title ?? chain.description.slice(0, 120),
+          task_title: taskTitle,
           job_status: chain.chain_status.toLowerCase(),
+          budget: db?.budget ?? null,
           submitted_at: submitted && chainJob.submittedAt > 0n ? new Date(Number(chainJob.submittedAt) * 1000).toISOString() : null,
           created_at: db?.created_at ?? null,
           funded_at: db?.funded_at ?? null,
