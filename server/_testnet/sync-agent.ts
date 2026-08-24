@@ -39,7 +39,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { data: existing, error: existingError } = await supabase.from("agents").select("id,metadata,name,description,category,is_first_party,indexed_at").eq("agent_id", agentIdValue).maybeSingle();
     if (existingError) throw new Error(existingError.message);
 
-    const patch = { owner: String(onchainOwner), uri: String(uri), chain: "bsc-testnet", source: "testnet_indexed", verification_status: "indexed", status: "unknown", indexed_at: existing?.indexed_at || now, last_indexed_at: now, metadata: { ...(existing?.metadata || {}), environment: "testnet", registry: REGISTRY, synced_at: now } };
+    const existingMetadata = existing?.metadata && typeof existing.metadata === "object" ? existing.metadata as Record<string, unknown> : {};
+    const patch = {
+      owner: String(onchainOwner),
+      uri: String(uri),
+      chain: "bsc-testnet",
+      source: "testnet_indexed",
+      verification_status: "indexed",
+      status: "unknown",
+      indexed_at: existing?.indexed_at || now,
+      last_indexed_at: now,
+      metadata: { ...existingMetadata, environment: "testnet", registry: REGISTRY, synced_at: now },
+    };
     let rowId: string;
     if (existing) {
       const { data, error } = await supabase.from("agents").update(patch as never).eq("id", existing.id).select("id,agent_id,name,chain,status,verification_status,owner,uri,category,is_first_party").single();
@@ -52,7 +63,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     const { error: capabilityError } = await supabase.from("agent_capabilities").upsert({ agent_id: rowId, capability: "grid_trading", source: "testnet_registration", confidence: 1, metadata: { environment: "testnet", agentId: agentIdValue }, updated_at: now }, { onConflict: "agent_id,capability,source" });
     if (capabilityError) throw new Error(capabilityError.message);
-    return res.status(200).json({ ok: true, network: "bsc-testnet", chain_id: 97, registry: REGISTRY, agent_id: agentIdValue, owner: String(onchainOwner), uri: String(uri), note: "Testnet identity synced. Provider endpoint liveness remains a separate hireability gate." });
+    return res.status(200).json({ ok: true, network: "bsc-testnet", chain_id: 97, registry: REGISTRY, agent_id: agentIdValue, owner: String(onchainOwner), uri: String(uri), note: "Testnet identity synced. Cached ERC-8183 statistics are preserved for the scheduled chain sync." });
   } catch (error) {
     return res.status(400).json({ error: error instanceof Error ? error.message : "Unable to sync Testnet agent" });
   }
