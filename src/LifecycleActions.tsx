@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPublicClient, encodeFunctionData, http, type Address } from "viem";
 import { bscTestnet } from "viem/chains";
+import { ensureExpectedChain, getWalletProvider } from "./lib/walletAuth";
 import { sendAndConfirm } from "./lib/onchainExecutor";
 import "./lifecycle-actions.css";
 
@@ -32,17 +33,20 @@ const POLICY_ABI = [{
 
 const STATUS: Record<number, string> = { 0: "OPEN", 1: "FUNDED", 2: "SUBMITTED", 3: "COMPLETED", 4: "REJECTED", 5: "EXPIRED" };
 
-async function requireTestnet() {
-  if (!window.ethereum) throw new Error("No compatible browser wallet was detected.");
-  const chainId = String(await window.ethereum.request({ method: "eth_chainId" })).toLowerCase();
-  if (chainId !== "0x61") throw new Error("Switch the connected wallet to BSC Testnet (chain ID 97).");
-}
+type Eip1193Provider = {
+  request(args: { method: string; params?: unknown[] }): Promise<unknown>;
+};
 
-async function walletAddress() {
-  if (!window.ethereum) throw new Error("No compatible browser wallet was detected.");
-  const accounts = await window.ethereum.request({ method: "eth_requestAccounts" }) as string[];
-  if (!accounts?.[0]) throw new Error("Connect a wallet before continuing.");
-  return accounts[0].toLowerCase();
+async function connectedProvider(requestConnection = false): Promise<Eip1193Provider> {
+  const provider = await getWalletProvider() as Eip1193Provider;
+  const accounts = await provider.request({ method: "eth_accounts" }) as string[];
+  if (!accounts?.[0] && requestConnection) {
+    await provider.request({ method: "eth_requestAccounts" });
+  }
+  const confirmedAccounts = await provider.request({ method: "eth_accounts" }) as string[];
+  if (!confirmedAccounts?.[0]) throw new Error("Connect a wallet before continuing.");
+  await ensureExpectedChain(provider);
+  return provider;
 }
 
 export default function LifecycleActions() {
@@ -62,7 +66,12 @@ export default function LifecycleActions() {
 
   useEffect(() => {
     void refresh().catch((cause) => setError(cause instanceof Error ? cause.message : "Unable to load job"));
-    void walletAddress().then(setWallet).catch(() => undefined);
+    void getWalletProvider()
+      .then(async (provider) => {
+        const accounts = await provider.request({ method: "eth_accounts" }) as string[];
+        if (accounts?.[0]) setWallet(accounts[0].toLowerCase());
+      })
+      .catch(() => undefined);
   }, [refresh]);
 
   const status = Number(job?.status);
@@ -77,12 +86,15 @@ export default function LifecycleActions() {
     setError("");
     setNotice("");
     try {
-      await requireTestnet();
-      const account = await walletAddress();
-      setWallet(account);
+      const provider = await connectedProvider(true);
+      const accounts = await provider.request({ method: "eth_accounts" }) as string[];
+      setWallet(String(accounts[0]).toLowerCase());
       let tx;
       if (action === "dispute") {
-        if (!disputeAvailable) throw new Error("Dispute is only available to the client while the submitted job is within the protocol's dispute window.");
+        const connectedClient = String(accounts[0]).toLowerCase();
+        if (!disputeAvailable || connectedClient !== String(job?.client || "").toLowerCase()) {
+          throw new Error("Dispute is only available to the connected job client while the submitted job is within the protocol's dispute window.");
+        }
         tx = { to: POLICY, data: encodeFunctionData({ abi: POLICY_ABI, functionName: "dispute", args: [BigInt(jobId)] }) };
       } else if (action === "voteReject") {
         if (status !== 2) throw new Error("Vote rejection is only relevant while the job is SUBMITTED.");
