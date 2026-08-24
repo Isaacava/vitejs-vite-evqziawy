@@ -8,6 +8,7 @@ const TRANSFER_EVENT = parseAbiItem(
   "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
 );
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as Address;
+const NETWORK = "bsc-testnet" as const;
 const BLOCKS_PER_RUN = BigInt(process.env.ERC8004_INDEX_BLOCKS_PER_RUN || "5000");
 const MAX_URI_BYTES = 512_000;
 
@@ -108,23 +109,66 @@ async function syncAgent(supabase: ReturnType<typeof supabaseServer>, agentId: s
   const { data: existing, error: existingError } = await supabase.from("agents").select("id,agent_id,source,verification_status,category,is_first_party,status,indexed_at,last_indexed_at").eq("agent_id", agentId).maybeSingle();
   if (existingError) throw new Error(existingError.message);
   const now = new Date().toISOString();
-  const identityPatch = { owner, uri, name: registration.name || null, description: registration.description || null, image: registration.image || null, chain: "bsc", indexed_at: existing?.indexed_at || now, last_indexed_at: now, ...(existing?.source && existing.source !== "indexed" ? {} : { source: "indexed", verification_status: existing?.verification_status || "indexed" }), ...(!existing || existing.category === "other" || existing.source === "indexed" ? { category } : {}), metadata: { registration, indexer: "agentmarket", resolution_error: resolveError } };
+  const identityPatch = {
+    owner,
+    uri,
+    name: registration.name || null,
+    description: registration.description || null,
+    image: registration.image || null,
+    chain: NETWORK,
+    indexed_at: existing?.indexed_at || now,
+    last_indexed_at: now,
+    ...(existing?.source && existing.source !== "indexed" ? {} : { source: "indexed", verification_status: existing?.verification_status || "indexed" }),
+    ...(!existing || existing.category === "other" || existing.source === "indexed" ? { category } : {}),
+    metadata: {
+      ...(existing?.metadata && typeof existing.metadata === "object" ? existing.metadata : {}),
+      registration,
+      indexer: "agentmarket",
+      environment: "testnet",
+      chain_id: 97,
+      resolution_error: resolveError,
+    },
+  };
   let dbAgent: { id: string } | null = existing ? { id: existing.id } : null;
   if (existing) {
     const { data, error } = await supabase.from("agents").update(identityPatch as never).eq("id", existing.id).select("id").single();
     if (error) throw new Error(error.message);
     dbAgent = data as { id: string };
   } else {
-    const { data, error } = await supabase.from("agents").insert({ agent_id: agentId, owner, uri, name: registration.name || `Agent #${agentId}`, description: registration.description || null, image: registration.image || null, chain: "bsc", category, source: "indexed", verification_status: "indexed", status: "unknown", is_first_party: false, indexed_at: now, last_indexed_at: now, metadata: { registration, indexer: "agentmarket", resolution_error: resolveError } }).select("id").single();
+    const { data, error } = await supabase.from("agents").insert({
+      agent_id: agentId,
+      owner,
+      uri,
+      name: registration.name || `Agent #${agentId}`,
+      description: registration.description || null,
+      image: registration.image || null,
+      chain: NETWORK,
+      category,
+      source: "indexed",
+      verification_status: "indexed",
+      status: "unknown",
+      is_first_party: false,
+      indexed_at: now,
+      last_indexed_at: now,
+      metadata: {
+        registration,
+        indexer: "agentmarket",
+        environment: "testnet",
+        chain_id: 97,
+        resolution_error: resolveError,
+      },
+    }).select("id").single();
     if (error) throw new Error(error.message);
     dbAgent = data as { id: string };
   }
   if (!dbAgent) throw new Error("agent row missing after sync");
   for (const capability of [...new Set([category, ...capabilityStrings])]) {
-    await supabase.from("agent_capabilities").upsert({ agent_id: dbAgent.id, capability, source: "registration", confidence: capability === category ? 1 : 0.8, metadata: { agentId }, updated_at: now }, { onConflict: "agent_id,capability,source" });
+    const { error } = await supabase.from("agent_capabilities").upsert({ agent_id: dbAgent.id, capability, source: "registration", confidence: capability === category ? 1 : 0.8, metadata: { agentId, network: NETWORK }, updated_at: now }, { onConflict: "agent_id,capability,source" });
+    if (error) throw new Error(error.message);
   }
   for (const endpoint of extractEndpoints(registration)) {
-    await supabase.from("agent_endpoints").upsert({ agent_id: dbAgent.id, endpoint_url: endpoint.url, protocol: endpoint.protocol, version: endpoint.version || null, status: "unknown", metadata: endpoint.metadata || {}, updated_at: now }, { onConflict: "agent_id,endpoint_url,protocol" });
+    const { error } = await supabase.from("agent_endpoints").upsert({ agent_id: dbAgent.id, endpoint_url: endpoint.url, protocol: endpoint.protocol, version: endpoint.version || null, status: "unknown", metadata: { ...(endpoint.metadata || {}), network: NETWORK }, updated_at: now }, { onConflict: "agent_id,endpoint_url,protocol" });
+    if (error) throw new Error(error.message);
   }
   return { resolved: !resolveError, endpointCount: extractEndpoints(registration).length, category };
 }
@@ -160,22 +204,15 @@ function buildCachedStats(stats: OnchainAgentStats, syncedAt: string) {
 }
 
 async function syncTestnetAgentStats(supabase: ReturnType<typeof supabaseServer>, syncedAt: string) {
-  const { data: agents, error: agentsError } = await supabase
-    .from("agents")
-    .select("id,agent_id,metadata")
-    .eq("chain", "bsc-testnet")
-    .not("agent_id", "is", null);
+  const { data: agents, error: agentsError } = await supabase.from("agents").select("id,agent_id,metadata").eq("chain", NETWORK).not("agent_id", "is", null);
   if (agentsError) throw new Error(agentsError.message);
-
   const agentRows = (agents || []) as AgentStatsRow[];
   if (agentRows.length === 0) return { agents_scanned: 0, agents_updated: 0, agents_failed: 0, jobs_scanned: 0, errors: [] as Array<{ agent_id: string; error: string }> };
-
   const statsResults = await Promise.allSettled(agentRows.map((agent) => readAgentOnchainStats(agent.agent_id)));
   let updated = 0;
   let failed = 0;
   let jobsScanned = 0;
   const errors: Array<{ agent_id: string; error: string }> = [];
-
   for (let i = 0; i < agentRows.length; i += 1) {
     const agent = agentRows[i];
     const result = statsResults[i];
@@ -184,21 +221,13 @@ async function syncTestnetAgentStats(supabase: ReturnType<typeof supabaseServer>
       errors.push({ agent_id: agent.agent_id, error: result.reason instanceof Error ? result.reason.message : String(result.reason) });
       continue;
     }
-
     const stats = result.value;
     jobsScanned = Math.max(jobsScanned, stats.jobs.length);
-    const nextMetadata = {
-      ...(agent.metadata || {}),
-      onchain_stats: buildCachedStats(stats, syncedAt),
-    };
-    const { error: updateError } = await supabase
-      .from("agents")
-      .update({ metadata: nextMetadata, last_indexed_at: syncedAt })
-      .eq("id", agent.id);
+    const nextMetadata = { ...(agent.metadata || {}), onchain_stats: buildCachedStats(stats, syncedAt) };
+    const { error: updateError } = await supabase.from("agents").update({ metadata: nextMetadata, last_indexed_at: syncedAt }).eq("id", agent.id);
     if (updateError) throw new Error(`Agent ${agent.agent_id}: ${updateError.message}`);
     updated += 1;
   }
-
   return { agents_scanned: agentRows.length, agents_updated: updated, agents_failed: failed, jobs_scanned: jobsScanned, errors };
 }
 
@@ -211,7 +240,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const supabase = supabaseServer();
     const latest = await publicClient.getBlockNumber();
-    const { data: previous } = await supabase.from("agent_registry_syncs").select("to_block").eq("network", "bsc").in("status", ["completed", "completed_with_errors"]).order("completed_at", { ascending: false }).limit(1).maybeSingle();
+    const { data: previous } = await supabase.from("agent_registry_syncs").select("to_block,network").in("network", [NETWORK, "bsc"]).in("status", ["completed", "completed_with_errors"]).order("completed_at", { ascending: false }).limit(1).maybeSingle();
     const configuredStart = process.env.ERC8004_INDEX_START_BLOCK;
     const bootstrapStart = configuredStart ? BigInt(configuredStart) : 0n;
     const start = previous?.to_block != null ? BigInt(previous.to_block) + 1n : bootstrapStart;
@@ -219,17 +248,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (start > latest) {
       const syncedAt = new Date().toISOString();
       const stats = await syncTestnetAgentStats(supabase, syncedAt);
-      return res.status(200).json({ ok: stats.agents_failed === 0, message: "Indexer already caught up; Testnet agent statistics synchronized", latest: latest.toString(), discovered_source: "erc8004_transfer_events", testnet_stats: { ...stats, synced_at: syncedAt, network: "bsc-testnet", chain_id: 97, source: "erc8183_commerce" } });
+      return res.status(200).json({ ok: stats.agents_failed === 0, message: "Testnet ERC-8004 index is caught up; ERC-8183 agent statistics synchronized", latest: latest.toString(), network: NETWORK, chain_id: 97, discovered_source: "erc8004_transfer_events", testnet_stats: { ...stats, synced_at: syncedAt, network: NETWORK, chain_id: 97, source: "erc8183_commerce" } });
     }
-    const { data: sync, error: syncError } = await supabase.from("agent_registry_syncs").insert({ network: "bsc", from_block: start.toString(), to_block: end.toString(), status: "running" }).select("id").single();
+    const { data: sync, error: syncError } = await supabase.from("agent_registry_syncs").insert({ network: NETWORK, from_block: start.toString(), to_block: end.toString(), status: "running", metadata: { environment: "testnet", chain_id: 97, legacy_network_checkpoint: previous?.network === "bsc" } }).select("id").single();
     if (syncError) throw new Error(syncError.message);
     const logs = (await publicClient.getLogs({ address: ERC8004_REGISTRY_ADDRESS, event: TRANSFER_EVENT, fromBlock: start, toBlock: end })) as unknown as TransferLog[];
     const mintedIds = [...new Set(logs.map((log) => { try { const fromTopic = log.topics[1]; const tokenTopic = log.topics[3]; if (!fromTopic || !tokenTopic) return null; const from = getAddress(`0x${fromTopic.slice(-40)}`); if (from.toLowerCase() !== ZERO_ADDRESS.toLowerCase()) return null; return BigInt(tokenTopic); } catch { return null; } }).filter((id): id is bigint => id !== null).map((id) => id.toString()))];
-    let upserted = 0; let errors = 0;
-    for (const agentId of mintedIds) { try { const tokenId = BigInt(agentId); const [owner, uri] = await Promise.all([readContract({ address: ERC8004_REGISTRY_ADDRESS, abi: OWNER_OF_ABI, functionName: "ownerOf", args: [tokenId] }), readContract({ address: ERC8004_REGISTRY_ADDRESS, abi: TOKEN_URI_ABI, functionName: "tokenURI", args: [tokenId] })]); await syncAgent(supabase, agentId, String(owner), String(uri)); upserted += 1; } catch { errors += 1; } }
-    await supabase.from("agent_registry_syncs").update({ completed_at: new Date().toISOString(), agents_seen: mintedIds.length, agents_upserted: upserted, errors, status: errors ? "completed_with_errors" : "completed" }).eq("id", sync.id);
-    const syncedAt = new Date().toISOString();
-    const stats = await syncTestnetAgentStats(supabase, syncedAt);
-    return res.status(200).json({ ok: errors === 0 && stats.agents_failed === 0, network: "bsc", from_block: start.toString(), to_block: end.toString(), latest_block: latest.toString(), agents_seen: mintedIds.length, agents_upserted: upserted, errors, next_run_from_block: end < latest ? (end + 1n).toString() : null, discovered_source: "erc8004_transfer_events", inventory_policy: "automatic_discovery_first", testnet_stats: { ...stats, synced_at: syncedAt, network: "bsc-testnet", chain_id: 97, source: "erc8183_commerce" } });
-  } catch (error) { return res.status(500).json({ error: error instanceof Error ? error.message : "Indexer failed" }); }
+    let upserted = 0;
+    let errors = 0;
+    for (const agentId of mintedIds) {
+      try {
+        const tokenId = BigInt(agentId);
+        const [owner, uri] = await Promise.all([
+          readContract({ address: ERC8004_REGISTRY_ADDRESS, abi: OWNER_OF_ABI, functionName: "ownerOf", args: [tokenId] }),
+          readContract({ address: ERC8004_REGISTRY_ADDRESS, abi: TOKEN_URI_ABI, functionName: "tokenURI", args: [tokenId] }),
+        ]);
+        await syncAgent(supabase, agentId, String(owner), String(uri));
+        upserted += 1;
+      } catch {
+        errors += 1;
+      }
+    }
+    const completedAt = new Date().toISOString();
+    await supabase.from("agent_registry_syncs").update({ completed_at: completedAt, agents_seen: mintedIds.length, agents_upserted: upserted, errors, status: errors ? "completed_with_errors" : "completed" }).eq("id", sync.id);
+    const stats = await syncTestnetAgentStats(supabase, completedAt);
+    return res.status(200).json({ ok: errors === 0 && stats.agents_failed === 0, network: NETWORK, chain_id: 97, from_block: start.toString(), to_block: end.toString(), latest_block: latest.toString(), agents_seen: mintedIds.length, agents_upserted: upserted, errors, next_run_from_block: end < latest ? (end + 1n).toString() : null, discovered_source: "erc8004_transfer_events", inventory_policy: "automatic_discovery_first", testnet_stats: { ...stats, synced_at: completedAt, network: NETWORK, chain_id: 97, source: "erc8183_commerce" } });
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Testnet indexer failed" });
+  }
 }
