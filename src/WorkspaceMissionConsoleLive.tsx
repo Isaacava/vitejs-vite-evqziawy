@@ -21,11 +21,7 @@ type JobView = {
   };
   task: { id: string; status: string; title: string; role: string; description?: string | null } | null;
   mission: { id: string; title: string; goal: string; status: string; category: string } | null;
-  evaluation: {
-    verdict: string;
-    notes: string | null;
-    evidence?: { source?: string; decision?: string; reasons?: string[] } | null;
-  } | null;
+  evaluation: { verdict: string; notes: string | null; evidence?: { source?: string; decision?: string; reasons?: string[] } | null } | null;
   payment: { amount: number | string; status?: string; tx_hash?: string | null; token_symbol: string | null } | null;
   chain: {
     chain_job_id: number;
@@ -159,7 +155,7 @@ export default function WorkspaceMissionConsole() {
   const [policy, setPolicy] = useState<PolicyState | null>(null);
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
-  const [workingAction, setWorkingAction] = useState<"dispute" | "settle" | "refund" | ""}("");
+  const [workingAction, setWorkingAction] = useState<"dispute" | "settle" | "refund" | "">("");
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const [txHash, setTxHash] = useState<string>("");
 
@@ -234,7 +230,6 @@ export default function WorkspaceMissionConsole() {
   const remaining = disputeDeadline === null ? null : Math.max(disputeDeadline - now, 0);
   const disputeOpen = submitted && remaining !== null && remaining > 0;
   const disputeExpired = submitted && remaining !== null && remaining <= 0;
-  const verdictLabel = policyVerdictLabel(policy?.verdict ?? null);
   const settlementReady = submitted && policy?.verdict !== null && policy?.verdict !== 0n && (disputeExpired || policy?.verdict === 2n);
   const refundReady = submitted && disputeExpired && policy?.verdict === 0n;
 
@@ -266,11 +261,7 @@ export default function WorkspaceMissionConsole() {
     try {
       const { provider, account } = await walletAccount();
       const args = { jobId: BigInt(chainJobId), providerWallet: provider, account };
-      const response = action === "dispute"
-        ? await disputeJob(args)
-        : action === "settle"
-          ? await settleJob(args)
-          : await claimRefundJob(args);
+      const response = action === "dispute" ? await disputeJob(args) : action === "settle" ? await settleJob(args) : await claimRefundJob(args);
       const hash = response.hash as Hex;
       setTxHash(hash);
       await load();
