@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { createPublicClient, encodeFunctionData, http, type Address } from "viem";
 import { bscTestnet } from "viem/chains";
+import { ensureExpectedChain, getWalletProvider } from "./lib/walletAuth";
 import { sendAndConfirm } from "./lib/onchainExecutor";
 import "./evaluator-console.css";
 
@@ -12,10 +13,16 @@ const publicClient = createPublicClient({ chain: bscTestnet, transport: http() }
 const STATUS: Record<number, string> = { 0: "OPEN", 1: "FUNDED", 2: "SUBMITTED", 3: "COMPLETED", 4: "REJECTED", 5: "EXPIRED" };
 const compact = (value?: string | null) => value ? `${value.slice(0, 8)}…${value.slice(-6)}` : "—";
 
-async function requireTestnetWallet() {
-  if (!window.ethereum) throw new Error("No compatible browser wallet was detected.");
-  const chainId = String(await window.ethereum.request({ method: "eth_chainId" })).toLowerCase();
-  if (chainId !== "0x61") throw new Error("Switch the connected wallet to BSC Testnet (chain ID 97) before settlement.");
+type Eip1193Provider = {
+  request(args: { method: string; params?: unknown[] }): Promise<unknown>;
+};
+
+async function connectedSettlementProvider() {
+  const provider = await getWalletProvider() as Eip1193Provider;
+  const accounts = await provider.request({ method: "eth_accounts" }) as string[];
+  if (!accounts?.[0]) throw new Error("Connect your AgentMarket wallet before continuing.");
+  await ensureExpectedChain(provider);
+  return { provider, account: accounts[0].toLowerCase() };
 }
 
 export default function EvaluatorConsole() {
@@ -61,7 +68,7 @@ export default function EvaluatorConsole() {
     if (!job || Number(job.status) !== 2) { setError("Settlement is only prepared after the chain reports SUBMITTED."); return; }
     setSettling(true); setError(""); setNotice("");
     try {
-      await requireTestnetWallet();
+      await connectedSettlementProvider();
       const data = encodeFunctionData({ abi: ROUTER_ABI, functionName: "settle", args: [BigInt(jobId), "0x"] });
       const receipt = await sendAndConfirm({ to: ROUTER, data });
       setTxHash(receipt.hash); setNotice(`Testnet settlement transaction confirmed in block ${receipt.blockNumber}. Verifying terminal state…`);
