@@ -1,13 +1,13 @@
 import EthereumProvider from "@walletconnect/ethereum-provider";
+import type { EIP1193Provider } from "viem";
 import { BSC_RPC_URL } from "./network";
 
-type Eip1193Provider = {
-  request(args: { method: string; params?: unknown[] }): Promise<unknown>;
-  on?: (event: string, handler: (...args: unknown[]) => void) => void;
-  removeListener?: (event: string, handler: (...args: unknown[]) => void) => void;
+type WalletProvider = EIP1193Provider & {
   disconnect?: () => Promise<void>;
   connect?: (args?: { chains?: number[] }) => Promise<void>;
 };
+
+type Eip1193Provider = WalletProvider;
 
 declare global { interface Window { ethereum?: Eip1193Provider } }
 
@@ -23,6 +23,7 @@ export type AuthUser = {
 export const WALLETCONNECT_PROJECT_ID = "1dbe8fd5e4974ae7c80d074c4082b5a0";
 export const AUTH_CHAIN_ID = 97;
 const AUTH_CHAIN_ID_HEX = `0x${AUTH_CHAIN_ID.toString(16)}`;
+const STORAGE = "agentmarket-testnet-wc-v8";
 const TESTNET_CHAIN_CONFIG = {
   chainId: AUTH_CHAIN_ID_HEX,
   chainName: "BNB Smart Chain Testnet",
@@ -61,6 +62,7 @@ async function getWalletConnectProvider() {
       optionalEvents: ["chainChanged", "accountsChanged"],
       rpcMap: { [AUTH_CHAIN_ID]: BSC_RPC_URL },
       showQrModal: true,
+      customStoragePrefix: STORAGE,
       metadata: {
         name: "AgentMarket Testnet",
         description: "AgentMarket BSC Testnet marketplace",
@@ -117,7 +119,9 @@ export async function connectWallet() {
     walletConnectProvider = null;
     walletConnectInitPromise = null;
     provider = await getWalletConnectProvider();
-    if (provider.connect) await provider.connect({ chains: [AUTH_CHAIN_ID] });
+    if (provider.connect) {
+      await provider.connect({ chains: [AUTH_CHAIN_ID] });
+    }
     await ensureExpectedChain(provider);
   }
 
