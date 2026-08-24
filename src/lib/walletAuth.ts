@@ -149,19 +149,23 @@ export async function connectWallet() {
   if (!wallet) throw new Error("No wallet account was selected.");
 
   walletConnectProvider = provider;
-  // The mission console still supports a shared EIP-1193 surface for actions.
-  // When WalletConnect is the active session, expose that same provider so
-  // lifecycle actions reuse the already-connected wallet instead of asking
-  // for a second connection.
-  if (!getInjectedProvider()) window.ethereum = provider;
+  // Make the active WalletConnect session the provider consumed by legacy
+  // lifecycle action code too. This prevents an unrelated injected provider
+  // from being selected on the console and falsely reporting chain 97 as wrong.
+  window.ethereum = provider;
   return { provider, address: wallet };
 }
 
 export async function ensureWalletConnectedProvider() { return connectWallet(); }
 export function getConnectedWalletProvider() {
-  if (getInjectedProvider()) return getInjectedProvider()!;
-  if (!walletConnectProvider) throw new Error("Wallet is not connected. Connect your Testnet wallet first.");
-  return walletConnectProvider;
+  // Prefer the provider belonging to the AgentMarket session. A browser may
+  // expose an unrelated injected wallet even when AgentMarket authenticated
+  // through WalletConnect, so injected-provider-first can select the wrong
+  // chain/session and produce the misleading "switch to chain 97" error.
+  if (walletConnectProvider) return walletConnectProvider;
+  const injected = getInjectedProvider();
+  if (injected) return injected;
+  throw new Error("Wallet is not connected. Connect your Testnet wallet first.");
 }
 export function getWalletProviderOrThrow() { return getConnectedWalletProvider(); }
 
