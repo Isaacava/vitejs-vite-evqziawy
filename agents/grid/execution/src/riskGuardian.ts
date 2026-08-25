@@ -30,8 +30,8 @@ export function approveGridExecution(
 ): RiskGuardianDecision {
   const reasons: string[] = [];
 
-  if (descriptor.walletAddress.toLowerCase() !== descriptor.walletAddress.toLowerCase()) {
-    return { approved: false, reasons: ["Execution wallet identity is invalid"] };
+  if (!/^0x[a-fA-F0-9]{40}$/.test(descriptor.walletAddress)) {
+    reasons.push("Execution wallet identity is invalid");
   }
   if (descriptor.expiry <= nowSeconds) {
     reasons.push("Altana session has expired");
