@@ -10,6 +10,7 @@ async function loadHandler(route: string): Promise<Handler | null> {
     case "erc8183": return (await import("../server/_testnet/erc8183.js")).default as Handler;
     case "execution-capital":
     case "execution-capital-verify": return (await import("../server/_testnet/execution-capital.js")).default as Handler;
+    case "execution-capital-execute": return (await import("../server/_testnet/grid-execute.js")).default as Handler;
     case "job-result": return (await import("../server/_testnet/job-result.js")).default as Handler;
     case "job-status": return (await import("../server/_testnet/job-status.js")).default as Handler;
     case "jobs-history": return (await import("../server/_testnet/jobs-history.js")).default as Handler;
