@@ -7,15 +7,21 @@ export type AltanaSessionGrantGateProps = {
   agentSessionAddress: Address;
   agentSessionPublicKey: Hex;
   allowedCalls: readonly Address[];
+  allowedSelectors: readonly Hex[];
   capitalAmount: bigint;
   capitalToken?: Address;
   purpose: string;
   durationSeconds: number;
+  capabilitySource?: string;
   onAuthorized?: (value: { requestId: string; sessionKeyId: Hex; walletAddress: Address; transactionHash?: Hex }) => void;
 };
 
 function compact(address: string) {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
+}
+
+function compactHex(value: string) {
+  return value.length > 14 ? `${value.slice(0, 10)}…${value.slice(-4)}` : value;
 }
 
 export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProps) {
@@ -50,6 +56,7 @@ export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProp
           signer_address: granted.signerAddress,
           session_key_id: granted.sessionKeyId,
           session_expiry: granted.expiry,
+          session_grant_tx_hash: granted.transactionHash,
         }),
       });
       const body = await response.json() as { ok?: boolean; authorized?: boolean; request?: unknown; error?: string };
@@ -85,7 +92,7 @@ export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProp
           <small className="block font-mono text-[8.5px] uppercase tracking-widest text-brass mb-1.5">Execution Capital · Altana Session</small>
           <h3 className="font-display text-[18px] font-bold m-0">Approve the agent's trading authority</h3>
           <p className="text-[11px] text-inksoft mt-1.5 max-w-[600px]">
-            Your wallet stays the owner. The agent receives only the explicit contract allowlist, spend cap, and expiry shown below.
+            This scope comes from the provider's live public execution-capability endpoint. Your wallet stays the owner; the agent receives only the displayed targets, selector policy, spend cap, and expiry.
           </p>
         </div>
         <span className={`font-mono text-[9px] px-2.5 py-1 rounded-lg ${status === "authorized" ? "status-green" : "status-brass"}`}>BSC TESTNET</span>
@@ -101,15 +108,19 @@ export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProp
       <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-4">
         <small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-2">Contract allowlist</small>
         <div className="flex flex-wrap gap-2">{props.allowedCalls.map((address) => <span key={address} className="font-mono text-[9px] px-2 py-1 rounded-md border border-line">{compact(address)}</span>)}</div>
+        <small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-2 mt-4">Function selector allowlist</small>
+        <div className="flex flex-wrap gap-2">{props.allowedSelectors.map((value) => <span key={value} className="font-mono text-[9px] px-2 py-1 rounded-md border border-line">{compactHex(value)}</span>)}</div>
+        <p className="mt-3 text-[10px] text-inksoft">Selectors are an execution-service Risk Guardian restriction. The Altana permission grants the displayed contract targets; the Grid executor refuses calls outside these selectors.</p>
       </div>
 
+      {props.capabilitySource && <div className="mt-4 text-[9px] font-mono text-inksoft break-all">Capability source: {props.capabilitySource}</div>}
       {walletAddress && sessionKeyId && <div className="mt-4 border border-green/30 bg-green/5 rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]"><strong className="text-green">{statusText}</strong><div className="mt-1 font-mono text-[9px]">Wallet {compact(walletAddress)} · Key {compact(sessionKeyId)}</div></div>}
       {error && <div className="mt-4 border border-[#cfad9f] bg-rustsoft text-rust rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]">{error}</div>}
 
       <button type="button" onClick={() => void grant()} disabled={status === "signing" || status === "verifying" || status === "authorized"} className="mt-5 font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">
         {statusText} →
       </button>
-      <p className="mt-3 text-[10px] text-inksoft">AgentMarket does not receive the agent private key. Authorization is confirmed against the public Altana KeyStore before the request becomes authorized.</p>
+      <p className="mt-3 text-[10px] text-inksoft">AgentMarket does not receive the agent private key. The provider's public capability is treated as a requested scope; authorization only becomes verified after the server checks the Altana KeyStore.</p>
     </section>
   );
 }
