@@ -1,0 +1,22 @@
+{
+  "name": "agentmarket-grid-altana-execution",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "start": "node --enable-source-maps dist/server.js"
+  },
+  "dependencies": {
+    "@altananetwork/sdk": "0.7.1",
+    "@bnbagent/sdk": "0.5.3",
+    "viem": "2.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.5.0"
+  }
+}
