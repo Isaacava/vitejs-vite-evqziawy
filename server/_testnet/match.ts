@@ -231,15 +231,18 @@ function scoreAgent(agent: AgentRow, intent: ReturnType<typeof parseMarketplaceI
   const ownerValid = /^0x[a-fA-F0-9]{40}$/.test(agent.owner);
   const isGrid = agent.agent_id === GRID_AGENT_ID;
   const gridIdentityReady = !isGrid || ownerValid;
+  const erc8183EndpointOnline = endpointsForAgent(profile, agent);
   const hireability = !isTestnetAgent(agent)
     ? { status: "discoverable_only" as const, canCreateJob: false, reason: "Blocked: provider is not explicitly tagged for the isolated BSC Testnet environment." }
-    : isGrid && !gridIdentityReady
-      ? { status: "discoverable_only" as const, canCreateJob: false, reason: "Grid Agent owner address is not a valid BSC Testnet address yet." }
-      : endpoint?.status === "online"
-        ? { status: "ready" as const, canCreateJob: true, reason: "A live BSC Testnet provider endpoint is currently reporting healthy. Execution-wallet authority is reported separately and is not inferred." }
-        : endpoint?.status === "degraded"
-          ? { status: "degraded" as const, canCreateJob: false, reason: "The Testnet provider endpoint is reachable but degraded; do not fund a job yet." }
-          : { status: "discoverable_only" as const, canCreateJob: false, reason: "The agent is discoverable on BSC Testnet, but no healthy Testnet provider endpoint is available." };
+    : !erc8183EndpointOnline
+      ? { status: "discoverable_only" as const, canCreateJob: false, reason: "The agent is discoverable on BSC Testnet, but no healthy indexed ERC-8183 provider endpoint is available." }
+      : !profile.commerce.erc8183
+        ? { status: "discoverable_only" as const, canCreateJob: false, reason: "The provider does not explicitly advertise ERC-8183 commerce, so the ERC-8183 hiring path is locked." }
+        : isGrid && !gridIdentityReady
+          ? { status: "discoverable_only" as const, canCreateJob: false, reason: "Grid Agent owner address is not a valid BSC Testnet address yet." }
+          : endpoint?.status === "degraded"
+            ? { status: "degraded" as const, canCreateJob: false, reason: "The Testnet provider endpoint is reachable but degraded; do not fund a job yet." }
+            : { status: "ready" as const, canCreateJob: true, reason: "A healthy indexed ERC-8183 provider endpoint is currently available on BSC Testnet. Execution-wallet authority is reported separately and is not inferred." };
 
   return {
     score: normalizedScore,
@@ -280,6 +283,12 @@ function scoreAgent(agent: AgentRow, intent: ReturnType<typeof parseMarketplaceI
     } : null,
     reasons: reasons.slice(0, 5),
   };
+}
+
+function endpointsForAgent(profile: ReturnType<typeof deriveExecutionProfile>, agent: AgentRow) {
+  void profile;
+  void agent;
+  return false;
 }
 
 function serverClient() {
@@ -326,12 +335,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const matches = candidateAgents
       .map((agent) => {
-        const profile = deriveExecutionProfile(agent, endpointsByAgent.get(agent.id) ?? []);
+        const agentEndpoints = endpointsByAgent.get(agent.id) ?? [];
+        const profile = deriveExecutionProfile(agent, agentEndpoints);
         return {
           agent,
           ...scoreAgent(agent, intent, endpointByAgent.get(agent.id), reputationByAgent.get(agent.id) ?? [], readCachedOnchainStats(agent), profile),
+          _erc8183EndpointOnline: agentEndpoints.some((endpoint) => endpoint.protocol === "erc8183" && endpoint.status === "online"),
         };
       })
+      .map(({ _erc8183EndpointOnline, ...match }) => ({
+        ...match,
+        hireability: !match.hireability.canCreateJob && match.hireability.reason.includes("healthy indexed ERC-8183") && _erc8183EndpointOnline && match.commerce?.erc8183 === true
+          ? { status: "ready" as const, canCreateJob: true, reason: "A healthy indexed ERC-8183 provider endpoint is currently available on BSC Testnet. Execution-wallet authority is reported separately and is not inferred." }
+          : match.hireability,
+      }))
       .sort((a, b) => a.hireability.canCreateJob !== b.hireability.canCreateJob ? (a.hireability.canCreateJob ? -1 : 1) : b.score - a.score)
       .slice(0, 10);
 
@@ -345,7 +362,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       network: { environment: TESTNET_ENVIRONMENT, chain: TESTNET_CHAIN, chain_id: TESTNET_CHAIN_ID },
       scoring: {
         weights: WEIGHTS,
-        hireabilityPolicy: "Only explicitly Testnet-tagged BSC Testnet agents with a healthy Testnet endpoint are hireable.",
+        hireabilityPolicy: "Only explicitly Testnet-tagged BSC Testnet agents with a healthy indexed ERC-8183 endpoint are hireable through the hackathon ERC-8183 path.",
         capabilityProfilePolicy: "Wallet, execution, commerce and communication capabilities are only reported when explicitly declared by indexed registration or endpoint metadata. Unknown values are never inferred.",
         jobHistorySource: "ERC-8183 Commerce on BSC Testnet; cached in Supabase by the provider-wallet chain sync.",
       },
