@@ -109,9 +109,16 @@ async function requestQuote(req: VercelRequest, res: VercelResponse, user: NonNu
   const payment = await paymentContext(requesterWallet);
   if (payment.balance <= 0n) return res.status(409).json({ error: `Your Testnet wallet has no ${payment.symbol} balance. Fund the Testnet settlement token before requesting a quote.` });
 
-  const { data: endpoint, error: endpointError } = await supabase.from("agent_endpoints").select("endpoint_url,status,last_checked_at").eq("agent_id", agent.id).order("last_checked_at", { ascending: false }).limit(1).maybeSingle();
+  const { data: endpoint, error: endpointError } = await supabase
+    .from("agent_endpoints")
+    .select("endpoint_url,protocol,status,last_checked_at")
+    .eq("agent_id", agent.id)
+    .eq("protocol", "erc8183")
+    .order("last_checked_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
   if (endpointError) throw new Error(endpointError.message);
-  if (!endpoint?.endpoint_url || endpoint.status !== "online") return res.status(409).json({ error: "Testnet provider endpoint is not healthy", readiness: endpoint?.status ?? "missing" });
+  if (!endpoint?.endpoint_url || endpoint.status !== "online") return res.status(409).json({ error: "Testnet ERC-8183 provider endpoint is not healthy", readiness: endpoint?.status ?? "missing", required_protocol: "erc8183" });
 
   const maxBudgetRaw = payment.balance;
   const maxBudgetFormatted = formatUnits(maxBudgetRaw, payment.decimals);
@@ -141,7 +148,7 @@ async function requestQuote(req: VercelRequest, res: VercelResponse, user: NonNu
   const { data: quote, error: quoteError } = await supabase.from("marketplace_quotes").insert({ quote_id: quoteId, agent_id: agent.id, requester_wallet: requesterWallet, goal, request_metadata: requestMetadata, price, currency, provider_quote: providerQuote, quote_hash: quoteHash, chain_id: TESTNET_CHAIN_ID, environment: TESTNET_ENVIRONMENT, status: "offered", provider_status_code: 200, expires_at: expiresAt }).select("quote_id,agent_id,requester_wallet,goal,request_metadata,price,currency,provider_quote,quote_hash,status,expires_at").single();
   if (quoteError) throw new Error(quoteError.message);
 
-  return res.status(200).json({ ok: true, network: "bsc-testnet", chain_id: TESTNET_CHAIN_ID, environment: TESTNET_ENVIRONMENT, payment: { token: payment.token, symbol: payment.symbol, decimals: payment.decimals, balance_raw: payment.balance.toString(), balance_formatted: formatUnits(payment.balance, payment.decimals) }, quote: { ...quote, price: formatUnits(priceRaw, payment.decimals), price_raw: price, price_formatted: formatUnits(priceRaw, payment.decimals) }, provider: { agent_id: agent.agent_id, name: agent.name, status: agent.status, verification_status: agent.verification_status, endpoint: endpoint.endpoint_url }, signature_present: Boolean(providerQuote.provider_sig || providerQuote.provider_signature), next: "Accept this quote, then call the Testnet ERC-8183 prepare endpoint with quote_id." });
+  return res.status(200).json({ ok: true, network: "bsc-testnet", chain_id: TESTNET_CHAIN_ID, environment: TESTNET_ENVIRONMENT, payment: { token: payment.token, symbol: payment.symbol, decimals: payment.decimals, balance_raw: payment.balance.toString(), balance_formatted: formatUnits(payment.balance, payment.decimals) }, quote: { ...quote, price: formatUnits(priceRaw, payment.decimals), price_raw: price, price_formatted: formatUnits(priceRaw, payment.decimals) }, provider: { agent_id: agent.agent_id, name: agent.name, status: agent.status, verification_status: agent.verification_status, endpoint: endpoint.endpoint_url, protocol: endpoint.protocol }, signature_present: Boolean(providerQuote.provider_sig || providerQuote.provider_signature), next: "Accept this quote, then call the Testnet ERC-8183 prepare endpoint with quote_id." });
 }
 
 async function acceptQuote(req: VercelRequest, res: VercelResponse, user: NonNullable<Awaited<ReturnType<typeof getAuthenticatedUser>>>) {
