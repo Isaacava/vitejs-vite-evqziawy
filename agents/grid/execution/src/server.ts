@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { privateKeyToAccount } from "viem/accounts";
 import { executeGridAction } from "./altanaExecutor.js";
 import type { GridCall, GridSessionDescriptor } from "./types.js";
 
@@ -12,6 +13,7 @@ if (!SESSION_PRIVATE_KEY) throw new Error("ALTANA_SESSION_PRIVATE_KEY is require
 function json(res: import("node:http").ServerResponse, status: number, value: unknown) {
   res.statusCode = status;
   res.setHeader("content-type", "application/json; charset=utf-8");
+  res.setHeader("cache-control", "no-store");
   res.end(JSON.stringify(value, (_, item) => typeof item === "bigint" ? item.toString() : item));
 }
 
@@ -56,10 +58,36 @@ function calls(value: unknown): GridCall[] {
   });
 }
 
+function configuredList(value: string) {
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function publicExecutionCapabilities() {
+  const account = privateKeyToAccount((SESSION_PRIVATE_KEY.startsWith("0x") ? SESSION_PRIVATE_KEY : `0x${SESSION_PRIVATE_KEY}`) as `0x${string}`);
+  return {
+    ok: true,
+    network: "bsc-testnet",
+    chainId: 97,
+    execution: "altana-scoped-session",
+    wallet_provider: "altana",
+    authorization_model: "scoped_session",
+    session_key_address: account.address,
+    session_key_public_key: account.publicKey,
+    allowed_targets: configuredList(process.env.GRID_ALLOWED_TARGETS || ""),
+    allowed_selectors: configuredList(process.env.GRID_ALLOWED_SELECTORS || ""),
+    selectors_required: true,
+    private_key_exposed: false,
+  };
+}
+
 const server = createServer(async (req, res) => {
   try {
     if (req.method === "GET" && req.url === "/health") {
-      return json(res, 200, { ok: true, network: "bsc-testnet", chainId: 97, execution: "altana-scoped-session" });
+      return json(res, 200, publicExecutionCapabilities());
+    }
+
+    if (req.method === "GET" && req.url === "/execution-capabilities") {
+      return json(res, 200, publicExecutionCapabilities());
     }
 
     if (req.method !== "POST" || req.url !== "/execute") {
