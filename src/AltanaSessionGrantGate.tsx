@@ -47,6 +47,7 @@ export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProp
         body: JSON.stringify({
           request_id: props.requestId,
           user_execution_wallet: granted.walletAddress,
+          signer_address: granted.signerAddress,
           session_key_id: granted.sessionKeyId,
           session_expiry: granted.expiry,
         }),
