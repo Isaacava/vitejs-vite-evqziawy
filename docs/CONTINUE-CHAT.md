@@ -95,60 +95,57 @@ with:
 - required 4-byte function selectors;
 - `private_key_exposed: false`.
 
-AgentMarket now discovers this descriptor from either:
-
-1. generic execution-capability URL fields declared by the agent metadata; or
-2. the agent's registered endpoint base plus `/execution-capabilities`.
-
-The descriptor is validated before it is stored in:
+AgentMarket discovers this descriptor from either provider metadata or the registered ERC-8183 endpoint base, validates it, and stores it under:
 
 `execution_capital_requests.evidence.execution_capability`
 
 Validation includes public-key → address identity, non-empty target allowlist, non-empty selector allowlist, chain 97, Altana/scoped-session identifiers, and explicit private-key absence.
 
-The stored descriptor includes source URL, endpoint identity/status, retrieval time, and `independently_authorized: false`.
+### Altana grant + independent verification — completed
 
-### Marketplace APIs
+`src/AltanaSessionGrantGate.tsx` performs the real `grantSession()` call using the user's wallet signer.
 
-The Testnet dispatcher is `api/testnet.ts` and routes multiple `/api/testnet/*` URLs to `server/_testnet/*` handlers so Vercel does not create a separate function for every nested handler.
+After the grant, the server:
 
-`server/_testnet/execution-capital.ts` supports:
+1. checks the authenticated wallet owns the request;
+2. binds the supplied session key ID to `keccak256(session public key)`;
+3. checks the granted expiry;
+4. reads Altana KeyStore `isValidKey(wallet, sessionKeyId)` on BSC Testnet;
+5. only then changes `requested → authorized`;
+6. records the grant transaction hash and authorization evidence.
 
-- `GET` a request for an owned job;
-- `POST` create a request only for a funded ERC-8183 job with a valid live public execution capability;
-- `POST` verification path (`action=verify`) that binds the granted `session_key_id` to the stored provider public key, reads Altana KeyStore `isValidKey(...)`, and only then changes `requested → authorized`;
-- grant transaction hash capture.
+### Authorized session → private Grid executor — completed
 
-The request route still rejects TWAK/EVM for execution capital and requires the provider to explicitly declare Altana scoped-session support.
+The consolidated Testnet dispatcher now exposes:
 
-### UI
+`POST /api/testnet?route=execution-capital-execute`
 
-`src/ExecutionCapitalCard.tsx` displays execution-capital state separately from ERC-8183 payment.
+Implemented in:
 
-`src/ExecutionCapitalPanel.tsx` now consumes the stored public capability descriptor and only renders the grant UI when the descriptor is valid.
+`server/_testnet/grid-execute.ts`
 
-`src/AltanaWalletGate.tsx` handles the user wallet / Altana wallet setup boundary.
+The bridge requires an independently authorized request and then reconstructs the verified public session descriptor from stored evidence. It re-checks:
 
-`src/AltanaSessionGrantGate.tsx` performs the user-side real `grantSession` call, displays the provider-declared target and selector scope, and then calls the server verification endpoint.
+- BSC Testnet / chain 97;
+- Altana scoped-session identity;
+- session expiry;
+- user execution wallet ownership;
+- session key identity;
+- target allowlist;
+- function selector allowlist;
+- maximum batch size.
 
-The mission console already receives `execution_capital` from `/api/jobs`.
+It then sends the descriptor and encoded call batch to the private Grid `/execute` endpoint with `GRID_EXECUTION_SHARED_SECRET`.
 
-### Altana SDK
+The agent private key is never sent through this endpoint.
 
-`@altananetwork/sdk` is installed in the marketplace project.
+After execution, AgentMarket independently queries BSC Testnet for the transaction receipt and stores hash/receipt evidence under the execution-capital request. `capital_deployed` and P&L remain nullable until an independent accounting path exists.
 
-The implementation uses BSC Testnet / chain ID 97 and the official SDK concepts:
+Dedicated documentation:
 
-- `createClient`
-- `BNB_TESTNET`
-- `createWallet`
-- `grantSession`
-- `revokeSession`
-- `execute`
+`docs/AGENT-EXECUTION-CAPITAL-GRID-EXECUTOR-README.md`
 
-Do not rely on unverified browser APIs such as `signerFromInjected` if the installed package does not export them. Fail closed rather than using a fake signer API.
-
-### Grid execution adapter
+## Grid execution adapter
 
 The first-party Grid Agent remains a separate strategy/provider service for ERC-8183. Its isolated execution package is:
 
@@ -167,15 +164,6 @@ The execution service exposes public capability metadata through:
 
 and the same public metadata through `GET /health`.
 
-It exposes only:
-
-- chain 97;
-- Altana/scoped-session model;
-- agent session key address;
-- agent session public key;
-- configured allowed targets;
-- configured allowed selectors.
-
 It explicitly does **not** expose the session private key.
 
 Environment examples:
@@ -190,51 +178,54 @@ GRID_ALLOWED_SELECTORS=<comma-separated 4-byte selectors>
 
 The selector allowlist must remain explicit. Empty selectors reject execution.
 
-## Last confirmed CI state
+## Current CI / deployment checkpoint
 
-The current branch head after the capability handoff is:
+The branch currently ends at:
 
-`60aa07a4a10afbd2f57d4883b335ce524c4dc7bd`
+`ed4879094f0a2493f5342afd3351fe1990cb3a76`
 
-A fresh `AgentMarket Testnet Build` run is executing against that exact commit. Node setup has completed successfully and dependency installation is in progress. The earlier run for an older docs-only commit failed at Node setup before compilation, so it was not a code-build result.
+The execution bridge itself was added in commits:
 
-The Grid Agent Testnet tests and Testnet network-isolation audit completed successfully on the preceding run.
+- `db96cc398bda49bd57012370f13156fede9d459d` — bridge endpoint;
+- `c527c96233c5eab589a66ef0750721144ef9da95` — activity-recording fix;
+- `33bd4d786cad73acd3f9f5567f6ce9ccca810bcf` — consolidated Testnet route;
+- `ed4879094f0a2493f5342afd3351fe1990cb3a76` — dedicated bridge documentation.
+
+The TypeScript/Vite CI build previously completed successfully on the capability-handoff implementation before this executor bridge was added. The current Vercel deployment for the latest branch head is queued and must be checked for READY/FAILED before treating the new bridge as deployed.
 
 ## Next exact implementation step
 
-The public capability → AgentMarket → Altana grant handoff is now wired.
-
-The next task is to complete the **authorized session → private Grid executor** handoff without exposing the agent private key:
+The next task is no longer the authorization plumbing. It is the **real Testnet call builder and execution proof**:
 
 ```text
-execution_capital_requests.status = authorized
+Grid strategy
     ↓
-verified session descriptor
+PancakeSwap-specific call builder
     ↓
-private AgentMarket/server-to-service request
-    ↓
-Grid /execute
+encoded target + selector + value
     ↓
 Risk Guardian
     ↓
-Altana execute() on chain 97
+Altana session execute()
+    ↓
+BSC Testnet transaction receipt
+    ↓
+existing ERC-8183 evidence archive
 ```
 
-The backend must pass the verified public session descriptor and proposed call batch to the execution service. The agent private key remains only in the Grid execution service.
+Do **not** hard-code PancakeSwap contract addresses in the generic marketplace. The Grid agent must declare its target/selector requirements through its execution capability descriptor.
 
-Do **not** hard-code PancakeSwap contract addresses in the generic marketplace. The Grid agent must continue to declare its own target/selector requirements.
+Do **not** mark the Grid agent as a real trading executor until its executor service is actually reachable/configured and a real BSC Testnet PancakeSwap call has been demonstrated with a receipt.
 
-Do **not** mark the Grid agent as a real trading executor until its execution service is actually reachable/configured and a real BSC Testnet PancakeSwap call has been demonstrated with a receipt.
+## After the real execution proof
 
-## After authorized executor handoff
-
-1. Connect the verified session descriptor to the Grid executor.
-2. Have Risk Guardian approve a real Testnet PancakeSwap call.
-3. Execute through Altana session mode.
-4. Capture the transaction receipt.
-5. Integrate execution evidence into the existing ERC-8183 deliverable archive.
-6. Record final assets/P&L only from hash-verified evidence.
-7. Add session revocation and expiry handling.
+1. Add the PancakeSwap/Testnet call builder for the Grid strategy.
+2. Execute one controlled Testnet call through the authorized Altana session.
+3. Capture and verify the receipt.
+4. Attach the execution evidence to the existing ERC-8183 deliverable archive.
+5. Record final assets/P&L only from independently verified state/evidence.
+6. Add session revocation and expiry handling.
+7. Add independent mid-session spend/asset tracking.
 
 ## Documentation rule
 
@@ -245,5 +236,4 @@ Every new feature gets its own README. Existing phase READMEs include:
 - `docs/ERC8183-HIRING-LIFECYCLE-README.md`
 - `docs/AGENT-EXECUTION-CAPITAL-README.md`
 - `docs/AGENT-EXECUTION-CAPITAL-ALTANA-INTEGRATION-README.md`
-
-When starting another feature, create a dedicated README before or with the implementation.
+- `docs/AGENT-EXECUTION-CAPITAL-GRID-EXECUTOR-README.md`
