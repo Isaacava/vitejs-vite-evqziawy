@@ -14,6 +14,8 @@ from bnbagent.erc8183 import ERC8183JobOps
 from bnbagent.erc8183.negotiation import NegotiationHandler
 from bnbagent.storage import LocalStorageProvider
 
+from agent.execution_capital import build_execution_capital_profile
+
 logger = logging.getLogger(__name__)
 
 
@@ -144,6 +146,10 @@ def create_erc8183_app(on_job: Callable[..., Any]) -> FastAPI:
 
     @router.get("/status")
     async def status():
+        execution_capital = build_execution_capital_profile(
+            os.environ,
+            wallet_address=ops.agent_address,
+        )
         return {
             "status": "ok",
             "network": (_env("NETWORK", "bsc-testnet") or "bsc-testnet"),
@@ -154,6 +160,17 @@ def create_erc8183_app(on_job: Callable[..., Any]) -> FastAPI:
             "service_price": int(_env("ERC8183_SERVICE_PRICE", "0") or "0"),
             "currency": negotiation._agent_metadata["currency"],
             "decimals": negotiation._agent_metadata["decimals"],
+            "execution_capital": execution_capital,
+        }
+
+    @router.get("/execution-capital")
+    async def execution_capital():
+        return {
+            "ok": True,
+            "profile": build_execution_capital_profile(
+                os.environ,
+                wallet_address=ops.agent_address,
+            ),
         }
 
     @router.get("/health")
@@ -209,6 +226,7 @@ def create_erc8183_app(on_job: Callable[..., Any]) -> FastAPI:
                 "health": "/erc8183/health",
                 "status": "/erc8183/status",
                 "negotiate": "/erc8183/negotiate",
+                "execution_capital": "/erc8183/execution-capital",
             },
         }
 
