@@ -13,6 +13,7 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "viem": "2.21.0",
+    "@altananetwork/sdk": "0.8.0",
     "@walletconnect/modal": "^2.7.0",
     "@walletconnect/ethereum-provider": "^2.17.0",
     "@supabase/supabase-js": "^2.45.0"
