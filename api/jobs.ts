@@ -41,7 +41,7 @@ const ERC20_ABI = [
 
 const publicClient = createPublicClient({
   chain: bscTestnet,
-  transport: http("https://bsc-testnet-rpc.publicnode.com"),
+  transport: http(process.env.BSC_TESTNET_RPC_URL || "https://bsc-testnet-rpc.publicnode.com"),
 });
 
 const ACTION_CHAIN_REQUIRED = ["accept", "start", "submit"];
@@ -144,11 +144,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (missionError) return res.status(500).json({ error: missionError.message });
       if (!mission || mission.user_id !== auth.user.id) return res.status(403).json({ error: "You do not own this mission" });
 
-      const [evaluationResult, paymentResult, chain] = await Promise.all([
+      const [evaluationResult, paymentResult, executionCapitalResult, chain] = await Promise.all([
         supabase.from("evaluations").select("id,job_id,verdict,evaluator_address,evidence,notes,created_at,updated_at").eq("job_id", id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
         supabase.from("payments").select("id,job_id,mission_id,token_address,token_symbol,amount,status,tx_hash,created_at,updated_at").eq("job_id", id).maybeSingle(),
+        supabase.from("execution_capital_requests").select("*").eq("job_id", id).maybeSingle(),
         job.chain_job_id ? readChainSnapshot(Number(job.chain_job_id)) : Promise.resolve(null),
       ]);
+      if (executionCapitalResult.error) {
+        const message = executionCapitalResult.error.message.toLowerCase();
+        if (!message.includes("relation") && !message.includes("does not exist")) return res.status(500).json({ error: executionCapitalResult.error.message });
+      }
 
       const safeMission = { ...mission };
       delete (safeMission as { user_id?: string }).user_id;
@@ -175,6 +180,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         mission: safeMission,
         evaluation: evaluationResult.data,
         payment: effectivePayment,
+        execution_capital: executionCapitalResult.data || null,
         chain,
         network: "bsc-testnet",
         chain_id: 97,
