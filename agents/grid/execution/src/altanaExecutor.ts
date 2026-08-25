@@ -47,7 +47,7 @@ export function reconstructSession(
       type: "privateKey" as const,
       address: account.address,
       publicKey: descriptor.agentSessionPublicKey,
-      signDigest: account.sign,
+      signDigest: async (digest: Hex): Promise<Hex> => account.sign({ hash: digest }),
     },
     publicKey: descriptor.agentSessionPublicKey,
     permissions: {
