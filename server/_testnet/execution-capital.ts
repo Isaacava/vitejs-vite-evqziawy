@@ -71,16 +71,14 @@ function validateCapability(body: unknown): PublicExecutionCapability {
   };
 }
 
-async function fetchExecutionCapability(endpointUrl: string) {
-  const base = endpointUrl.replace(/\/+$/, "");
+async function fetchExecutionCapability(capabilityUrl: string) {
   let parsed: URL;
-  try { parsed = new URL(base); } catch { throw new Error("Provider endpoint URL is invalid"); }
+  try { parsed = new URL(capabilityUrl); } catch { throw new Error("Provider capability URL is invalid"); }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new Error("Provider execution endpoint must use HTTP(S)");
-  const url = `${base}/execution-capabilities`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), CAPABILITY_TIMEOUT_MS);
   try {
-    const response = await fetch(url, { method: "GET", headers: { Accept: "application/json" }, signal: controller.signal });
+    const response = await fetch(parsed.toString(), { method: "GET", headers: { Accept: "application/json" }, signal: controller.signal });
     if (!response.ok) throw new Error(`Execution capability endpoint returned HTTP ${response.status}`);
     const contentLength = Number(response.headers.get("content-length") || 0);
     if (Number.isFinite(contentLength) && contentLength > MAX_CAPABILITY_BYTES) throw new Error("Execution capability response is too large");
@@ -95,32 +93,51 @@ async function fetchExecutionCapability(endpointUrl: string) {
   }
 }
 
-async function loadExecutionCapability(supabase: ReturnType<typeof serverClient>, agentId: string) {
+function metadataCapabilityUrls(agent: Record<string, unknown>) {
+  const metadata = agent.metadata && typeof agent.metadata === "object" ? agent.metadata as Record<string, unknown> : {};
+  const execution = metadata.execution && typeof metadata.execution === "object" ? executionObject(metadata.execution) : {};
+  return [
+    metadata.execution_capabilities_url,
+    metadata.execution_capability_url,
+    execution.execution_capabilities_url,
+    execution.execution_capability_url,
+    execution.capabilities_url,
+    execution.capability_url,
+  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => value.trim());
+}
+
+async function loadExecutionCapability(supabase: ReturnType<typeof serverClient>, agent: Record<string, unknown>) {
+  const agentId = String(agent.id || "");
   const { data: endpoints, error } = await supabase
     .from("agent_endpoints")
     .select("id,endpoint_url,protocol,status,metadata")
     .eq("agent_id", agentId)
-    .eq("protocol", "erc8183")
     .limit(20);
   if (error) throw new Error(error.message);
-  const candidates = endpoints ?? [];
-  if (candidates.length === 0) throw new Error("Provider has no ERC-8183 endpoint registered for execution-capital discovery");
+
+  const candidates = [
+    ...metadataCapabilityUrls(agent),
+    ...(endpoints ?? []).map((endpoint) => `${String(endpoint.endpoint_url).replace(/\/+$/, "")}/execution-capabilities`),
+  ];
+  const uniqueCandidates = [...new Set(candidates)];
+  if (uniqueCandidates.length === 0) throw new Error("Provider has no registered or declared execution capability endpoint");
 
   const failures: string[] = [];
-  for (const endpoint of candidates) {
+  for (const candidate of uniqueCandidates) {
     try {
-      const capability = await fetchExecutionCapability(endpoint.endpoint_url);
+      const capability = await fetchExecutionCapability(candidate);
+      const endpoint = (endpoints ?? []).find((row) => candidate.startsWith(`${String(row.endpoint_url).replace(/\/+$/, "")}/`));
       return {
         capability,
-        endpointId: endpoint.id,
-        endpointUrl: endpoint.endpoint_url,
-        endpointStatus: endpoint.status,
+        endpointId: endpoint?.id || "declared_metadata",
+        endpointUrl: candidate,
+        endpointStatus: endpoint?.status || null,
       };
     } catch (error) {
-      failures.push(`${endpoint.endpoint_url}: ${error instanceof Error ? error.message : "capability fetch failed"}`);
+      failures.push(`${candidate}: ${error instanceof Error ? error.message : "capability fetch failed"}`);
     }
   }
-  throw new Error(`Provider execution capability could not be verified from any ERC-8183 endpoint. ${failures.join(" | ")}`);
+  throw new Error(`Provider execution capability could not be verified from any declared or registered endpoint. ${failures.join(" | ")}`);
 }
 
 async function loadOwnedFundedJob(supabase: ReturnType<typeof serverClient>, jobId: string, userId: string, userWallet: string | null) {
@@ -218,14 +235,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!integerBetween(duration, 300, 7 * 24 * 60 * 60)) return res.status(400).json({ error: "requested duration must be an integer between 300 and 604800 seconds" });
     if (walletProvider !== "altana" || authorizationModel !== "scoped_session") return res.status(400).json({ error: "Execution capital is currently available only through Altana scoped sessions" });
     const owned = await loadOwnedFundedJob(supabase, jobId, auth.user.id, auth.user.wallet_address);
-    const capability = await loadExecutionCapability(supabase, String(owned.agent.id));
+    const capability = await loadExecutionCapability(supabase, owned.agent as Record<string, unknown>);
     const { data: existing, error: existingError } = await supabase.from("execution_capital_requests").select("*").eq("job_id", jobId).maybeSingle();
     if (existingError) return res.status(500).json({ error: existingError.message });
     if (existing) return res.status(409).json({ error: "An execution capital request already exists for this job", request: existing });
     const fetchedAt = new Date().toISOString();
     const capabilityEvidence = {
       ...capability.capability,
-      source_url: `${String(capability.endpointUrl).replace(/\/+$/, "")}/execution-capabilities`,
+      source_url: capability.endpointUrl,
       endpoint_id: capability.endpointId,
       endpoint_status: capability.endpointStatus,
       fetched_at: fetchedAt,
