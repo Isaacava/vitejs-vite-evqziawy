@@ -1,17 +1,18 @@
 import { BNB_TESTNET, createClient } from "@altananetwork/sdk";
+import type { Address, Hex } from "viem";
 import { getConnectedWalletProvider } from "./walletAuth";
 
 export type AltanaWalletResolution = {
-  walletAddress: `0x${string}`;
-  signerAddress: `0x${string}`;
+  walletAddress: Address;
+  signerAddress: Address;
   chainId: 97;
 };
 
 type AltanaSigner = {
-  address: `0x${string}`;
-  type: string;
-  publicKey?: string;
-  signDigest?: (digest: `0x${string}`) => Promise<`0x${string}`>;
+  address: Address;
+  type: "privateKey" | "injected" | "passkey";
+  publicKey: Hex;
+  signDigest: (digest: Hex) => Promise<Hex>;
 };
 
 type AltanaSdkWithInjected = typeof import("@altananetwork/sdk") & {
