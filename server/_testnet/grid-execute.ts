@@ -235,10 +235,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }).eq("id", requestId).select("*").single();
     if (updateError) return res.status(500).json({ error: updateError.message });
 
+    let missionId: string | null = null;
+    if (job.mission_task_id) {
+      const { data: task } = await supabase.from("mission_tasks").select("mission_id").eq("id", job.mission_task_id).maybeSingle();
+      missionId = task?.mission_id || null;
+    }
     if (job.mission_task_id) {
       await supabase.from("user_activity").insert({
         user_id: auth.user.id,
-        mission_id: null,
+        mission_id: missionId,
         job_id: job.id,
         type: "execution_capital_execute",
         title: "Execution-capital call dispatched",
