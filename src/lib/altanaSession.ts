@@ -7,6 +7,7 @@ import { ensureAltanaWallet } from "./altanaWallet";
 export type AltanaSessionGrantInput = {
   agentSessionAddress: Address;
   agentSessionPublicKey: Hex;
+  allowedCalls: readonly Address[];
   capitalToken?: Address;
   capitalAmount: bigint;
   purpose: string;
@@ -58,6 +59,9 @@ export async function grantAltanaExecutionSession(
   if (!isHex(input.agentSessionPublicKey) || input.agentSessionPublicKey.length < 100) {
     throw new Error("Agent session public key is invalid.");
   }
+  if (input.allowedCalls.length === 0) {
+    throw new Error("At least one allowed contract call target is required; an omitted allowlist would broaden the session scope.");
+  }
   if (input.capitalAmount <= 0n) throw new Error("Execution capital must be greater than zero.");
   if (!Number.isInteger(input.expiry) || input.expiry <= Math.floor(Date.now() / 1000)) {
     throw new Error("Execution session expiry must be in the future.");
@@ -66,6 +70,11 @@ export async function grantAltanaExecutionSession(
   const derivedAddress = publicKeyToAddress(input.agentSessionPublicKey);
   if (derivedAddress.toLowerCase() !== input.agentSessionAddress.toLowerCase()) {
     throw new Error("Agent session address does not match its public key.");
+  }
+
+  const allowedCalls = input.allowedCalls.filter(isAddress);
+  if (allowedCalls.length !== input.allowedCalls.length) {
+    throw new Error("One or more allowed contract addresses are invalid.");
   }
 
   const { walletAddress } = await ensureAltanaWallet();
@@ -87,9 +96,7 @@ export async function grantAltanaExecutionSession(
     ? { limit: input.capitalAmount, period: "day" as const, token: input.capitalToken }
     : { limit: input.capitalAmount, period: "day" as const };
 
-  // Contract targets are supplied by the agent's declared execution profile;
-  // this helper does not hard-code a PancakeSwap contract address.
-  const calls: readonly { to: Address }[] = [];
+  const calls = allowedCalls.map((to) => ({ to }));
   const result = await client.grantSession({
     wallet: { address: walletAddress },
     signer,
