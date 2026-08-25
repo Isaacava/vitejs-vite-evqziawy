@@ -16,6 +16,7 @@ export type AltanaSessionGrantInput = {
 
 export type AltanaSessionGrantResult = {
   walletAddress: Address;
+  signerAddress: Address;
   agentSessionAddress: Address;
   sessionKeyId: Hex;
   expiry: number;
@@ -77,8 +78,12 @@ export async function grantAltanaExecutionSession(
     throw new Error("One or more allowed contract addresses are invalid.");
   }
 
-  const { walletAddress } = await ensureAltanaWallet();
+  const { walletAddress, signerAddress } = await ensureAltanaWallet();
   const signer = sdk.signerFromInjected(provider);
+  if (signer.address.toLowerCase() !== signerAddress.toLowerCase()) {
+    throw new Error("Connected signer address changed while resolving the Altana wallet.");
+  }
+
   const client = createClient({ chains: [BNB_TESTNET] });
 
   // Grant needs the public descriptor only. The actual private key stays in
@@ -112,6 +117,7 @@ export async function grantAltanaExecutionSession(
 
   return {
     walletAddress,
+    signerAddress,
     agentSessionAddress: input.agentSessionAddress,
     sessionKeyId: keccak256(input.agentSessionPublicKey),
     expiry: input.expiry,
