@@ -20,32 +20,34 @@ function authorized(req: VercelRequest) {
 
 async function fetchExecutionProfile(endpointUrl: string) {
   const base = endpointUrl.replace(/\/+$/, "");
-  const url = `${base}/execution-capital`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: { Accept: "application/json" },
-      signal: controller.signal,
-    });
-    if (!response.ok) return { available: false as const, statusCode: response.status };
-    const contentLength = Number(response.headers.get("content-length") || 0);
-    if (Number.isFinite(contentLength) && contentLength > MAX_PROFILE_BYTES) {
-      return { available: false as const, statusCode: response.status };
+  const candidates = [`${base}/execution-capabilities`, `${base}/execution-capital`];
+  let lastStatusCode: number | null = null;
+  for (const url of candidates) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      });
+      lastStatusCode = response.status;
+      if (!response.ok) continue;
+      const contentLength = Number(response.headers.get("content-length") || 0);
+      if (Number.isFinite(contentLength) && contentLength > MAX_PROFILE_BYTES) return { available: false as const, statusCode: response.status };
+      const raw = await response.text();
+      if (new TextEncoder().encode(raw).byteLength > MAX_PROFILE_BYTES) return { available: false as const, statusCode: response.status };
+      const body = raw ? JSON.parse(raw) : null;
+      if (!body || typeof body !== "object") continue;
+      const profile = (body as Record<string, unknown>).profile ?? (body as Record<string, unknown>).execution_capital ?? body;
+      return { available: true as const, statusCode: response.status, profile, sourceUrl: url };
+    } catch {
+      // Try the legacy endpoint before declaring the profile unavailable.
+    } finally {
+      clearTimeout(timeout);
     }
-    const raw = await response.text();
-    if (new TextEncoder().encode(raw).byteLength > MAX_PROFILE_BYTES) {
-      return { available: false as const, statusCode: response.status };
-    }
-    const body = raw ? JSON.parse(raw) : null;
-    if (!body || typeof body !== "object") return { available: false as const, statusCode: response.status };
-    return { available: true as const, statusCode: response.status, profile: body.profile ?? body.execution_capital ?? null };
-  } catch {
-    return { available: false as const, statusCode: null };
-  } finally {
-    clearTimeout(timeout);
   }
+  return { available: false as const, statusCode: lastStatusCode };
 }
 
 async function probeEndpoint(endpointUrl: string) {
@@ -141,6 +143,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         checked_at: new Date().toISOString(),
         reported_execution_capital: profile.available ? profile.profile : null,
         reported_execution_capital_source: profile.available ? "live_agent_endpoint" : null,
+        reported_execution_capital_url: profile.available ? profile.sourceUrl : null,
         reported_execution_capital_verified: false,
         reported_execution_capital_checked_at: profile.available ? new Date().toISOString() : null,
       };
