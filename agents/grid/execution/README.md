@@ -9,7 +9,11 @@ It does not replace the existing Python ERC-8183 provider. The Python service re
 ```text
 AgentMarket
    ↓
-verified Altana session descriptor
+execution-capital request
+   ↓
+user grants Altana session
+   ↓
+public session descriptor
    ↓
 Grid execution service
    ↓
@@ -23,6 +27,29 @@ allowed Testnet contract call
 ```
 
 The session private key is never accepted in an AgentMarket request. It exists only in the Grid execution service environment and must correspond to the public session key granted by the user.
+
+## Public capability handoff
+
+`GET /execution-capabilities` returns only non-secret execution metadata:
+
+```json
+{
+  "network": "bsc-testnet",
+  "chainId": 97,
+  "wallet_provider": "altana",
+  "authorization_model": "scoped_session",
+  "session_key_address": "0x...",
+  "session_key_public_key": "0x...",
+  "allowed_targets": ["0x..."],
+  "allowed_selectors": ["0x..."],
+  "selectors_required": true,
+  "private_key_exposed": false
+}
+```
+
+The same public capability object is returned by `GET /health` so the service can be health-checked without exposing secrets.
+
+The marketplace must treat these values as **agent-reported capability metadata** until the user's resulting Altana session is independently verified onchain. AgentMarket must never derive a permission claim solely from this endpoint.
 
 ## Required environment
 
