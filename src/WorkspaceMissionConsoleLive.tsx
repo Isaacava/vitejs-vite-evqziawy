@@ -9,6 +9,8 @@ import {
   settleJob,
 } from "./lib/erc8183Adapter";
 import { ensureWalletConnectedProvider } from "./lib/walletAuth";
+import type { ExecutionCapitalRequest } from "./lib/executionCapital";
+import ExecutionCapitalPanel from "./ExecutionCapitalPanel";
 
 type JobView = {
   job: { id: string; status: string; description: string; budget: number | string; chain_job_id: number | null; deliverable: string | null; chain_live?: boolean };
@@ -16,6 +18,7 @@ type JobView = {
   mission: { id: string; title: string; goal: string; status: string; category: string } | null;
   evaluation: { verdict: string; notes: string | null; evidence?: { source?: string; decision?: string; reasons?: string[] } | null } | null;
   payment: { amount: number | string; status?: string; tx_hash?: string | null; token_symbol: string | null } | null;
+  execution_capital: ExecutionCapitalRequest | null;
   chain: { chain_job_id: number; chain_status: string; chain_provider: string; chain_evaluator: string; chain_description: string; chain_budget_raw: string; chain_budget: string; token_address: string; token_symbol: string; token_decimals: number; chain_expired_at: number; chain_submitted_at: string | null; chain_deliverable: string | null } | null;
   network: string;
   chain_id: number;
@@ -23,7 +26,17 @@ type JobView = {
 };
 
 type JobResult = {
-  ok?: boolean; content?: unknown; submitted_at?: number | string | null; onchain_deliverable_hash?: string | null; computed_deliverable_hash?: string | null; verified?: boolean; evidence_source?: string | null; captured_at?: string | null; agent_name?: string | null; endpoint?: string | null; error?: string;
+  ok?: boolean;
+  content?: unknown;
+  submitted_at?: number | string | null;
+  onchain_deliverable_hash?: string | null;
+  computed_deliverable_hash?: string | null;
+  verified?: boolean;
+  evidence_source?: string | null;
+  captured_at?: string | null;
+  agent_name?: string | null;
+  endpoint?: string | null;
+  error?: string;
 };
 
 type PolicyState = { disputeWindow: bigint; voteQuorum: bigint; verdict: bigint | null };
@@ -127,6 +140,7 @@ export default function WorkspaceMissionConsole() {
       <div className="grid sm:grid-cols-2 gap-4 mb-6 pb-6 dash-b"><div className="min-w-0"><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1">Mission</small><strong className="block text-[15px] font-bold break-words">{data.mission?.title || "Agent mission"}</strong></div><div className="min-w-0"><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1">Agent</small><strong className="block text-[15px] font-bold break-words">{data.task?.role || "Provider"}</strong></div><div><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1">Chain job ID</small><strong className="font-mono text-[14px]">{data.chain?.chain_job_id ? `#${data.chain.chain_job_id}` : data.job.chain_job_id == null ? "Not created" : `#${data.job.chain_job_id}`}</strong></div><div><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1">Budget</small><strong className="font-mono text-[14px]">{formatBudget(budget, tokenSymbol)}</strong></div></div>
       <div className="mb-6 rounded-[16px_8px_18px_9px] border border-line bg-paper p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1">Live source</small><strong className="font-display text-[14px] font-bold">{data.source_of_truth === "erc8183_commerce" ? "ERC-8183 Commerce · BSC Testnet" : "Marketplace workflow fallback"}</strong></div><div className="flex items-center gap-2"><span className="w-1.5 h-1.5 rounded-full bg-green"/><span className="font-mono text-[9.5px] uppercase text-green">CHAIN 97 VERIFIED</span></div></div></div>
       <span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-brass mb-3"><span className="w-1.5 h-1.5 rounded-full bg-brass"/>Job lifecycle</span><p className="text-[13px] text-inksoft mb-5 max-w-[650px]">{lifecycleCopy}</p><div className="mb-6"><Lifecycle status={liveStatus}/></div>
+      <ExecutionCapitalPanel request={data.execution_capital} jobBudget={budget} jobCurrency={tokenSymbol} />
       <div className="grid sm:grid-cols-2 gap-4 mb-6"><div className="rounded-[16px_8px_18px_9px] border border-line bg-paper p-4"><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1">Provider</small><strong className="font-mono text-[12px] break-all">{shortenHash(data.chain?.chain_provider || "")}</strong></div><div className="rounded-[16px_8px_18px_9px] border border-line bg-paper p-4"><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1">Submitted at</small><strong className="text-[13px]">{submittedAt ? new Date(submittedAt * 1000).toLocaleString() : "—"}</strong></div></div>
       <div className="border border-line rounded-[16px_8px_18px_9px] p-4 mb-6 bg-paper"><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1.5">Deliverable hash</small><strong className="font-mono text-[12px] break-all">{deliverable || "Pending"}</strong><div className="mt-3 border-t border-linesoft pt-3"><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1.5">Agent submission</small>{content ? <pre className="m-0 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-paperhi p-3 font-mono text-[10.5px] leading-relaxed">{content}</pre> : <span className="text-[11.5px] text-inksoft">The provider response is not available yet. The on-chain deliverable hash is preserved above.</span>}</div></div>
       <div className="mb-6"><div className="flex items-center justify-between gap-3 mb-3"><div><span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-green"><span className="w-1.5 h-1.5 rounded-full bg-green"/>Evaluator & settlement</span><h2 className="mt-2 text-[20px] font-bold tracking-tight">Verified, then settled.</h2></div><Status value={policyVerdictLabel(policy?.verdict ?? null)} /></div><p className="text-[13px] text-inksoft mb-5 max-w-[650px]">The submitted state is live from the job. Evaluation and settlement remain protocol-controlled rather than simulated by this page.</p><div className="grid sm:grid-cols-2 gap-4"><div className="border border-line rounded-[16px_8px_18px_9px] bg-paper p-4"><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1">Dispute window</small><strong className="font-mono text-[18px]">{remaining !== null ? formatTime(remaining) : "—"}</strong><span className="block text-[10.5px] text-inksoft mt-1">{disputeExpired ? "Window elapsed" : disputeOpen ? "Time until decision" : "Waiting for submitted timestamp"}</span></div><div className="border border-line rounded-[16px_8px_18px_9px] bg-paper p-4"><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1">Settlement</small><strong className="block text-[13px]">{terminal ? "Terminal" : settlementReady ? "Available according to live job/policy" : "Pending"}</strong><span className="block text-[10.5px] text-inksoft mt-1">Settlement is permissionless at the router layer; the button simply submits the live transaction from the connected AgentMarket WalletConnect session.</span></div></div></div>
