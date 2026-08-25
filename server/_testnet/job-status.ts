@@ -33,6 +33,8 @@ type ChainJob = {
   deliverable: `0x${string}`;
 };
 
+const isTerminal = (statusName: string) => ["COMPLETED", "REJECTED", "EXPIRED"].includes(statusName);
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
 
@@ -59,7 +61,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const { data: marketplaceJob, error: jobError } = await supabase
       .from("jobs")
-      .select("id,mission_task_id,chain_job_id,chain_status,status")
+      .select("id,mission_task_id,chain_job_id,chain_status,status,submitted_at,terminal_at")
       .eq("id", marketplaceJobId)
       .maybeSingle();
     if (jobError) throw new Error(jobError.message);
@@ -88,17 +90,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const statusName = STATUS_NAMES[chainJob.status];
     if (!statusName) return res.status(409).json({ error: "Unknown ERC-8183 job status", onchain_status: chainJob.status });
     const mappedStatus = MARKETPLACE_STATUS[statusName];
+    const submittedAt = chainJob.submittedAt > 0n ? new Date(Number(chainJob.submittedAt) * 1000).toISOString() : null;
+    const terminalAt = isTerminal(statusName) ? new Date().toISOString() : null;
 
-    const update = {
+    const { data: archive, error: archiveError } = await supabase
+      .from("erc8183_deliverable_archives")
+      .select("verified,captured_at,capture_source,provider_endpoint,verification_error,onchain_deliverable_hash")
+      .eq("chain_id", 97)
+      .ilike("commerce_address", PROVIDER_ERC8183_TESTNET.commerce)
+      .eq("job_id", Number(chainJob.id))
+      .maybeSingle();
+    if (archiveError) throw new Error(archiveError.message);
+
+    const update: Record<string, unknown> = {
       chain_job_id: Number(chainJob.id),
       chain_status: mappedStatus,
       updated_at: new Date().toISOString(),
     };
+    if (submittedAt) update.submitted_at = submittedAt;
+    if (terminalAt) update.terminal_at = terminalAt;
+
     const { data: updatedJob, error: updateError } = await supabase
       .from("jobs")
       .update(update)
       .eq("id", marketplaceJob.id)
-      .select("id,mission_task_id,status,chain_job_id,chain_status,updated_at")
+      .select("id,mission_task_id,status,chain_job_id,chain_status,submitted_at,terminal_at,updated_at")
       .single();
     if (updateError) throw new Error(updateError.message);
 
@@ -116,11 +132,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         expired_at: new Date(Number(chainJob.expiredAt) * 1000).toISOString(),
         status: chainJob.status,
         status_name: statusName,
-        submitted_at: chainJob.submittedAt > 0n ? new Date(Number(chainJob.submittedAt) * 1000).toISOString() : null,
+        submitted_at: submittedAt,
         deliverable_hash: chainJob.deliverable,
       },
       marketplace_job: updatedJob,
-      note: "Testnet-only job status. Reads and synchronizes only BSC Testnet ERC-8183 state.",
+      evidence: {
+        archive_available: Boolean(archive),
+        verified: archive?.verified === true,
+        captured_at: archive?.captured_at ?? null,
+        capture_source: archive?.capture_source ?? null,
+        provider_endpoint: archive?.provider_endpoint ?? null,
+        verification_error: archive?.verification_error ?? null,
+        onchain_deliverable_hash: archive?.onchain_deliverable_hash ?? chainJob.deliverable,
+      },
+      note: "Testnet-only ERC-8183 lifecycle status. BSC Testnet chain state is authoritative; AgentMarket archive state is reported separately as evidence.",
     });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to read Testnet ERC-8183 job status" });
