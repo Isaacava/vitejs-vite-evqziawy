@@ -31,7 +31,7 @@ The current Altana TypeScript SDK exposes:
 - `revokeSession`
 - `execute`
 
-Altana's SDK source also defines an injected-wallet signer adapter in its current development tree. AgentMarket does not fall back to a generated private key if that surface is unavailable in the installed package; it fails closed.
+AgentMarket fails closed when the installed SDK does not expose the required injected signer adapter. It does not generate or receive an agent private key in the browser.
 
 ## Wallet ownership model
 
@@ -53,6 +53,43 @@ The database therefore keeps these concepts separate:
 - `session_key_id`
 
 The marketplace must never substitute the agent's wallet for the user's execution wallet.
+
+## Public capability handoff
+
+The Grid execution service exposes:
+
+`GET /execution-capabilities`
+
+with only public execution metadata:
+
+```json
+{
+  "network": "bsc-testnet",
+  "chainId": 97,
+  "execution": "altana-scoped-session",
+  "wallet_provider": "altana",
+  "authorization_model": "scoped_session",
+  "session_key_address": "0x...",
+  "session_key_public_key": "0x...",
+  "allowed_targets": ["0x..."],
+  "allowed_selectors": ["0x..."],
+  "selectors_required": true,
+  "private_key_exposed": false
+}
+```
+
+The endpoint is capability metadata, not proof of authorization. AgentMarket validates the response before storing it on an execution-capital request:
+
+1. endpoint is a registered ERC-8183 provider endpoint;
+2. response is for BSC Testnet / chain 97;
+3. wallet provider is Altana and authorization model is `scoped_session`;
+4. private key is explicitly absent;
+5. session public key derives to the advertised session address;
+6. target allowlist is non-empty and contains valid addresses;
+7. selector allowlist is non-empty and contains valid 4-byte selectors;
+8. the descriptor is stored in `execution_capital_requests.evidence.execution_capability`.
+
+The stored descriptor includes the source URL and retrieval time so the mission console can display exactly which public scope was presented for the grant.
 
 ## Database
 
@@ -78,66 +115,100 @@ Required body:
   "job_id": "uuid",
   "capital_requested": 100,
   "purpose": "Grid trading",
-  "duration_seconds": 86400
+  "duration_seconds": 86400,
+  "wallet_provider": "altana",
+  "authorization_model": "scoped_session"
 }
 ```
 
-The route currently requires:
+The route requires:
 
 1. authenticated AgentMarket user;
 2. valid BSC Testnet wallet;
 3. job belongs to that wallet;
 4. the job is confirmed `FUNDED` on chain;
-5. provider metadata explicitly declares `execution.wallet_provider = 'altana'`;
-6. provider metadata explicitly declares `execution.transaction_authority = 'scoped_session'`.
+5. provider explicitly advertises Altana scoped-session support;
+6. a live registered ERC-8183 endpoint returns a valid `/execution-capabilities` descriptor.
 
-The endpoint only creates a `requested` row. It does **not** grant a session and does **not** move capital.
+The endpoint creates a `requested` row only after the public capability has been captured. It does **not** grant a session and does **not** move capital.
+
+`POST /api/testnet/execution-capital-verify`
+
+The browser sends the resulting public session key ID, signer, user execution wallet, expiry, and optional grant transaction hash. The server then:
+
+1. checks ownership and request state;
+2. verifies the session key ID matches the stored provider public key (`keccak256(publicKey)`);
+3. reads the configured Altana KeyStore `isValidKey(wallet, sessionKeyId)` on BSC Testnet;
+4. only after that changes `requested → authorized` and records the grant hash/verification evidence.
+
+## Mission console
+
+`ExecutionCapitalPanel` now consumes the stored public capability descriptor and renders `AltanaSessionGrantGate` only when a valid descriptor exists.
+
+The grant UI displays:
+
+- execution-capital spend cap;
+- session duration;
+- session key address;
+- contract target allowlist;
+- function selector allowlist;
+- public capability source;
+- BSC Testnet network boundary.
+
+The browser passes only the public session key/address and allowed contract targets into `grantSession()`. Function selectors remain an execution-service Risk Guardian constraint because the installed Altana grant permission surface currently represents call targets, not an invented selector field.
 
 ## Wallet gate
 
-`src/lib/altanaWallet.ts` and `src/AltanaWalletGate.tsx` implement the first authorization step:
+`src/lib/altanaWallet.ts` and `src/AltanaWalletGate.tsx` implement the wallet boundary:
 
 - reuse the existing WalletConnect provider;
 - use the user's signer;
 - configure Altana for BSC Testnet;
 - resolve/create the Altana wallet handle;
-- stop before `grantSession`.
+- stop before signing the session grant.
 
-The next stage is to wire the returned wallet into a real `grantSession` call with the requested spend and allowed contract calls, then independently verify the resulting session before changing the request state to `authorized`.
+`AltanaSessionGrantGate` performs the real `grantSession()` call and immediately requests independent server verification.
 
 ## Evidence boundary
 
 AgentMarket must not claim live `capital_deployed` or live P&L merely because an agent reports them.
 
-Until an independent read path exists, those values remain `NULL` and are populated only from hash-verified execution evidence captured through the existing ERC-8183 deliverable archive pipeline.
+Until an independent execution receipt/evidence path exists, those values remain `NULL` and are populated only from hash-verified evidence captured through the existing ERC-8183 deliverable archive pipeline.
 
 ## Current status
 
 ### Implemented
 
-- Altana SDK dependency added (`@altananetwork/sdk` 0.8.0).
-- User-wallet Altana adapter added.
-- Altana wallet gate added.
-- Altana-only execution-capital database migration added.
-- Execution-capital types/evidence helpers added.
-- Altana-only server request gate added.
+- Altana SDK dependency added (`@altananetwork/sdk`).
+- User-wallet Altana adapter and wallet gate.
+- Altana-only execution-capital database migration.
+- Altana-only server request gate.
+- Grid public `/execution-capabilities` endpoint.
+- AgentMarket live capability discovery and validation.
+- Stored public session descriptor under `execution_capital_requests.evidence.execution_capability`.
+- Real `grantSession()` UI using the provider-declared target scope.
+- Independent Altana KeyStore verification before `requested → authorized`.
+- Grant transaction hash capture.
+- Endpoint health cron now probes `/execution-capabilities` before the legacy `/execution-capital` profile.
 
 ### Not yet implemented
 
-- real session grant UI and transaction;
-- independent KeyStore/session validity verification;
 - session revocation UI;
-- execution-capital request UI in the mission console;
-- real Grid Agent execution adapter;
-- PancakeSwap execution;
-- independent mid-session spend tracking.
+- real Grid execution-capital request delivery from marketplace backend to the private executor;
+- Risk Guardian approval of an actual Testnet PancakeSwap call;
+- PancakeSwap call builder and strategy-to-call translation;
+- execution receipt/evidence capture into the ERC-8183 archive;
+- independent mid-session spend tracking;
+- expiry/revocation worker that transitions authorization state automatically.
 
 ## Security rules
 
 1. ERC-8183 job budget and execution capital are always separate.
 2. Only Altana scoped-session agents may create execution-capital requests.
 3. The user's execution wallet and the agent's session key are different fields.
-4. No generated private key is used as a substitute for the connected user signer.
-5. Authorization becomes verified only after an independent onchain/session-registry read.
-6. Unknown capital/P&L values remain `NULL` and render as `Not yet observed`.
-7. Mainnet trading is not enabled by this change; the feature remains BSC Testnet-only.
+4. The agent private key never enters AgentMarket or the browser.
+5. Agent-reported capability is not authorization proof.
+6. Authorization becomes verified only after the server reads the Altana KeyStore.
+7. Unknown capital/P&L values remain `NULL` and render as `Not yet observed`.
+8. Mainnet trading is not enabled by this change; the feature remains BSC Testnet-only.
+9. Function selectors remain an explicit Risk Guardian allowlist; an empty selector allowlist is rejected.
