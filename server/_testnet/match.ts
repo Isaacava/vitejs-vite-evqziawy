@@ -192,7 +192,15 @@ function readCachedOnchainStats(agent: AgentRow): OnchainStats | null {
   };
 }
 
-function scoreAgent(agent: AgentRow, intent: ReturnType<typeof parseMarketplaceIntent>, endpoint: EndpointRow | undefined, reputationRows: ReputationRow[], onchain: OnchainStats | null, profile: ReturnType<typeof deriveExecutionProfile>) {
+function scoreAgent(
+  agent: AgentRow,
+  intent: ReturnType<typeof parseMarketplaceIntent>,
+  endpoint: EndpointRow | undefined,
+  erc8183EndpointOnline: boolean,
+  reputationRows: ReputationRow[],
+  onchain: OnchainStats | null,
+  profile: ReturnType<typeof deriveExecutionProfile>,
+) {
   const capability = agent.category === intent.category ? 100 : intent.category === "other" ? 60 : 25;
   const verification = agent.verification_status === "verified" ? 100 : agent.verification_status === "pending" ? 70 : agent.verification_status === "indexed" ? 55 : 0;
   const livenessAvailable = Boolean(endpoint);
@@ -220,6 +228,7 @@ function scoreAgent(agent: AgentRow, intent: ReturnType<typeof parseMarketplaceI
   if (capability === 100) reasons.push("Strong capability match"); else if (intent.category === "other") reasons.push("General Testnet capability match");
   if (verification >= 70) reasons.push(`ERC-8004 Testnet identity ${agent.verification_status}`);
   if (endpoint?.status === "online") reasons.push("Testnet endpoint is healthy");
+  if (erc8183EndpointOnline) reasons.push("ERC-8183 provider endpoint is healthy");
   if (profile.commerce.erc8183) reasons.push("ERC-8183 commerce declared");
   if (profile.communication.a2a) reasons.push("A2A communication declared");
   if (profile.execution.wallet_provider !== "unknown") reasons.push(`${profile.execution.wallet_provider.toUpperCase()} execution wallet declared`);
@@ -231,7 +240,7 @@ function scoreAgent(agent: AgentRow, intent: ReturnType<typeof parseMarketplaceI
   const ownerValid = /^0x[a-fA-F0-9]{40}$/.test(agent.owner);
   const isGrid = agent.agent_id === GRID_AGENT_ID;
   const gridIdentityReady = !isGrid || ownerValid;
-  const erc8183EndpointOnline = endpointsForAgent(profile, agent);
+
   const hireability = !isTestnetAgent(agent)
     ? { status: "discoverable_only" as const, canCreateJob: false, reason: "Blocked: provider is not explicitly tagged for the isolated BSC Testnet environment." }
     : !erc8183EndpointOnline
@@ -285,12 +294,6 @@ function scoreAgent(agent: AgentRow, intent: ReturnType<typeof parseMarketplaceI
   };
 }
 
-function endpointsForAgent(profile: ReturnType<typeof deriveExecutionProfile>, agent: AgentRow) {
-  void profile;
-  void agent;
-  return false;
-}
-
 function serverClient() {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -336,19 +339,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const matches = candidateAgents
       .map((agent) => {
         const agentEndpoints = endpointsByAgent.get(agent.id) ?? [];
+        const erc8183EndpointOnline = agentEndpoints.some((endpoint) => endpoint.protocol === "erc8183" && endpoint.status === "online");
         const profile = deriveExecutionProfile(agent, agentEndpoints);
         return {
           agent,
-          ...scoreAgent(agent, intent, endpointByAgent.get(agent.id), reputationByAgent.get(agent.id) ?? [], readCachedOnchainStats(agent), profile),
-          _erc8183EndpointOnline: agentEndpoints.some((endpoint) => endpoint.protocol === "erc8183" && endpoint.status === "online"),
+          ...scoreAgent(agent, intent, endpointByAgent.get(agent.id), erc8183EndpointOnline, reputationByAgent.get(agent.id) ?? [], readCachedOnchainStats(agent), profile),
         };
       })
-      .map(({ _erc8183EndpointOnline, ...match }) => ({
-        ...match,
-        hireability: !match.hireability.canCreateJob && match.hireability.reason.includes("healthy indexed ERC-8183") && _erc8183EndpointOnline && match.commerce?.erc8183 === true
-          ? { status: "ready" as const, canCreateJob: true, reason: "A healthy indexed ERC-8183 provider endpoint is currently available on BSC Testnet. Execution-wallet authority is reported separately and is not inferred." }
-          : match.hireability,
-      }))
       .sort((a, b) => a.hireability.canCreateJob !== b.hireability.canCreateJob ? (a.hireability.canCreateJob ? -1 : 1) : b.score - a.score)
       .slice(0, 10);
 
