@@ -57,7 +57,11 @@ export default function ExecutionCapitalCard({ request, jobBudget, jobCurrency }
         <span className={`font-mono text-[9px] px-2.5 py-1 rounded-lg ${request.wallet_provider === "altana" ? "status-green" : "status-brass"}`}>Altana</span>
         <span className={`font-mono text-[9px] px-2.5 py-1 rounded-lg ${verified ? "status-green" : "status-brass"}`}>{verified ? "KeyStore verified" : "Not independently verified"}</span>
         <span className="font-mono text-[9px] px-2.5 py-1 rounded-lg border border-line">Scoped session</span>
-        {request.session_expires_at && <span className="font-mono text-[9px] px-2.5 py-1 rounded-lg border border-line">Expires {new Date(request.session_expires_at).toLocaleString()}</span>}
+        {request.duration_seconds !== null && request.duration_seconds !== undefined && (
+          <span className="font-mono text-[9px] px-2.5 py-1 rounded-lg border border-line">
+            Duration {Math.round(request.duration_seconds / 3600)}h
+          </span>
+        )}
       </div>
 
       <p className="mt-4 text-[10px] text-inksoft">Any value shown as “Not yet observed” has not been independently verified. The marketplace never renders an unknown capital or P&amp;L value as zero.</p>
