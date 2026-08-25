@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 
 const REQUEST_TIMEOUT_MS = 8_000;
+const MAX_PROFILE_BYTES = 128_000;
 
 function getServiceClient() {
   const url = process.env.SUPABASE_URL;
@@ -15,6 +16,36 @@ function authorized(req: VercelRequest) {
   if (!secret) return false;
   const auth = req.headers.authorization;
   return auth === `Bearer ${secret}`;
+}
+
+async function fetchExecutionProfile(endpointUrl: string) {
+  const base = endpointUrl.replace(/\/+$/, "");
+  const url = `${base}/execution-capital`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    });
+    if (!response.ok) return { available: false as const, statusCode: response.status };
+    const contentLength = Number(response.headers.get("content-length") || 0);
+    if (Number.isFinite(contentLength) && contentLength > MAX_PROFILE_BYTES) {
+      return { available: false as const, statusCode: response.status };
+    }
+    const raw = await response.text();
+    if (new TextEncoder().encode(raw).byteLength > MAX_PROFILE_BYTES) {
+      return { available: false as const, statusCode: response.status };
+    }
+    const body = raw ? JSON.parse(raw) : null;
+    if (!body || typeof body !== "object") return { available: false as const, statusCode: response.status };
+    return { available: true as const, statusCode: response.status, profile: body.profile ?? body.execution_capital ?? null };
+  } catch {
+    return { available: false as const, statusCode: null };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function probeEndpoint(endpointUrl: string) {
@@ -95,14 +126,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       statusCode: number | null;
       latencyMs: number;
       checkedUrl: string | null;
+      executionCapitalProfileReported: boolean;
     }>;
 
     for (const endpoint of endpoints ?? []) {
       const probe = await probeEndpoint(endpoint.endpoint_url);
+      const profile = probe.status === "online" && endpoint.protocol === "erc8183"
+        ? await fetchExecutionProfile(endpoint.endpoint_url)
+        : { available: false as const, statusCode: null };
+
       const metadata = {
         checked_url: probe.checkedUrl,
         checker: "agentmarket-vercel-cron",
         checked_at: new Date().toISOString(),
+        reported_execution_capital: profile.available ? profile.profile : null,
+        reported_execution_capital_source: profile.available ? "live_agent_endpoint" : null,
+        reported_execution_capital_verified: false,
+        reported_execution_capital_checked_at: profile.available ? new Date().toISOString() : null,
       };
 
       const { error: updateError } = await supabase
@@ -130,6 +170,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         statusCode: probe.statusCode,
         latencyMs: probe.latencyMs,
         checkedUrl: probe.checkedUrl,
+        executionCapitalProfileReported: profile.available,
       });
     }
 
@@ -137,9 +178,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       (acc, row) => {
         acc.total += 1;
         acc[row.status] += 1;
+        if (row.executionCapitalProfileReported) acc.executionCapitalProfiles += 1;
         return acc;
       },
-      { total: 0, online: 0, degraded: 0, offline: 0 } as Record<string, number>,
+      { total: 0, online: 0, degraded: 0, offline: 0, executionCapitalProfiles: 0 } as Record<string, number>,
     );
 
     return res.status(200).json({
@@ -147,6 +189,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       checkedAt: new Date().toISOString(),
       summary,
       results,
+      note: "Execution-capital profiles are agent-reported capability metadata and are not treated as proof of onchain authorization or custody.",
     });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Unexpected server error" });
