@@ -7,6 +7,25 @@ export type ExecutionCapitalStatus =
   | "revoked"
   | "expired";
 
+export type ExecutionCapabilityDescriptor = {
+  network: "bsc-testnet";
+  chainId: 97;
+  execution: "altana-scoped-session";
+  wallet_provider: "altana";
+  authorization_model: "scoped_session";
+  session_key_address: `0x${string}`;
+  session_key_public_key: `0x${string}`;
+  allowed_targets: readonly `0x${string}`[];
+  allowed_selectors: readonly `0x${string}`[];
+  selectors_required: true;
+  private_key_exposed: false;
+  source_url: string;
+  endpoint_id: string;
+  endpoint_status: string | null;
+  fetched_at: string;
+  independently_authorized: boolean;
+};
+
 export type ExecutionCapitalRequest = {
   id: string;
   job_id: string;
@@ -44,6 +63,64 @@ export type ExecutionCapitalRequest = {
 export function displayObservedNumber(value: string | number | null | undefined, suffix = "") {
   if (value === null || value === undefined || value === "") return "Not yet observed";
   return `${value}${suffix}`;
+}
+
+function isAddress(value: unknown): value is `0x${string}` {
+  return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value);
+}
+
+function isHex(value: unknown): value is `0x${string}` {
+  return typeof value === "string" && /^0x[a-fA-F0-9]*$/.test(value);
+}
+
+function isSelector(value: unknown): value is `0x${string}` {
+  return typeof value === "string" && /^0x[a-fA-F0-9]{8}$/.test(value);
+}
+
+export function getExecutionCapability(request: ExecutionCapitalRequest | null | undefined): ExecutionCapabilityDescriptor | null {
+  const raw = request?.evidence?.execution_capability;
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  if (
+    value.network !== "bsc-testnet" ||
+    Number(value.chainId) !== 97 ||
+    value.execution !== "altana-scoped-session" ||
+    value.wallet_provider !== "altana" ||
+    value.authorization_model !== "scoped_session" ||
+    value.selectors_required !== true ||
+    value.private_key_exposed !== false ||
+    typeof value.source_url !== "string" ||
+    typeof value.endpoint_id !== "string" ||
+    typeof value.fetched_at !== "string" ||
+    typeof value.independently_authorized !== "boolean" ||
+    !isAddress(value.session_key_address) ||
+    !isHex(value.session_key_public_key) ||
+    !Array.isArray(value.allowed_targets) ||
+    !value.allowed_targets.every(isAddress) ||
+    value.allowed_targets.length === 0 ||
+    !Array.isArray(value.allowed_selectors) ||
+    !value.allowed_selectors.every(isSelector) ||
+    value.allowed_selectors.length === 0
+  ) return null;
+
+  return {
+    network: "bsc-testnet",
+    chainId: 97,
+    execution: "altana-scoped-session",
+    wallet_provider: "altana",
+    authorization_model: "scoped_session",
+    session_key_address: value.session_key_address,
+    session_key_public_key: value.session_key_public_key,
+    allowed_targets: value.allowed_targets,
+    allowed_selectors: value.allowed_selectors,
+    selectors_required: true,
+    private_key_exposed: false,
+    source_url: value.source_url,
+    endpoint_id: value.endpoint_id,
+    endpoint_status: typeof value.endpoint_status === "string" ? value.endpoint_status : null,
+    fetched_at: value.fetched_at,
+    independently_authorized: value.independently_authorized,
+  };
 }
 
 export function isVerifiedAuthorization(request: Pick<ExecutionCapitalRequest, "wallet_provider" | "authorization_model" | "authorization_verified_at" | "session_key_id">) {
