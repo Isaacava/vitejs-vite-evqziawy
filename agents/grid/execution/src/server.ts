@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { privateKeyToAccount } from "viem/accounts";
 import { executeGridAction } from "./altanaExecutor.js";
+import { pancakeSwapPreflight } from "./preflight.js";
 import type { GridCall, GridSessionDescriptor } from "./types.js";
 
 const PORT = Number(process.env.PORT || 8788);
@@ -88,6 +89,12 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "GET" && req.url === "/execution-capabilities") {
       return json(res, 200, publicExecutionCapabilities());
+    }
+
+    if (req.method === "POST" && req.url === "/preflight/pancake") {
+      const request = await body(req) as Record<string, unknown>;
+      const result = await pancakeSwapPreflight(request);
+      return json(res, 200, { ok: true, result });
     }
 
     if (req.method !== "POST" || req.url !== "/execute") {
