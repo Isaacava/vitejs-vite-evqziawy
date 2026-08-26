@@ -116,7 +116,7 @@ After the grant, the server:
 
 ### Authorized session → private Grid executor — completed
 
-The consolidated Testnet dispatcher now exposes:
+The consolidated Testnet dispatcher exposes:
 
 `POST /api/testnet?route=execution-capital-execute`
 
@@ -155,8 +155,10 @@ Important files:
 
 - `src/altanaExecutor.ts` — reconstructs the session from the agent's private key, validates public key/address identity, runs Risk Guardian, then calls the Altana SDK `execute()` on BSC Testnet.
 - `src/riskGuardian.ts` — validates target/selector/expiry/value/batch rules.
-- `src/server.ts` — private execution endpoint with bearer protection.
+- `src/server.ts` — private execution endpoint with bearer protection plus read-only PancakeSwap preflight.
 - `src/types.ts` — execution/session types.
+- `src/pancakeSwap.ts` — deterministic ERC-20 approval and PancakeSwap `exactInputSingle` calldata builder.
+- `src/preflight.ts` — read-only Testnet router/token bytecode and calldata preflight.
 
 The execution service exposes public capability metadata through:
 
@@ -164,7 +166,13 @@ The execution service exposes public capability metadata through:
 
 and the same public metadata through `GET /health`.
 
-It explicitly does **not** expose the session private key.
+Read-only PancakeSwap preflight is available through:
+
+`POST /preflight/pancake`
+
+It never calls `Altana execute()` and always reports `broadcast: false`.
+
+It checks that the configured router and both token addresses have deployed bytecode on BSC Testnet and returns deterministic call data.
 
 Environment examples:
 
@@ -174,41 +182,38 @@ GRID_EXECUTION_SHARED_SECRET=<private>
 ALTANA_SESSION_PRIVATE_KEY=<agent session private key>
 GRID_ALLOWED_TARGETS=<comma-separated BSC testnet contract addresses>
 GRID_ALLOWED_SELECTORS=<comma-separated 4-byte selectors>
+PANCAKE_TESTNET_ROUTER=<verified BSC testnet router>
+PANCAKE_TESTNET_POOL_FEE=<pool fee>
 ```
 
 The selector allowlist must remain explicit. Empty selectors reject execution.
 
 ## Current CI / deployment checkpoint
 
-The branch currently ends at:
+The current branch has completed the capability handoff, private executor bridge, PancakeSwap call builder, read-only preflight, dedicated executor typecheck, and documentation checkpoint.
 
-`ed4879094f0a2493f5342afd3351fe1990cb3a76`
+Recent commits:
 
-The execution bridge itself was added in commits:
+- `fcd10a2d1234b8f408925ea9cfebe1ea17acadad` — expose PancakeSwap Testnet preflight;
+- `70b4cf262a7d4beb0ce8add5db0bc637f7cb7279` — dedicated Grid executor TypeScript CI check;
+- `ec963912827a7da95950bfc7894e1fe01884f55d` — document PancakeSwap executor preflight.
 
-- `db96cc398bda49bd57012370f13156fede9d459d` — bridge endpoint;
-- `c527c96233c5eab589a66ef0750721144ef9da95` — activity-recording fix;
-- `33bd4d786cad73acd3f9f5567f6ce9ccca810bcf` — consolidated Testnet route;
-- `ed4879094f0a2493f5342afd3351fe1990cb3a76` — dedicated bridge documentation.
-
-The TypeScript/Vite CI build previously completed successfully on the capability-handoff implementation before this executor bridge was added. The current Vercel deployment for the latest branch head is queued and must be checked for READY/FAILED before treating the new bridge as deployed.
+The GitHub Actions run for the dedicated executor CI is currently running. A previous capability-handoff implementation build completed successfully. The newest branch head must be checked again for a final all-jobs result before claiming CI green.
 
 ## Next exact implementation step
 
-The next task is no longer the authorization plumbing. It is the **real Testnet call builder and execution proof**:
+The remaining step is now **environment-backed Testnet execution proof**, not authorization plumbing or call encoding:
 
 ```text
-Grid strategy
+verified Grid executor configuration
     ↓
-PancakeSwap-specific call builder
+verified Testnet router + token addresses
     ↓
-encoded target + selector + value
+read-only PancakeSwap preflight
     ↓
-Risk Guardian
+controlled Testnet call through authorized Altana session
     ↓
-Altana session execute()
-    ↓
-BSC Testnet transaction receipt
+BSC Testnet receipt
     ↓
 existing ERC-8183 evidence archive
 ```
@@ -219,13 +224,15 @@ Do **not** mark the Grid agent as a real trading executor until its executor ser
 
 ## After the real execution proof
 
-1. Add the PancakeSwap/Testnet call builder for the Grid strategy.
-2. Execute one controlled Testnet call through the authorized Altana session.
-3. Capture and verify the receipt.
-4. Attach the execution evidence to the existing ERC-8183 deliverable archive.
-5. Record final assets/P&L only from independently verified state/evidence.
-6. Add session revocation and expiry handling.
-7. Add independent mid-session spend/asset tracking.
+1. Verify the isolated Grid executor service is reachable with the expected shared secret.
+2. Verify the Testnet router/token addresses and selector allowlist from the live executor configuration.
+3. Run the read-only PancakeSwap preflight.
+4. Execute one controlled Testnet call through the already authorized Altana session.
+5. Capture and independently verify the receipt.
+6. Attach the execution evidence to the existing ERC-8183 deliverable archive.
+7. Record final assets/P&L only from independently verified state/evidence.
+8. Add session revocation and expiry handling.
+9. Add independent mid-session spend/asset tracking.
 
 ## Documentation rule
 
