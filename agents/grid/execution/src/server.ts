@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage } from "node:http";
 import { privateKeyToAccount } from "viem/accounts";
 import { executeGridAction } from "./altanaExecutor.js";
 import { pancakeSwapPreflight } from "./preflight.js";
+import { observeTestnetReceipt } from "./receipt.js";
 import type { GridCall, GridSessionDescriptor } from "./types.js";
 
 // Railway reserves process.env.PORT for the public FastAPI service. The
@@ -134,6 +135,14 @@ const server = createServer(async (req, res) => {
       if (!SESSION_PRIVATE_KEY || !SHARED_SECRET) return json(res, 503, { error: "Grid execution service is not configured" });
       const request = await body(req) as Record<string, unknown>;
       const result = await pancakeSwapPreflight(request);
+      return json(res, 200, { ok: true, result });
+    }
+
+    if (req.method === "GET" && req.url?.startsWith("/receipt/")) {
+      if (!authorized(req)) return json(res, 401, { error: "Unauthorized" });
+      const hash = decodeURIComponent(req.url.slice("/receipt/".length)).split("?", 1)[0];
+      if (!hash) return json(res, 400, { error: "transaction hash is required" });
+      const result = await observeTestnetReceipt(hash);
       return json(res, 200, { ok: true, result });
     }
 
