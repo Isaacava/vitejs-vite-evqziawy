@@ -1,0 +1,49 @@
+name: Grid Main Execution Build
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "agents/grid/**"
+      - ".github/workflows/grid-main-execution.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "agents/grid/**"
+      - ".github/workflows/grid-main-execution.yml"
+
+jobs:
+  executor:
+    name: Grid Altana executor typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache-dependency-path: agents/grid/execution/package.json
+
+      - name: Install executor dependencies
+        working-directory: agents/grid/execution
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck executor
+        working-directory: agents/grid/execution
+        run: npm run typecheck
+
+  container:
+    name: Grid combined container build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build combined Grid container
+        run: docker build -f agents/grid/Dockerfile .
