@@ -57,6 +57,30 @@ jobs:
           PYTHONPATH: agents/grid
         run: pytest agents/grid/tests -q
 
+  grid-execution:
+    name: Grid Altana executor TypeScript check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache-dependency-path: agents/grid/execution/package.json
+
+      - name: Install Grid executor dependencies
+        working-directory: agents/grid/execution
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck Grid executor
+        working-directory: agents/grid/execution
+        run: npm run typecheck
+
   network-isolation:
     name: Testnet network isolation audit
     runs-on: ubuntu-latest
