@@ -4,7 +4,10 @@ import { executeGridAction } from "./altanaExecutor.js";
 import { pancakeSwapPreflight } from "./preflight.js";
 import type { GridCall, GridSessionDescriptor } from "./types.js";
 
-const PORT = Number(process.env.PORT || 8788);
+// Railway reserves process.env.PORT for the public FastAPI service. The
+// Altana executor must use a separate localhost-only port inside the same
+// container so the two servers never compete for Railway's public port.
+const PORT = Number(process.env.GRID_EXECUTION_PORT || 8788);
 const SHARED_SECRET = process.env.GRID_EXECUTION_SHARED_SECRET || "";
 const SESSION_PRIVATE_KEY = process.env.ALTANA_SESSION_PRIVATE_KEY || "";
 
@@ -152,6 +155,6 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`Grid Altana execution service listening on ${PORT} (BSC Testnet / chain 97)`);
+server.listen(PORT, "127.0.0.1", () => {
+  console.log(`Grid Altana execution service listening on ${PORT} (localhost / BSC Testnet / chain 97)`);
 });
