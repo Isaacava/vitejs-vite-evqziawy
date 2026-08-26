@@ -18,6 +18,7 @@ type ReceiptResponse = {
   chain_id?: number;
   transaction_hash?: string;
   receipt?: TestnetExecutionReceipt;
+  confirmed?: boolean;
   error?: string;
 };
 
@@ -49,6 +50,43 @@ export async function fetchTestnetExecutionReceipt(transactionHash: string): Pro
 
   if (!body.receipt) throw new Error("Receipt verifier returned no receipt result");
   return body.receipt;
+}
+
+export async function confirmTestnetExecutionReceipt(
+  requestId: string,
+  transactionHash: string,
+): Promise<{ request: unknown; execution_evidence: unknown; receipt: TestnetExecutionReceipt }> {
+  if (!requestId.trim()) throw new Error("Execution-capital request ID is required");
+  if (!validHash(transactionHash)) throw new Error("Invalid Testnet transaction hash");
+
+  const response = await fetch("/api/testnet/execution-receipt", {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ request_id: requestId, tx_hash: transactionHash }),
+    cache: "no-store",
+  });
+
+  const body = await response.json().catch(() => null) as ReceiptResponse & {
+    request?: unknown;
+    execution_evidence?: unknown;
+  } | null;
+  if (!response.ok) {
+    throw new Error(body?.error || `Receipt confirmation failed with HTTP ${response.status}`);
+  }
+
+  if (!body?.confirmed || !body.receipt) {
+    throw new Error("Receipt confirmation did not return verified evidence");
+  }
+
+  return {
+    request: body.request,
+    execution_evidence: body.execution_evidence,
+    receipt: body.receipt,
+  };
 }
 
 export async function waitForTestnetExecutionReceipt(
