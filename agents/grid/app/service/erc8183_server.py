@@ -7,8 +7,9 @@ import os
 from contextlib import asynccontextmanager
 from typing import Any, Callable
 
+import httpx
 from fastapi import APIRouter, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from bnbagent.wallets import EVMWalletProvider
 from bnbagent.erc8183 import ERC8183JobOps
 from bnbagent.erc8183.negotiation import NegotiationHandler
@@ -81,6 +82,7 @@ def _build_state() -> tuple[ERC8183JobOps, NegotiationHandler]:
 def create_erc8183_app(on_job: Callable[..., Any]) -> FastAPI:
     ops, negotiation = _build_state()
     interval = float(_env("ERC8183_FUNDED_POLL_INTERVAL", "30") or "30")
+    execution_internal_url = (_env("GRID_EXECUTION_INTERNAL_URL", "http://127.0.0.1:8788") or "http://127.0.0.1:8788").rstrip("/")
     tasks: set[asyncio.Task[Any]] = set()
     stop = asyncio.Event()
 
@@ -126,6 +128,37 @@ def create_erc8183_app(on_job: Callable[..., Any]) -> FastAPI:
                 await asyncio.wait_for(stop.wait(), timeout=interval)
             except asyncio.TimeoutError:
                 continue
+
+    async def proxy_execution(request: Request, endpoint: str) -> Response:
+        body = None
+        if request.method not in {"GET", "HEAD"}:
+            body = await request.body()
+        headers = {}
+        authorization = request.headers.get("authorization")
+        if authorization:
+            headers["authorization"] = authorization
+        content_type = request.headers.get("content-type")
+        if content_type:
+            headers["content-type"] = content_type
+        try:
+            async with httpx.AsyncClient(timeout=90.0) as client:
+                upstream = await client.request(
+                    request.method,
+                    f"{execution_internal_url}{endpoint}",
+                    headers=headers,
+                    content=body,
+                )
+        except httpx.HTTPError as exc:
+            logger.exception("Grid execution upstream unavailable")
+            raise HTTPException(status_code=503, detail="Grid execution service unavailable") from exc
+        return Response(
+            content=upstream.content,
+            status_code=upstream.status_code,
+            headers={
+                "content-type": upstream.headers.get("content-type", "application/json"),
+                "cache-control": "no-store",
+            },
+        )
 
     router = APIRouter(prefix="/erc8183", tags=["ERC-8183"])
 
@@ -177,6 +210,22 @@ def create_erc8183_app(on_job: Callable[..., Any]) -> FastAPI:
     async def health():
         return {"status": "ok", "service": "AgentMarket Grid ERC-8183", "network": "bsc-testnet"}
 
+    @router.get("/execution-capabilities")
+    async def execution_capabilities():
+        return await proxy_execution(request, "/execution-capabilities")
+
+    @router.get("/execution-health")
+    async def execution_health():
+        return await proxy_execution(request, "/health")
+
+    @router.post("/preflight/pancake")
+    async def pancake_preflight(request: Request):
+        return await proxy_execution(request, "/preflight/pancake")
+
+    @router.post("/execute")
+    async def execute(request: Request):
+        return await proxy_execution(request, "/execute")
+
     @router.get("/job/{job_id}")
     async def get_job(job_id: int):
         result = await ops.get_job(job_id)
@@ -227,6 +276,10 @@ def create_erc8183_app(on_job: Callable[..., Any]) -> FastAPI:
                 "status": "/erc8183/status",
                 "negotiate": "/erc8183/negotiate",
                 "execution_capital": "/erc8183/execution-capital",
+                "execution_capabilities": "/erc8183/execution-capabilities",
+                "execution_health": "/erc8183/execution-health",
+                "preflight_pancake": "/erc8183/preflight/pancake",
+                "execute": "/erc8183/execute",
             },
         }
 
