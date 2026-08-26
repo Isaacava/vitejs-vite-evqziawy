@@ -4,6 +4,7 @@ import { getExecutionCapability } from "./lib/executionCapital";
 import ExecutionCapitalCard from "./ExecutionCapitalCard";
 import AltanaWalletGate from "./AltanaWalletGate";
 import AltanaSessionGrantGate from "./AltanaSessionGrantGate";
+import ExecutionCapitalLivePanel from "./ExecutionCapitalLivePanel";
 
 type Props = {
   request: ExecutionCapitalRequest | null;
@@ -58,6 +59,10 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
             </section>
           )}
         </>
+      )}
+
+      {request && capability && (request.status === "authorized" || request.status === "active") && (
+        <ExecutionCapitalLivePanel request={request} />
       )}
     </div>
   );
