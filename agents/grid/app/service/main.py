@@ -200,6 +200,7 @@ async def erc8183_root() -> dict[str, Any]:
             "execution_health": "/erc8183/execution-health",
             "preflight_pancake": "/erc8183/preflight/pancake",
             "execute": "/erc8183/execute",
+            "receipt": "/erc8183/receipt/{transaction_hash}",
         },
     }
 
@@ -299,6 +300,11 @@ async def pancake_preflight(request: Request) -> Response:
 @app.post("/erc8183/execute")
 async def execute(request: Request) -> Response:
     return await _proxy_execution(request, "/execute")
+
+
+@app.get("/erc8183/receipt/{transaction_hash}")
+async def execution_receipt(transaction_hash: str, request: Request) -> Response:
+    return await _proxy_execution(request, f"/receipt/{transaction_hash}")
 
 
 @app.get("/erc8183/job/{job_id}/response")
