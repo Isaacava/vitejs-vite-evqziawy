@@ -82,17 +82,37 @@ def _build_state() -> tuple[ERC8183JobOps, NegotiationHandler]:
 def create_erc8183_app(on_job: Callable[..., Any]) -> FastAPI:
     ops, negotiation = _build_state()
     interval = float(_env("ERC8183_FUNDED_POLL_INTERVAL", "30") or "30")
+    execution_capital_window = max(
+        0,
+        int(float(_env("ERC8183_EXECUTION_CAPITAL_WINDOW_SECONDS", "300") or "300")),
+    )
     execution_internal_url = (_env("GRID_EXECUTION_INTERNAL_URL", "http://127.0.0.1:8788") or "http://127.0.0.1:8788").rstrip("/")
     tasks: set[asyncio.Task[Any]] = set()
     stop = asyncio.Event()
+    funded_first_seen: dict[int, float] = {}
 
     async def process_job(job_id: int) -> None:
         verification = await ops.verify_job(job_id)
         if not verification.get("valid"):
+            funded_first_seen.pop(job_id, None)
             logger.warning("Grid job %s skipped: %s", job_id, verification.get("error"))
             return
 
         job = verification["job"]
+        if execution_capital_window > 0:
+            now = asyncio.get_running_loop().time()
+            first_seen = funded_first_seen.setdefault(job_id, now)
+            elapsed = now - first_seen
+            if elapsed < execution_capital_window:
+                remaining = max(0, execution_capital_window - elapsed)
+                logger.info(
+                    "Grid job %s is Funded; holding submission for %.0fs to allow execution-capital request",
+                    job_id,
+                    remaining,
+                )
+                return
+            funded_first_seen.pop(job_id, None)
+
         try:
             result = on_job(job)
             if inspect.isawaitable(result):
@@ -113,7 +133,11 @@ def create_erc8183_app(on_job: Callable[..., Any]) -> FastAPI:
             logger.exception("Grid job %s execution failed", job_id)
 
     async def poll_loop() -> None:
-        logger.info("Grid Agent funded-job poll loop started (interval=%ss)", interval)
+        logger.info(
+            "Grid Agent funded-job poll loop started (interval=%ss, execution-capital-window=%ss)",
+            interval,
+            execution_capital_window,
+        )
         while not stop.is_set():
             try:
                 pending = await ops.get_pending_jobs()
