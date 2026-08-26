@@ -235,6 +235,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }).eq("id", requestId).select("*").single();
     if (updateError) return res.status(500).json({ error: updateError.message });
 
+    const executionId = executionEvidence.execution_id as string;
+    const { error: evidenceError } = await supabase.from("execution_capital_execution_evidence").upsert({
+      execution_capital_request_id: request.id,
+      job_id: job.id,
+      chain_id: 97,
+      execution_id: executionId,
+      calls_id: executionEvidence.calls_id,
+      executor_status: executionEvidence.executor_status,
+      transaction_hash: transactionHash,
+      receipt,
+      receipt_verified: Boolean(receipt),
+      calls: executionEvidence.calls,
+      source: "grid_private_execution_service",
+    }, { onConflict: "execution_capital_request_id,execution_id" });
+    if (evidenceError) return res.status(500).json({ error: evidenceError.message });
+
     let missionId: string | null = null;
     if (job.mission_task_id) {
       const { data: task } = await supabase.from("mission_tasks").select("mission_id").eq("id", job.mission_task_id).maybeSingle();
@@ -255,7 +271,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ok: true,
       request: updated,
       execution: executionEvidence,
-      note: receipt ? "Execution receipt observed on BSC Testnet and stored as hash-verified evidence." : "Execution service accepted the call but a receipt is not yet observable; capital/P&L remain unreported.",
+      note: receipt ? "Execution receipt observed on BSC Testnet and stored as independent execution evidence." : "Execution service accepted the call but a receipt is not yet observable; capital/P&L remain unreported.",
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected execution bridge error";
