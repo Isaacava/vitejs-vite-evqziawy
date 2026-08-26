@@ -3,6 +3,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { executeGridAction } from "./altanaExecutor.js";
 import { pancakeSwapPreflight } from "./preflight.js";
 import { observeTestnetReceipt } from "./receipt.js";
+import { getExecutionReadiness } from "./readiness.js";
 import type { GridCall, GridSessionDescriptor } from "./types.js";
 
 // Railway reserves process.env.PORT for the public FastAPI service. The
@@ -130,6 +131,10 @@ const server = createServer(async (req, res) => {
       return json(res, 200, publicExecutionCapabilities());
     }
 
+    if (req.method === "GET" && req.url === "/execution-readiness") {
+      return json(res, 200, await getExecutionReadiness());
+    }
+
     if (req.method === "POST" && req.url === "/preflight/pancake") {
       if (!authorized(req)) return json(res, 401, { error: "Unauthorized" });
       if (!SESSION_PRIVATE_KEY || !SHARED_SECRET) return json(res, 503, { error: "Grid execution service is not configured" });
@@ -152,6 +157,14 @@ const server = createServer(async (req, res) => {
 
     if (!authorized(req)) return json(res, 401, { error: "Unauthorized" });
     if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "ALTANA_SESSION_PRIVATE_KEY is not configured" });
+
+    const readiness = await getExecutionReadiness();
+    if (!readiness.ready) {
+      return json(res, 503, {
+        error: "Grid execution service is not execution-ready",
+        readiness,
+      });
+    }
 
     const request = await body(req) as Record<string, unknown>;
     const session = descriptor(request.session);
