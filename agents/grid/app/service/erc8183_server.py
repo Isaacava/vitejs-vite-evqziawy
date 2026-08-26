@@ -133,7 +133,7 @@ def create_erc8183_app(on_job: Callable[..., Any]) -> FastAPI:
         body = None
         if request.method not in {"GET", "HEAD"}:
             body = await request.body()
-        headers = {}
+        headers: dict[str, str] = {}
         authorization = request.headers.get("authorization")
         if authorization:
             headers["authorization"] = authorization
@@ -211,11 +211,11 @@ def create_erc8183_app(on_job: Callable[..., Any]) -> FastAPI:
         return {"status": "ok", "service": "AgentMarket Grid ERC-8183", "network": "bsc-testnet"}
 
     @router.get("/execution-capabilities")
-    async def execution_capabilities():
+    async def execution_capabilities(request: Request):
         return await proxy_execution(request, "/execution-capabilities")
 
     @router.get("/execution-health")
-    async def execution_health():
+    async def execution_health(request: Request):
         return await proxy_execution(request, "/health")
 
     @router.post("/preflight/pancake")
