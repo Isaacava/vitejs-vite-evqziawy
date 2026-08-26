@@ -63,6 +63,10 @@ function configuredList(value: string) {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
+function authorized(req: import("node:http").IncomingMessage) {
+  return req.headers.authorization === `Bearer ${SHARED_SECRET}`;
+}
+
 function publicExecutionCapabilities() {
   const account = privateKeyToAccount((SESSION_PRIVATE_KEY.startsWith("0x") ? SESSION_PRIVATE_KEY : `0x${SESSION_PRIVATE_KEY}`) as `0x${string}`);
   return {
@@ -92,6 +96,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && req.url === "/preflight/pancake") {
+      if (!authorized(req)) return json(res, 401, { error: "Unauthorized" });
       const request = await body(req) as Record<string, unknown>;
       const result = await pancakeSwapPreflight(request);
       return json(res, 200, { ok: true, result });
@@ -101,7 +106,7 @@ const server = createServer(async (req, res) => {
       return json(res, 404, { error: "Not found" });
     }
 
-    if (req.headers.authorization !== `Bearer ${SHARED_SECRET}`) {
+    if (!authorized(req)) {
       return json(res, 401, { error: "Unauthorized" });
     }
 
