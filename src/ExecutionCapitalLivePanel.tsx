@@ -90,7 +90,7 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
     [capability],
   );
 
-  if (!canUse) return null;
+  if (!canUse || !capability) return null;
 
   async function runPreflight() {
     setLoading(true);
