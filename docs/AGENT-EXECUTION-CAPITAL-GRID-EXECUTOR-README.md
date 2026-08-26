@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This phase connects an independently authorized Altana session in AgentMarket to the first-party Grid Agent's private execution service.
+This phase connects an independently authorized Altana session in AgentMarket to the first-party Grid Agent's private execution service and adds a read-only PancakeSwap Testnet call-preparation path.
 
 The bridge is server-to-server:
 
@@ -91,6 +91,42 @@ GRID_EXECUTION_SHARED_SECRET
 
 The executor URL is obtained from `GRID_EXECUTION_ENDPOINT_URL` when explicitly configured; otherwise AgentMarket derives `/execute` from the stored public capability source URL. No agent-specific contract address is hard-coded into the generic marketplace.
 
+## PancakeSwap Testnet call builder
+
+`agents/grid/execution/src/pancakeSwap.ts` provides deterministic encoding for:
+
+- ERC-20 `approve(spender, amount)`;
+- PancakeSwap Smart Router-style `exactInputSingle(...)`.
+
+The builder keeps token addresses, recipient, fee tier, amounts, and minimum output explicit. It does not select tokens or amounts automatically and does not use Mainnet addresses.
+
+Configuration:
+
+```text
+PANCAKE_TESTNET_ROUTER
+PANCAKE_TESTNET_POOL_FEE
+```
+
+The router value remains configurable because PancakeSwap deployment addresses can vary by Testnet contract family/version. The final execution environment must verify the selected Testnet deployment before adding it to the Grid allowlist.
+
+## Read-only PancakeSwap preflight
+
+`agents/grid/execution/src/preflight.ts` validates a proposed swap without broadcasting:
+
+1. chain is BSC Testnet / 97;
+2. router has deployed bytecode;
+3. token-in has deployed bytecode;
+4. token-out has deployed bytecode;
+5. calldata is deterministically constructed;
+6. the generated function selector is explicit;
+7. the result reports `broadcast: false`.
+
+The Grid service exposes this as:
+
+`POST /preflight/pancake`
+
+The endpoint does not require the private execution secret because it is read-only and does not call `Altana execute()`.
+
 ## Receipt evidence
 
 After the private executor returns a transaction hash, AgentMarket independently queries BSC Testnet for the transaction receipt.
@@ -110,6 +146,10 @@ The request evidence records:
 
 Execution-capital `capital_deployed` and P&L fields are **not** populated merely because a transaction exists. They remain evidence-driven values and require the later asset/accounting integration.
 
+## CI
+
+The Testnet workflow includes a dedicated `Grid Altana executor TypeScript check` job which runs the executor package's `npm run typecheck` in addition to the main Vite build and Python Grid Agent tests.
+
 ## Current boundary
 
 Implemented:
@@ -120,12 +160,15 @@ Implemented:
 - receipt lookup on BSC Testnet;
 - execution evidence storage;
 - execution activity record;
-- consolidated Testnet API routing.
+- consolidated Testnet API routing;
+- PancakeSwap Testnet call builder;
+- read-only PancakeSwap preflight;
+- dedicated Grid executor CI typecheck.
 
 Not yet implemented:
 
-- PancakeSwap-specific call builder;
-- Grid strategy → encoded swap/liquidity action translation;
+- verified live Testnet router/token configuration for the Grid agent;
+- strategy → encoded swap action selection based on a concrete funded test position;
 - real Testnet PancakeSwap execution demonstration;
 - deliverable-archive attachment of the execution receipt;
 - independent asset/P&L accounting;
