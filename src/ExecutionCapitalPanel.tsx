@@ -1,7 +1,9 @@
+import { useEffect, useState } from "react";
 import type { Address, Hex } from "viem";
 import type { ExecutionCapitalRequest } from "./lib/executionCapital";
 import { getExecutionCapability } from "./lib/executionCapital";
 import ExecutionCapitalCard from "./ExecutionCapitalCard";
+import ExecutionCapitalRequestGate from "./ExecutionCapitalRequestGate";
 import AltanaWalletGate from "./AltanaWalletGate";
 import AltanaSessionGrantGate from "./AltanaSessionGrantGate";
 import ExecutionCapitalLivePanel from "./ExecutionCapitalLivePanel";
@@ -25,10 +27,79 @@ function parseCapitalAmount(value: string | null) {
 export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency }: Props) {
   const capability = getExecutionCapability(request);
   const capitalAmount = parseCapitalAmount(request?.capital_requested || null);
+  const [liveFunded, setLiveFunded] = useState(false);
+  const [requestCreated, setRequestCreated] = useState(false);
+  const [liveStateError, setLiveStateError] = useState("");
+
+  useEffect(() => {
+    if (request || requestCreated) {
+      setLiveFunded(false);
+      return;
+    }
+
+    const jobId = new URLSearchParams(window.location.search).get("job")?.trim() || "";
+    if (!jobId) {
+      setLiveFunded(false);
+      return;
+    }
+
+    let active = true;
+    let timer: number | undefined;
+
+    const checkLiveState = async () => {
+      try {
+        const response = await fetch(`/api/jobs?id=${encodeURIComponent(jobId)}`, {
+          credentials: "include",
+          cache: "no-store",
+        });
+        const body = await response.json().catch(() => null) as Record<string, any> | null;
+        if (!response.ok) throw new Error(body?.error || "Unable to read the live job state");
+        if (!active) return;
+
+        const chainStatus = String(body?.chain?.chain_status || "").toLowerCase();
+        const workflowStatus = String(body?.job?.status || "").toLowerCase();
+        const status = chainStatus || workflowStatus;
+        setLiveFunded(status === "funded");
+        setLiveStateError("");
+
+        if (status === "funded" || status === "open") {
+          timer = window.setTimeout(() => void checkLiveState(), 1500);
+        }
+      } catch (cause) {
+        if (!active) return;
+        setLiveStateError(cause instanceof Error ? cause.message : "Unable to read the live job state");
+        timer = window.setTimeout(() => void checkLiveState(), 4000);
+      }
+    };
+
+    void checkLiveState();
+    return () => {
+      active = false;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [request, requestCreated]);
 
   return (
     <div className="mb-6 space-y-4">
       <ExecutionCapitalCard request={request} jobBudget={jobBudget} jobCurrency={jobCurrency} />
+
+      {!request && liveFunded && !requestCreated && (() => {
+        const jobId = new URLSearchParams(window.location.search).get("job")?.trim() || "";
+        return jobId ? (
+          <ExecutionCapitalRequestGate
+            jobId={jobId}
+            jobBudget={jobBudget}
+            jobCurrency={jobCurrency}
+            onRequested={() => setRequestCreated(true)}
+          />
+        ) : null;
+      })()}
+
+      {!request && !liveFunded && liveStateError && (
+        <section className="border border-[#cfad9f] bg-rustsoft text-rust rounded-[16px_8px_18px_9px] p-4 text-[10.5px]">
+          Unable to confirm the live Funded state right now. The execution-capital request remains unavailable until the chain state can be verified.
+        </section>
+      )}
 
       {request && request.status === "requested" && !capability && (
         <section className="border border-line rounded-[16px_8px_18px_9px] bg-paper p-5">
