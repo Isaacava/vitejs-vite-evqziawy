@@ -188,49 +188,94 @@ PANCAKE_TESTNET_POOL_FEE=<pool fee>
 
 The selector allowlist must remain explicit. Empty selectors reject execution.
 
+## Free-plan deployment architecture — completed
+
+The dedicated executor service is **not** provisioned as another Railway service.
+
+The existing `grid-agent-testnet-v4` service remains the single Railway resource and now has a deployment-ready architecture in `agents/grid/Dockerfile`:
+
+```text
+Railway Grid service
+   ├─ FastAPI / Uvicorn :8000 (public)
+   │    ├─ /erc8183/*
+   │    ├─ /execution-capabilities
+   │    ├─ /health
+   │    ├─ /preflight/pancake
+   │    └─ /execute
+   │
+   └─ Node Altana executor :8788 (localhost only)
+        ├─ /health
+        ├─ /execution-capabilities
+        ├─ /preflight/pancake
+        └─ /execute
+```
+
+FastAPI proxies the execution endpoints to the internal Node process. The executor is allowed to start unconfigured so the existing ERC-8183 service does not break; it reports `execution_ready: false` until the required execution variables exist and rejects execution with `503` until configured.
+
+This uses one existing Railway service and does not request any additional Free-plan resource.
+
+The GitHub Testnet workflow now also runs a Docker build of `agents/grid/Dockerfile` so the embedded executor container is validated on every `marketplace-testnet` push.
+
+### Railway branch note
+
+The existing Railway `grid-agent-testnet-v4` service is currently configured to track the repository's `main` branch. The available Railway connector actions do not provide a source-branch update operation. Do **not** merge `marketplace-testnet` into `main` solely to force deployment; the code is ready for the existing service once its Railway source branch is updated in the Railway UI/API.
+
 ## Current CI / deployment checkpoint
 
-The current branch has completed the capability handoff, private executor bridge, PancakeSwap call builder, read-only preflight, dedicated executor typecheck, and documentation checkpoint.
+Latest implementation commits:
 
-Recent commits:
+- `9ad6977118f7d634f2c3a30d1aaafb17dcbb273c` — embedded Altana executor fail-closed behavior;
+- `cae68e29be6e55a7dae6387de8a872f85df3f54a` — FastAPI proxy for embedded executor;
+- `efce6562a8a1c989174b72d8cc9f5994055d0ed6` — free-plan Docker container CI validation.
 
-- `fcd10a2d1234b8f408925ea9cfebe1ea17acadad` — expose PancakeSwap Testnet preflight;
-- `70b4cf262a7d4beb0ce8add5db0bc637f7cb7279` — dedicated Grid executor TypeScript CI check;
-- `ec963912827a7da95950bfc7894e1fe01884f55d` — document PancakeSwap executor preflight.
-
-The GitHub Actions run for the dedicated executor CI is currently running. A previous capability-handoff implementation build completed successfully. The newest branch head must be checked again for a final all-jobs result before claiming CI green.
+The Vercel deployment for the previous receipt-evidence commit is READY. The latest branch commit is pending its fresh CI/Vercel run and must be rechecked before claiming the full latest build is green.
 
 ## Next exact implementation step
 
-The remaining step is now **environment-backed Testnet execution proof**, not authorization plumbing or call encoding:
+The remaining environment step is:
 
 ```text
-verified Grid executor configuration
+existing Railway Grid service
     ↓
-verified Testnet router + token addresses
+point service source to marketplace-testnet
+    ↓
+set execution variables on that same service
+    ↓
+GET /execution-capabilities
     ↓
 read-only PancakeSwap preflight
     ↓
-controlled Testnet call through authorized Altana session
+controlled Testnet execution
     ↓
 BSC Testnet receipt
     ↓
-existing ERC-8183 evidence archive
+execution evidence
 ```
 
-Do **not** hard-code PancakeSwap contract addresses in the generic marketplace. The Grid agent must declare its target/selector requirements through its execution capability descriptor.
+Required runtime variables for the embedded executor are:
 
-Do **not** mark the Grid agent as a real trading executor until its executor service is actually reachable/configured and a real BSC Testnet PancakeSwap call has been demonstrated with a receipt.
+```text
+GRID_EXECUTION_SHARED_SECRET=<private>
+ALTANA_SESSION_PRIVATE_KEY=<agent session private key>
+GRID_ALLOWED_TARGETS=<comma-separated BSC testnet contract addresses>
+GRID_ALLOWED_SELECTORS=<comma-separated 4-byte selectors>
+PANCAKE_TESTNET_ROUTER=<verified BSC testnet router>
+PANCAKE_TESTNET_POOL_FEE=<pool fee>
+```
+
+Do **not** hard-code PancakeSwap addresses in the generic AgentMarket marketplace. The Grid service must declare its Testnet capability through `/execution-capabilities`.
+
+Do **not** mark the Grid agent as a real execution agent until the same existing Railway service is actually running the embedded executor and a real BSC Testnet transaction receipt has been independently observed.
 
 ## After the real execution proof
 
-1. Verify the isolated Grid executor service is reachable with the expected shared secret.
-2. Verify the Testnet router/token addresses and selector allowlist from the live executor configuration.
-3. Run the read-only PancakeSwap preflight.
-4. Execute one controlled Testnet call through the already authorized Altana session.
-5. Capture and independently verify the receipt.
-6. Attach the execution evidence to the existing ERC-8183 deliverable archive.
-7. Record final assets/P&L only from independently verified state/evidence.
+1. Verify the same Grid service returns `execution_ready: true`.
+2. Verify router/token configuration and selector allowlist through the live executor configuration.
+3. Run the authenticated read-only PancakeSwap preflight.
+4. Execute one controlled Testnet call through the already-authorized Altana session.
+5. Independently capture the receipt.
+6. Store execution evidence.
+7. Add execution evidence to the ERC-8183 evidence presentation where appropriate.
 8. Add session revocation and expiry handling.
 9. Add independent mid-session spend/asset tracking.
 
