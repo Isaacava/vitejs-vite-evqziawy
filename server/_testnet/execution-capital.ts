@@ -10,6 +10,7 @@ const COMMERCE_ABI = [{ type: "function", name: "getJob", stateMutability: "view
 const publicClient = createPublicClient({ chain: bscTestnet, transport: http(process.env.BSC_TESTNET_RPC_URL || "https://bsc-testnet-rpc.publicnode.com") });
 const CAPABILITY_TIMEOUT_MS = 8_000;
 const MAX_CAPABILITY_BYTES = 64 * 1024;
+const TESTNET_EXECUTION_CAPITAL_MAX = 1;
 
 function address(value: unknown): value is Address { return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value); }
 function hex(value: unknown): value is Hex { return typeof value === "string" && /^0x[a-fA-F0-9]*$/.test(value); }
@@ -226,12 +227,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     if (req.method !== "POST") { res.setHeader("Allow", "GET, POST"); return res.status(405).json({ error: "Method not allowed" }); }
     const jobId = typeof req.body?.job_id === "string" ? req.body.job_id.trim() : "";
-    const capitalRequested = req.body?.capital_requested;
+    const capitalRequested = Number(req.body?.capital_requested);
     const purpose = typeof req.body?.purpose === "string" ? req.body.purpose.trim() : "";
     const duration = req.body?.requested_duration_seconds ?? req.body?.duration_seconds;
     const walletProvider = typeof req.body?.wallet_provider === "string" ? req.body.wallet_provider.toLowerCase().trim() : "";
     const authorizationModel = typeof req.body?.authorization_model === "string" ? req.body.authorization_model.toLowerCase().trim() : "";
     if (!jobId || !positiveNumber(capitalRequested) || !purpose) return res.status(400).json({ error: "job_id, positive capital_requested, and purpose are required" });
+    if (capitalRequested !== TESTNET_EXECUTION_CAPITAL_MAX) return res.status(400).json({ error: "Controlled BSC Testnet execution-capital proof is limited to exactly 1 U" });
     if (!integerBetween(duration, 300, 7 * 24 * 60 * 60)) return res.status(400).json({ error: "requested duration must be an integer between 300 and 604800 seconds" });
     if (walletProvider !== "altana" || authorizationModel !== "scoped_session") return res.status(400).json({ error: "Execution capital is currently available only through Altana scoped sessions" });
     const owned = await loadOwnedFundedJob(supabase, jobId, auth.user.id, auth.user.wallet_address);
@@ -253,7 +255,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       requester_wallet: auth.user.wallet_address,
       user_execution_wallet: null,
       agent_session_key: capability.capability.session_key_address,
-      capital_requested: String(capitalRequested),
+      capital_requested: String(TESTNET_EXECUTION_CAPITAL_MAX),
       purpose,
       duration_seconds: Number(duration),
       wallet_provider: "altana",
@@ -270,8 +272,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (insertError) return res.status(500).json({ error: insertError.message });
     return res.status(201).json({ ok: true, request });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unexpected server error";
-    const status = /not found|does not|only|cannot|not attached|not the authenticated|not created|live status|own this|declared|capability|endpoint/i.test(message) ? 409 : 500;
+    const message = error instanceof Error ? error.message : "Unexpected error";
+    const status = /not found|does not|only|cannot|not attached|not the authenticated|not created|live status|own this|declared|capability|endpoint|exactly 1 U/i.test(message) ? 409 : 500;
     return res.status(status).json({ error: message });
   }
 }
