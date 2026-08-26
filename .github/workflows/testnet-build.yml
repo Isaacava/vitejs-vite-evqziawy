@@ -81,6 +81,19 @@ jobs:
         working-directory: agents/grid/execution
         run: npm run typecheck
 
+  grid-container:
+    name: Grid free-plan container build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Build existing Grid service container
+        run: docker build -f agents/grid/Dockerfile agents/grid
+
   network-isolation:
     name: Testnet network isolation audit
     runs-on: ubuntu-latest
