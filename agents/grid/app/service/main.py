@@ -4,9 +4,9 @@ Runs a lightweight FastAPI app and, in the background, the BNB Agent SDK's
 funded-job poll loop, which watches for FUNDED jobs assigned to this agent's
 wallet and forwards each one to fulfill_grid_job().
 
-The service exposes the minimal public ERC-8183 provider contract used by
-AgentMarket for Testnet readiness and quote negotiation, while keeping the
-funded-job watcher and deliverable response flow intact.
+The service also proxies the private Altana execution adapter running inside
+the same container. This keeps the ERC-8183 provider and execution-capital
+boundary on a single Railway service.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response
 
@@ -34,6 +35,9 @@ logger = logging.getLogger("grid_agent")
 config = validate_runtime_config()
 
 _STORAGE_DIR = Path(os.getenv("STORAGE_LOCAL_PATH") or ".agent-data")
+_EXECUTION_INTERNAL_URL = (
+    os.getenv("GRID_EXECUTION_INTERNAL_URL") or "http://127.0.0.1:8788"
+).rstrip("/")
 
 _wallet = EVMWalletProvider(
     password=os.environ["WALLET_PASSWORD"],
@@ -103,6 +107,42 @@ async def _on_funded(job: dict[str, Any]) -> None:
         raise
 
 
+async def _proxy_execution(request: Request, endpoint: str) -> Response:
+    body = None
+    if request.method not in {"GET", "HEAD"}:
+        body = await request.body()
+
+    headers: dict[str, str] = {}
+    for name in ("authorization", "content-type", "accept"):
+        value = request.headers.get(name)
+        if value:
+            headers[name] = value
+
+    try:
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            upstream = await client.request(
+                request.method,
+                f"{_EXECUTION_INTERNAL_URL}{endpoint}",
+                headers=headers,
+                content=body,
+            )
+    except httpx.HTTPError as exc:
+        logger.exception("Grid execution upstream unavailable")
+        raise HTTPException(
+            status_code=503,
+            detail="Grid execution service unavailable",
+        ) from exc
+
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        headers={
+            "content-type": upstream.headers.get("content-type", "application/json"),
+            "cache-control": "no-store",
+        },
+    )
+
+
 _watcher_task: asyncio.Task | None = None
 
 
@@ -156,6 +196,10 @@ async def erc8183_root() -> dict[str, Any]:
             "health": "/erc8183/health",
             "status": "/erc8183/status",
             "negotiate": "/erc8183/negotiate",
+            "execution_capabilities": "/erc8183/execution-capabilities",
+            "execution_health": "/erc8183/execution-health",
+            "preflight_pancake": "/erc8183/preflight/pancake",
+            "execute": "/erc8183/execute",
         },
     }
 
@@ -235,6 +279,26 @@ async def negotiate(request: Request) -> dict[str, Any]:
     except Exception as exc:
         logger.exception("Negotiation failed")
         raise HTTPException(status_code=500, detail="Negotiation failed") from exc
+
+
+@app.get("/erc8183/execution-capabilities")
+async def execution_capabilities(request: Request) -> Response:
+    return await _proxy_execution(request, "/execution-capabilities")
+
+
+@app.get("/erc8183/execution-health")
+async def execution_health(request: Request) -> Response:
+    return await _proxy_execution(request, "/health")
+
+
+@app.post("/erc8183/preflight/pancake")
+async def pancake_preflight(request: Request) -> Response:
+    return await _proxy_execution(request, "/preflight/pancake")
+
+
+@app.post("/erc8183/execute")
+async def execute(request: Request) -> Response:
+    return await _proxy_execution(request, "/execute")
 
 
 @app.get("/erc8183/job/{job_id}/response")
