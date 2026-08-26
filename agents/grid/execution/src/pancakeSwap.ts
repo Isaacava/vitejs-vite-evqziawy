@@ -89,6 +89,7 @@ export function buildPancakeExactInputSingle(params: PancakeExactInputSinglePara
   if (params.sqrtPriceLimitX96 !== undefined && (params.sqrtPriceLimitX96 < 0n || params.sqrtPriceLimitX96 >= 2n ** 160n)) {
     throw new Error("sqrtPriceLimitX96 must fit uint160");
   }
+  if (params.nativeValue !== undefined && params.nativeValue < 0n) throw new Error("nativeValue cannot be negative");
 
   const router = address(params.router, "router");
   const tokenIn = address(params.tokenIn, "tokenIn");
@@ -117,7 +118,9 @@ export function buildPancakeExactInputSingle(params: PancakeExactInputSinglePara
 }
 
 export function buildPancakeTestnetConfig(env: NodeJS.ProcessEnv = process.env) {
-  const router = address(env.PANCAKE_TESTNET_ROUTER || "0x678Aa4bF4E210cf2166753e054d5b7c31cc7fa86", "PANCAKE_TESTNET_ROUTER");
+  const rawRouter = env.PANCAKE_TESTNET_ROUTER?.trim() || "";
+  if (!rawRouter) throw new Error("PANCAKE_TESTNET_ROUTER must be configured for the Grid Testnet executor");
+  const router = address(rawRouter, "PANCAKE_TESTNET_ROUTER");
   const fee = Number(env.PANCAKE_TESTNET_POOL_FEE || "2500");
   if (!Number.isInteger(fee) || fee < 0 || fee > 1_000_000) throw new Error("PANCAKE_TESTNET_POOL_FEE is invalid");
 
@@ -125,7 +128,7 @@ export function buildPancakeTestnetConfig(env: NodeJS.ProcessEnv = process.env) 
     chainId: 97 as const,
     router,
     fee,
-    note: "BSC Testnet only. Token addresses and execution amounts must be supplied explicitly; no mainnet defaults are used.",
+    note: "BSC Testnet only. Router and pool fee come from the isolated Grid executor configuration; token addresses and execution amounts must be supplied explicitly.",
   };
 }
 
