@@ -28,6 +28,8 @@ allowed Testnet contract call
 
 The session private key is never accepted in an AgentMarket request. It exists only in the Grid execution service environment and must correspond to the public session key granted by the user.
 
+The Grid execution service does not require a developer-provided shared secret. Authentication for AgentMarket users is handled by the marketplace session before a request reaches the adapter; the Grid service relies on the granted Altana session identity, its own server-side session private key, and its fail-closed execution policy.
+
 ## Public capability handoff
 
 `GET /execution-capabilities` returns only non-secret execution metadata:
@@ -55,7 +57,6 @@ The marketplace must treat these values as **agent-reported capability metadata*
 
 ```text
 PORT=8788
-GRID_EXECUTION_SHARED_SECRET=<private service-to-service secret>
 ALTANA_SESSION_PRIVATE_KEY=<agent session private key>
 GRID_ALLOWED_TARGETS=<comma-separated Testnet contract addresses>
 GRID_ALLOWED_SELECTORS=<comma-separated 4-byte function selectors>
