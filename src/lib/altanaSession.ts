@@ -102,8 +102,8 @@ export async function getAltanaGrantFeeReadiness(): Promise<GrantFeeReadiness> {
  * 1. grantSession(..., register:false) creates the scoped session intent without
  *    attempting a duplicate admin-key registration.
  * 2. registerSessionKey({ wallet, signer, session }) upgrades that exact
- *    session to a KeyStore-visible registered key. The public BNB Agent SDK
- *    documentation describes this upgrade as idempotent.
+ *    session to a KeyStore-visible registered key. The public Altana SDK
+ *    documents this as the lazy/idempotent registration path.
  *
  * When the Altana wallet is short on native Testnet BNB, the same explicit
  * WalletConnect funding flow used during wallet creation is invoked to top it
@@ -185,26 +185,12 @@ export async function grantAltanaExecutionSession(
     register: false,
   });
 
-  // A register:false session is intentionally invisible to the KeyStore.
-  // Register that exact returned session with the already-created wallet.
-  // The SDK API requires the wallet and signer alongside the session object.
-  const registrableClient = client as unknown as {
-    registerSessionKey?: (options: {
-      wallet: typeof resolved.wallet;
-      signer: typeof resolved.signer;
-      session: typeof result.session;
-    }) => Promise<unknown>;
-  };
-  if (typeof registrableClient.registerSessionKey !== "function") {
-    throw new Error("Installed @altananetwork/sdk does not expose registerSessionKey; KeyStore-visible session registration cannot be completed.");
-  }
-  if (!result.session) {
-    throw new Error("Altana grant did not return a session object required for KeyStore registration.");
-  }
-  await registrableClient.registerSessionKey.call(client, {
+  // grantSession() returns the live Session itself, not { session: ... }.
+  // Pass that exact Session to the lazy KeyStore registration API.
+  await client.registerSessionKey({
     wallet: resolved.wallet,
     signer: resolved.signer,
-    session: result.session,
+    session: result,
   });
 
   return {
