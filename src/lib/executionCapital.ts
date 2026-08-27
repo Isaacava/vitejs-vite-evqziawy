@@ -7,6 +7,8 @@ export type ExecutionCapitalStatus =
   | "revoked"
   | "expired";
 
+export const TESTNET_U_TOKEN_ADDRESS = "0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565" as const;
+
 export type ExecutionCapabilityDescriptor = {
   network: "bsc-testnet";
   chainId: 97;
@@ -29,21 +31,27 @@ export type ExecutionCapabilityDescriptor = {
 export type ExecutionCapitalRequest = {
   id: string;
   job_id: string;
+  agent_id?: string | null;
   requester_wallet: string;
   user_execution_wallet: string | null;
   agent_session_key: string | null;
   session_key_id: string | null;
+  capital_requested: string | null;
+  capital_token: string;
+  purpose: string;
+  requested_duration_seconds: number | null;
+  duration_seconds: number | null;
   wallet_provider: "altana";
   authorization_model: "scoped_session";
-  capital_requested: string | null;
   capital_authorized: string | null;
+  spend_cap?: string | null;
+  call_allowlist?: unknown;
+  session_expires_at?: string | null;
   capital_deployed: string | null;
   capital_returned: string | null;
   ending_assets: Record<string, unknown> | null;
   realized_pnl: string | null;
   unrealized_pnl: string | null;
-  purpose: string;
-  duration_seconds: number | null;
   status: ExecutionCapitalStatus;
   authorization_verified_at: string | null;
   session_grant_tx_hash: string | null;
