@@ -41,6 +41,8 @@ export type PublicExecutionCapability = {
   allowed_selectors: Hex[];
   selectors_required: boolean;
   private_key_exposed: false;
+  protocol?: string;
+  preflight_path?: string;
 };
 
 function validateCapability(body: unknown): PublicExecutionCapability {
@@ -69,6 +71,8 @@ function validateCapability(body: unknown): PublicExecutionCapability {
     allowed_selectors: value.allowed_selectors,
     selectors_required: true,
     private_key_exposed: false,
+    ...(typeof value.protocol === "string" && value.protocol.trim() ? { protocol: value.protocol.trim().toLowerCase() } : {}),
+    ...(typeof value.preflight_path === "string" && value.preflight_path.trim().startsWith("/") ? { preflight_path: value.preflight_path.trim() } : {}),
   };
 }
 
