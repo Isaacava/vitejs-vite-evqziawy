@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import type { Address, Hex } from "viem";
+import { createPublicClient, http, type Address, type Hex } from "viem";
+import { bscTestnet } from "viem/chains";
 import { getAuthenticatedUser, serverClient } from "../_auth.js";
 import { runGridPreflight, assertGridExecutionCapability, type GridPreflightInput } from "./gridExecutionAdapter.js";
 
@@ -11,6 +12,16 @@ const TESTNET_U_TOKEN = "0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565" as Address;
 const TESTNET_WBNB_TOKEN = "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd" as Address;
 const CONTROLLED_FEE = 2500;
 const CONTROLLED_CAPITAL_RAW = 1_000_000_000_000_000_000n;
+
+const ERC20_BALANCE_ALLOWANCE_ABI = [
+  { type: "function", name: "balanceOf", stateMutability: "view", inputs: [{ name: "owner", type: "address" }], outputs: [{ name: "balance", type: "uint256" }] },
+  { type: "function", name: "allowance", stateMutability: "view", inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }], outputs: [{ name: "remaining", type: "uint256" }] },
+] as const;
+
+const publicClient = createPublicClient({
+  chain: bscTestnet,
+  transport: http(process.env.BSC_TESTNET_RPC_URL || "https://bsc-testnet-rpc.publicnode.com"),
+});
 
 function object(value: unknown) {
   return value && typeof value === "object" ? value as Record<string, unknown> : {};
@@ -104,6 +115,35 @@ async function fetchLiveExecutionCapability(storedCapability: Record<string, unk
   }
 }
 
+async function readExecutionAssetState(token: Address, owner: Address, spender: Address, requiredAmount: bigint) {
+  try {
+    const [balance, allowance] = await Promise.all([
+      publicClient.readContract({
+        address: token,
+        abi: ERC20_BALANCE_ALLOWANCE_ABI,
+        functionName: "balanceOf",
+        args: [owner],
+      }),
+      publicClient.readContract({
+        address: token,
+        abi: ERC20_BALANCE_ALLOWANCE_ABI,
+        functionName: "allowance",
+        args: [owner, spender],
+      }),
+    ]);
+
+    return {
+      balance_raw: balance.toString(),
+      allowance_raw: allowance.toString(),
+      required_raw: requiredAmount.toString(),
+      sufficient_balance: balance >= requiredAmount,
+      sufficient_allowance: allowance >= requiredAmount,
+    };
+  } catch {
+    throw new Error("Unable to independently read the execution token balance and router allowance on BSC Testnet");
+  }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const auth = await getAuthenticatedUser(req);
@@ -186,6 +226,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!isAddress(router)) return res.status(400).json({ error: "router must be a valid EVM address" });
     if (!allowedTargets.some((target) => target.toLowerCase() === router.toLowerCase())) return res.status(409).json({ error: "Requested execution target is outside the verified provider capability target allowlist" });
 
+    const assetState = await readExecutionAssetState(requestedTokenIn, executionWallet, router, requestedAmountIn);
+    if (!assetState.sufficient_balance) {
+      return res.status(409).json({
+        error: "Execution wallet does not have enough authorized token balance for the requested amount",
+        asset_state: assetState,
+      });
+    }
+    if (!assetState.sufficient_allowance) {
+      return res.status(409).json({
+        error: "Execution router allowance is below the requested execution amount",
+        asset_state: assetState,
+      });
+    }
+
     const gridInput: GridPreflightInput = {
       router,
       tokenIn: requestedTokenIn,
@@ -222,12 +276,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         authorized_capital_raw: expectedCapital.toString(),
         ...(isPancakeSwapProtocol ? { controlled_token_out: TESTNET_WBNB_TOKEN, controlled_fee: CONTROLLED_FEE } : {}),
       },
+      asset_state: assetState,
       preflight: result,
       note: "Read-only preflight completed through the Testnet execution adapter. No transaction was broadcast.",
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected Testnet preflight error";
-    const status = /required|must|invalid|outside|authorized|configured|scope|capital|token|recipient|fee|wallet|adapter/i.test(message) ? 409 : 500;
+    const status = /required|must|invalid|outside|authorized|configured|scope|capital|token|recipient|fee|wallet|adapter|allowance|balance/i.test(message) ? 409 : 500;
     return res.status(status).json({ error: message });
   }
 }
