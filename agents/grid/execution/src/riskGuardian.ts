@@ -1,5 +1,33 @@
-import type { Address } from "viem";
+import { decodeFunctionData, type Address } from "viem";
 import type { GridCall, GridSessionDescriptor, RiskGuardianDecision } from "./types.js";
+
+const SMART_ROUTER_V3_ABI = [
+  {
+    type: "function",
+    name: "exactInputSingle",
+    stateMutability: "payable",
+    inputs: [
+      {
+        name: "params",
+        type: "tuple",
+        components: [
+          { name: "tokenIn", type: "address" },
+          { name: "tokenOut", type: "address" },
+          { name: "fee", type: "uint24" },
+          { name: "recipient", type: "address" },
+          { name: "amountIn", type: "uint256" },
+          { name: "amountOutMinimum", type: "uint256" },
+          { name: "sqrtPriceLimitX96", type: "uint160" },
+        ],
+      },
+    ],
+    outputs: [{ name: "amountOut", type: "uint256" }],
+  },
+] as const;
+
+const CONTROLLED_WBNB_TESTNET: Address = "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd";
+const CONTROLLED_PANCAKE_FEE = 2500;
+const EXACT_INPUT_SINGLE_SELECTOR = "0x414bf389";
 
 function normalize(value: string) {
   return value.toLowerCase();
@@ -16,12 +44,50 @@ function selectorOf(data: string) {
   return data.slice(0, 10).toLowerCase();
 }
 
+function validateExactInputSingle(
+  descriptor: GridSessionDescriptor,
+  call: GridCall,
+  reasons: string[],
+) {
+  if (selectorOf(call.data) !== EXACT_INPUT_SINGLE_SELECTOR) return;
+  try {
+    const decoded = decodeFunctionData({
+      abi: SMART_ROUTER_V3_ABI,
+      data: call.data,
+      functionName: "exactInputSingle",
+    });
+    const params = decoded.args[0];
+
+    if (normalize(params.tokenIn) !== normalize(descriptor.spendToken || "")) {
+      reasons.push("exactInputSingle tokenIn is outside the authorized execution-capital token scope");
+    }
+    if (normalize(params.tokenOut) !== normalize(CONTROLLED_WBNB_TESTNET)) {
+      reasons.push("exactInputSingle tokenOut is not the controlled BSC Testnet WBNB asset");
+    }
+    if (params.fee !== CONTROLLED_PANCAKE_FEE) {
+      reasons.push(`exactInputSingle pool fee must be ${CONTROLLED_PANCAKE_FEE} for the controlled Testnet proof`);
+    }
+    if (normalize(params.recipient) !== normalize(descriptor.walletAddress)) {
+      reasons.push("exactInputSingle recipient must equal the authorized execution wallet");
+    }
+    if (params.amountIn <= 0n || params.amountIn > descriptor.spendLimit) {
+      reasons.push("exactInputSingle amountIn exceeds the authorized Altana spend cap");
+    }
+    if (params.sqrtPriceLimitX96 !== 0n) {
+      reasons.push("exactInputSingle sqrtPriceLimitX96 must be zero for the controlled Testnet proof");
+    }
+  } catch {
+    reasons.push("exactInputSingle calldata could not be decoded and was rejected");
+  }
+}
+
 /**
  * Risk Guardian is deliberately fail-closed.
  *
  * Altana remains the final on-chain authority for the session permissions and
  * spend cap. The Guardian adds an application-level control layer that checks
- * the proposed target and function selector before execute() is ever called.
+ * the proposed target, selector, expiry, and decoded swap parameters before
+ * execute() is ever called.
  */
 export function approveGridExecution(
   descriptor: GridSessionDescriptor,
@@ -44,6 +110,9 @@ export function approveGridExecution(
   }
   if (calls.length > 8) {
     reasons.push("Execution request exceeds the Grid batch call limit");
+  }
+  if (!descriptor.spendToken) {
+    reasons.push("Altana session is missing its token-scoped spend permission");
   }
 
   const allowedTargets = new Set(descriptor.allowedCalls.map(normalize));
@@ -69,11 +138,8 @@ export function approveGridExecution(
       reasons.push(`Function selector ${selector} is not approved by Risk Guardian`);
     }
 
+    validateExactInputSingle(descriptor, call, reasons);
     nativeValue += call.value ?? 0n;
-  }
-
-  if (descriptor.spendToken === undefined && nativeValue > descriptor.spendLimit) {
-    reasons.push("Native-value calls exceed the Altana session spend cap");
   }
 
   if (descriptor.spendToken && nativeValue > 0n) {
@@ -81,7 +147,7 @@ export function approveGridExecution(
   }
 
   if (reasons.length === 0) {
-    reasons.push("Risk Guardian approved: target, selector, expiry and application limits are satisfied; Altana enforces the final on-chain session scope");
+    reasons.push("Risk Guardian approved: target, selector, decoded swap parameters, expiry and application limits are satisfied; Altana enforces the final on-chain session scope");
   }
 
   return {
