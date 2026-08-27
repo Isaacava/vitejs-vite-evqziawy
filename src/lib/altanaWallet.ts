@@ -40,11 +40,11 @@ const KEYSTORE_CONTROLLER_ABI = [{
   inputs: [],
   outputs: [{ type: "uint256" }],
 }] as const;
-const EXTRA_NATIVE_BUFFER = 500_000_000_000_000n; // 0.0005 tBNB
 
-// Use AgentMarket's top-level viem chain type for direct public-RPC reads.
-// The Altana SDK has its own nested viem dependency, so passing BNB_TESTNET.chain
-// here creates incompatible duplicate Chain types during TypeScript builds.
+// Keep a conservative native Testnet balance reserve for the first Altana grant.
+// The grant can include two KeyStore registrations plus relay/gas recovery.
+const EXTRA_NATIVE_BUFFER = 2_000_000_000_000_000n; // 0.002 tBNB
+
 const publicClient = createPublicClient({
   chain: bscTestnet,
   transport: http(BNB_TESTNET.publicRpcUrl),
@@ -138,13 +138,10 @@ function normalizeResolution(value: {
 }
 
 /**
- * Fund a freshly created Altana wallet from the user's already-connected
- * AgentMarket WalletConnect wallet. The user gets one normal wallet approval;
- * no address copying or faucet step is required.
+ * Fund an Altana wallet from the user's already-connected AgentMarket wallet.
  *
- * The amount is two KeyStore registration fees plus a small native-tBNB
- * buffer for relay/gas costs. This is separate from the 1 U trading-capital
- * permission and does not transfer or approve U tokens.
+ * The transfer is native tBNB only. It is explicitly confirmed through the
+ * user's WalletConnect wallet and is separate from the 1 U trading permission.
  */
 export async function fundAltanaWalletFromAgentMarketWallet(
   walletAddress: Address,
@@ -168,7 +165,7 @@ export async function fundAltanaWalletFromAgentMarketWallet(
   const senderBalance = await publicClient.getBalance({ address: senderAddress });
   if (senderBalance < fundingAmount) {
     throw new Error(
-      `AgentMarket wallet ${senderAddress} has ${formatEther(senderBalance)} tBNB, but ${formatEther(fundingAmount)} tBNB is needed to fund the new Altana wallet.`,
+      `AgentMarket wallet ${senderAddress} has ${formatEther(senderBalance)} tBNB, but ${formatEther(fundingAmount)} tBNB is needed to fund the Altana wallet setup.`,
     );
   }
 
@@ -234,12 +231,6 @@ export async function recoverAltanaWallet(): Promise<AltanaWalletResolution> {
   return resolved;
 }
 
-/**
- * Return the Altana execution wallet selected or created in this browser
- * session. The supported browser execution flow is a Passkey-backed smart
- * wallet; AgentMarket's WalletConnect EOA remains the separate authentication/
- * commerce wallet.
- */
 export function ensureAltanaWallet(): AltanaWalletResolution {
   if (!cachedResolution) {
     throw new Error(
