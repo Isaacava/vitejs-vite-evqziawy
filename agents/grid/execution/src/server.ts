@@ -10,7 +10,6 @@ import type { GridCall, GridSessionDescriptor } from "./types.js";
 // Altana executor must use a separate localhost-only port inside the same
 // container so the two servers never compete for Railway's public port.
 const PORT = Number(process.env.GRID_EXECUTION_PORT || 8788);
-const SHARED_SECRET = process.env.GRID_EXECUTION_SHARED_SECRET || "";
 const SESSION_PRIVATE_KEY = process.env.ALTANA_SESSION_PRIVATE_KEY || "";
 
 function json(res: import("node:http").ServerResponse, status: number, value: unknown) {
@@ -66,13 +65,8 @@ function configuredList(value: string) {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
-function authorized(req: IncomingMessage) {
-  return Boolean(SHARED_SECRET) && req.headers.authorization === `Bearer ${SHARED_SECRET}`;
-}
-
 function executionConfigState() {
   return {
-    shared_secret_configured: Boolean(SHARED_SECRET),
     session_private_key_configured: Boolean(SESSION_PRIVATE_KEY),
     allowed_targets_configured: configuredList(process.env.GRID_ALLOWED_TARGETS || "").length > 0,
     allowed_selectors_configured: configuredList(process.env.GRID_ALLOWED_SELECTORS || "").length > 0,
@@ -102,7 +96,7 @@ function publicExecutionCapabilities() {
   const account = privateKeyToAccount((SESSION_PRIVATE_KEY.startsWith("0x") ? SESSION_PRIVATE_KEY : `0x${SESSION_PRIVATE_KEY}`) as `0x${string}`);
   return {
     ok: true,
-    execution_ready: configured.shared_secret_configured && configured.allowed_targets_configured && configured.allowed_selectors_configured && configured.pancake_router_configured,
+    execution_ready: configured.session_private_key_configured && configured.allowed_targets_configured && configured.allowed_selectors_configured && configured.pancake_router_configured,
     network: "bsc-testnet",
     chainId: 97,
     execution: "altana-scoped-session",
@@ -136,15 +130,14 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && req.url === "/preflight/pancake") {
-      if (!authorized(req)) return json(res, 401, { error: "Unauthorized" });
-      if (!SESSION_PRIVATE_KEY || !SHARED_SECRET) return json(res, 503, { error: "Grid execution service is not configured" });
+      if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "Grid execution service is not configured" });
       const request = await body(req) as Record<string, unknown>;
       const result = await pancakeSwapPreflight(request);
       return json(res, 200, { ok: true, result });
     }
 
     if (req.method === "GET" && req.url?.startsWith("/receipt/")) {
-      if (!authorized(req)) return json(res, 401, { error: "Unauthorized" });
+      if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "Grid execution service is not configured" });
       const hash = decodeURIComponent(req.url.slice("/receipt/".length)).split("?", 1)[0];
       if (!hash) return json(res, 400, { error: "transaction hash is required" });
       const result = await observeTestnetReceipt(hash);
@@ -155,7 +148,6 @@ const server = createServer(async (req, res) => {
       return json(res, 404, { error: "Not found" });
     }
 
-    if (!authorized(req)) return json(res, 401, { error: "Unauthorized" });
     if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "ALTANA_SESSION_PRIVATE_KEY is not configured" });
 
     const readiness = await getExecutionReadiness();
