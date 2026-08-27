@@ -40,7 +40,10 @@ export function presentAgentCapabilities(snapshot: AgentCapabilitySnapshot): Cap
       name: capability.name,
       transport: capability.transport,
       endpoint: capability.endpoint ?? null,
-      networks: capability.networks ?? [],
+      networks: (capability.networks ?? []).map((network) => ({
+        chain_id: network.chain_id,
+        name: network.name ?? null,
+      })),
       evidence: evidenceForCapability(capability),
     })),
     reasons: selection.reasons,
