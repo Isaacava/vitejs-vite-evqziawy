@@ -26,6 +26,14 @@ function selectorOf(value: string) {
   return value.slice(0, 10).toLowerCase();
 }
 
+function normalizedSelectors(value: unknown) {
+  if (!Array.isArray(value)) return [] as string[];
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim().toLowerCase())
+    .filter((item) => /^0x[a-f0-9]{8}$/.test(item));
+}
+
 function rawInteger(value: unknown, field: string, positive = false) {
   const text = typeof value === "string" ? value.trim() : String(value ?? "");
   if (!/^\d+$/.test(text)) throw new Error(`${field} must be an integer raw amount`);
@@ -82,7 +90,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     assertGridExecutionCapability(capability);
 
     const allowedTargets = Array.isArray(capability.allowed_targets) ? capability.allowed_targets.filter(isAddress) : [];
-    const allowedSelectors = Array.isArray(capability.allowed_selectors) ? capability.allowed_selectors.filter((value): value is string => typeof value === "string") : [];
+    const allowedSelectors = normalizedSelectors(capability.allowed_selectors);
     if (allowedTargets.length === 0 || allowedSelectors.length === 0) return res.status(409).json({ error: "Stored execution capability has no usable target/selector scope" });
     if (capability.network !== "bsc-testnet" || Number(capability.chainId) !== TESTNET_CHAIN_ID) return res.status(409).json({ error: "Stored execution capability is not BSC Testnet" });
 
@@ -130,8 +138,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const response = await runGridPreflight(request as Record<string, unknown>, gridInput);
     const result = object(response.result);
     if (result.broadcast !== false) return res.status(502).json({ error: "Testnet execution adapter did not prove that no transaction was broadcast" });
-    if (typeof result.selector !== "string" || !isHex(result.selector) || !allowedSelectors.includes(selectorOf(result.selector))) {
-      return res.status(409).json({ error: "Testnet execution adapter produced a function selector outside the verified provider capability scope" });
+
+    const returnedSelector = typeof result.selector === "string" && isHex(result.selector) ? selectorOf(result.selector) : "";
+    if (!returnedSelector || !allowedSelectors.includes(returnedSelector)) {
+      return res.status(409).json({
+        error: "Testnet execution adapter produced a function selector outside the verified provider capability scope",
+        returned_selector: returnedSelector || null,
+        allowed_selectors: allowedSelectors,
+      });
     }
 
     return res.status(200).json({
