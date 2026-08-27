@@ -1,5 +1,5 @@
 import type { AgentCapabilitySnapshot } from "../src/lib/agentCapability.js";
-import { discoverAgentCapabilities } from "./_testnet/agent-capabilities.js";
+import { discoverAgentCapabilities } from "./agent-capabilities.js";
 import { presentAgentCapabilities, type CapabilityPresentation } from "../src/lib/agentCapabilityPresentation.js";
 
 export type ResolvedAgentCapabilities = CapabilityPresentation & {
