@@ -26,11 +26,11 @@ function selectorOf(value: string) {
   return value.slice(0, 10).toLowerCase();
 }
 
-function rawInteger(value: unknown, positive = false) {
+function rawInteger(value: unknown, field: string, positive = false) {
   const text = typeof value === "string" ? value.trim() : String(value ?? "");
-  if (!/^\d+$/.test(text)) return null;
+  if (!/^\d+$/.test(text)) throw new Error(`${field} must be an integer raw amount`);
   const parsed = BigInt(text);
-  if (positive && parsed <= 0n) return null;
+  if (positive && parsed <= 0n) throw new Error(`${field} must be greater than zero`);
   return parsed;
 }
 
@@ -133,24 +133,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       : typeof evidence.capital_token === "string" && isAddress(evidence.capital_token)
         ? evidence.capital_token as Address
         : TESTNET_U_TOKEN;
-    const expectedCapital = rawInteger(request.capital_authorized ?? request.capital_requested, true);
-    if (expectedCapital === null || expectedCapital <= 0n) return res.status(409).json({ error: "Authorized execution capital is missing or invalid" });
-    if (expectedCapital > CONTROLLED_CAPITAL_RAW) return res.status(409).json({ error: "Authorized execution capital exceeds the 1 U Testnet proof cap" });
+    const expectedCapital = CONTROLLED_CAPITAL_RAW;
 
     const requestedTokenIn = input.tokenIn;
     const requestedTokenOut = input.tokenOut;
-    const requestedAmountIn = rawInteger(input.amountIn, true);
-    const requestedMinimumOut = rawInteger(input.amountOutMinimum ?? "0");
-    const requestedFee = rawInteger(input.fee, true);
+    const requestedAmountIn = rawInteger(input.amountIn, "amountIn", true);
+    const requestedMinimumOut = rawInteger(input.amountOutMinimum ?? "0", "amountOutMinimum");
+    const requestedFee = rawInteger(input.fee, "fee", true);
     const recipient = input.recipient || request.user_execution_wallet;
 
     if (!isAddress(requestedTokenIn)) return res.status(400).json({ error: "tokenIn must be a valid EVM address" });
     if (requestedTokenIn.toLowerCase() !== expectedTokenIn.toLowerCase()) return res.status(409).json({ error: "tokenIn must match the authorized execution-capital token" });
     if (!isAddress(requestedTokenOut)) return res.status(400).json({ error: "tokenOut must be a valid EVM address" });
     if (requestedTokenOut.toLowerCase() !== TESTNET_WBNB_TOKEN.toLowerCase()) return res.status(409).json({ error: "Controlled Testnet proof requires WBNB as tokenOut" });
-    if (requestedAmountIn === null || requestedAmountIn > expectedCapital || requestedAmountIn > CONTROLLED_CAPITAL_RAW) return res.status(409).json({ error: "amountIn must be positive and no greater than the authorized 1 U capital" });
-    if (requestedMinimumOut === null || requestedMinimumOut < 0n) return res.status(400).json({ error: "amountOutMinimum must be a non-negative raw integer" });
-    if (requestedFee === null || requestedFee !== BigInt(CONTROLLED_FEE)) return res.status(409).json({ error: `Controlled Testnet proof requires pool fee ${CONTROLLED_FEE}` });
+    if (requestedAmountIn > expectedCapital) return res.status(409).json({ error: "amountIn must not exceed the authorized 1 U capital" });
+    if (requestedMinimumOut < 0n) return res.status(400).json({ error: "amountOutMinimum must be a non-negative raw integer" });
+    if (requestedFee !== BigInt(CONTROLLED_FEE)) return res.status(409).json({ error: `Controlled Testnet proof requires pool fee ${CONTROLLED_FEE}` });
     if (!isAddress(recipient)) return res.status(400).json({ error: "recipient must be a valid EVM address" });
     if (recipient.toLowerCase() !== request.user_execution_wallet.toLowerCase()) return res.status(409).json({ error: "recipient must equal the authorized execution wallet" });
 
