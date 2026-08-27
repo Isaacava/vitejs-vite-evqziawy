@@ -1,6 +1,10 @@
 import { useState } from "react";
 import type { Address, Hex } from "viem";
-import { grantAltanaExecutionSession, TESTNET_U_TOKEN } from "./lib/altanaSession";
+import {
+  getAltanaGrantFeeReadiness,
+  grantAltanaExecutionSession,
+  TESTNET_U_TOKEN,
+} from "./lib/altanaSession";
 
 export type AltanaSessionGrantGateProps = {
   requestId: string;
@@ -25,15 +29,25 @@ function compactHex(value: string) {
 }
 
 export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProps) {
-  const [status, setStatus] = useState<"idle" | "signing" | "verifying" | "authorized" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "checking" | "signing" | "verifying" | "authorized" | "error">("idle");
   const [error, setError] = useState("");
   const [sessionKeyId, setSessionKeyId] = useState("");
   const [walletAddress, setWalletAddress] = useState("");
+  const [feeReadiness, setFeeReadiness] = useState<Awaited<ReturnType<typeof getAltanaGrantFeeReadiness>> | null>(null);
 
   async function grant() {
-    setStatus("signing");
+    setStatus("checking");
     setError("");
     try {
+      const readiness = await getAltanaGrantFeeReadiness();
+      setFeeReadiness(readiness);
+      if (!readiness.sufficientForRegistration) {
+        throw new Error(
+          `Altana wallet ${readiness.walletAddress} has ${readiness.nativeBalanceFormatted} tBNB. This first-time session grant needs at least ${readiness.minimumRegistrationValueFormatted} tBNB for the KeyStore registration fees, plus any relay/gas costs. The trading permission itself remains exactly 1 U.`,
+        );
+      }
+
+      setStatus("signing");
       const expiry = Math.floor(Date.now() / 1000) + props.durationSeconds;
       const granted = await grantAltanaExecutionSession({
         agentSessionAddress: props.agentSessionAddress,
@@ -77,13 +91,15 @@ export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProp
     }
   }
 
-  const statusText = status === "signing"
-    ? "Waiting for Passkey approval…"
-    : status === "verifying"
-      ? "Verifying onchain authority…"
-      : status === "authorized"
-        ? "Authorized and independently verified ✓"
-        : "Approve execution authority";
+  const statusText = status === "checking"
+    ? "Checking Testnet fee and wallet balance…"
+    : status === "signing"
+      ? "Waiting for Passkey approval…"
+      : status === "verifying"
+        ? "Verifying onchain authority…"
+        : status === "authorized"
+          ? "Authorized and independently verified ✓"
+          : "Approve execution authority";
 
   return (
     <section className="border border-line rounded-[16px_8px_18px_9px] bg-paper p-5">
@@ -105,6 +121,17 @@ export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProp
         <div className="border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-3.5"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Session key</small><strong className="font-mono text-[11px]">{compact(props.agentSessionAddress)}</strong></div>
       </div>
 
+      {feeReadiness && (
+        <div className={`mt-4 border rounded-[12px_7px_13px_8px] px-4 py-3 text-[10.5px] ${feeReadiness.sufficientForRegistration ? "border-green/30 bg-green/5" : "border-[#cfad9f] bg-rustsoft text-rust"}`}>
+          <strong className="block mb-1">Testnet registration fee check</strong>
+          <div>Altana wallet: <span className="font-mono">{compact(feeReadiness.walletAddress)}</span></div>
+          <div>Native tBNB balance: <span className="font-mono">{feeReadiness.nativeBalanceFormatted}</span></div>
+          <div>KeyStore fee per registration: <span className="font-mono">{feeReadiness.registrationFeeFormatted} tBNB</span></div>
+          <div>Minimum for first admin + session registration: <span className="font-mono">{feeReadiness.minimumRegistrationValueFormatted} tBNB</span></div>
+          <p className="mt-2">U is the trading-capital token. Native tBNB is separate and is used here only for the required Testnet KeyStore registration/relay costs.</p>
+        </div>
+      )}
+
       <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-4">
         <small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-2">Contract allowlist</small>
         <div className="flex flex-wrap gap-2">{props.allowedCalls.map((address) => <span key={address} className="font-mono text-[9px] px-2 py-1 rounded-md border border-line">{compact(address)}</span>)}</div>
@@ -117,7 +144,7 @@ export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProp
       {walletAddress && sessionKeyId && <div className="mt-4 border border-green/30 bg-green/5 rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]"><strong className="text-green">{statusText}</strong><div className="mt-1 font-mono text-[9px]">Altana wallet {compact(walletAddress)} · Agent key {compact(sessionKeyId)}</div></div>}
       {error && <div className="mt-4 border border-[#cfad9f] bg-rustsoft text-rust rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]">{error}</div>}
 
-      <button type="button" onClick={() => void grant()} disabled={status === "signing" || status === "verifying" || status === "authorized"} className="mt-5 font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">
+      <button type="button" onClick={() => void grant()} disabled={status === "checking" || status === "signing" || status === "verifying" || status === "authorized"} className="mt-5 font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">
         {statusText} →
       </button>
       <p className="mt-3 text-[10px] text-inksoft">AgentMarket never receives the agent private key. Authorization is only considered verified after the server checks the Altana KeyStore on BSC Testnet.</p>
