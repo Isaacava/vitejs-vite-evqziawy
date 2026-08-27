@@ -4,6 +4,11 @@ import { getAuthenticatedUser, serverClient } from "../_auth.js";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_BODY_BYTES = 64 * 1024;
+const TESTNET_CHAIN_ID = 97;
+const TESTNET_U_TOKEN = "0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565" as Address;
+const TESTNET_WBNB_TOKEN = "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd" as Address;
+const CONTROLLED_FEE = 2500;
+const CONTROLLED_CAPITAL_RAW = 1_000_000_000_000_000_000n;
 
 function object(value: unknown) {
   return value && typeof value === "object" ? value as Record<string, unknown> : {};
@@ -19,6 +24,14 @@ function isHex(value: unknown): value is Hex {
 
 function selectorOf(value: string) {
   return value.slice(0, 10).toLowerCase();
+}
+
+function rawInteger(value: unknown, positive = false) {
+  const text = typeof value === "string" ? value.trim() : String(value ?? "");
+  if (!/^\d+$/.test(text)) return null;
+  const parsed = BigInt(text);
+  if (positive && parsed <= 0n) return null;
+  return parsed;
 }
 
 async function readJson(req: VercelRequest) {
@@ -100,31 +113,64 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (request.status !== "authorized" && request.status !== "active") {
       return res.status(409).json({ error: `Execution capital request must be authorized before PancakeSwap preflight; current status is ${request.status}` });
     }
+    if (!request.authorization_verified_at || !request.session_key_id || !request.user_execution_wallet || !request.agent_session_key) {
+      return res.status(409).json({ error: "Execution-capital request is missing independently verified session identity" });
+    }
+    if (request.user_execution_wallet.toLowerCase() !== auth.user.wallet_address.toLowerCase()) {
+      return res.status(403).json({ error: "The execution wallet does not match the authenticated wallet" });
+    }
 
-    const capability = object(object(request.evidence).execution_capability);
+    const evidence = object(request.evidence);
+    const capability = object(evidence.execution_capability);
     const allowedTargets = Array.isArray(capability.allowed_targets) ? capability.allowed_targets.filter(isAddress) : [];
     const allowedSelectors = Array.isArray(capability.allowed_selectors) ? capability.allowed_selectors.filter((value): value is string => typeof value === "string") : [];
     if (allowedTargets.length === 0 || allowedSelectors.length === 0) return res.status(409).json({ error: "Stored execution capability has no usable target/selector scope" });
+    if (capability.network !== "bsc-testnet" || Number(capability.chainId) !== TESTNET_CHAIN_ID) return res.status(409).json({ error: "Stored execution capability is not BSC Testnet" });
+    if (capability.execution !== "altana-scoped-session" || capability.wallet_provider !== "altana" || capability.authorization_model !== "scoped_session") return res.status(409).json({ error: "Stored execution capability is not an Altana scoped-session descriptor" });
 
-    const preflightInput: Record<string, unknown> = {
-      router: input.router,
-      tokenIn: input.tokenIn,
-      tokenOut: input.tokenOut,
-      recipient: input.recipient || request.user_execution_wallet,
-      fee: input.fee,
-      amountIn: input.amountIn,
-      amountOutMinimum: input.amountOutMinimum ?? "0",
-    };
-    if (preflightInput.router === undefined || preflightInput.router === null || preflightInput.router === "") {
-      if (allowedTargets.length === 1) preflightInput.router = allowedTargets[0];
-      else return res.status(400).json({ error: "router is required when the provider capability advertises multiple target contracts" });
-    }
-    if (!isAddress(preflightInput.router)) return res.status(400).json({ error: "router must be a valid EVM address" });
-    if (!allowedTargets.some((target) => target.toLowerCase() === String(preflightInput.router).toLowerCase())) {
-      return res.status(409).json({ error: "Requested PancakeSwap router is outside the verified provider capability target allowlist" });
+    const expectedTokenIn = typeof request.capital_token === "string" && isAddress(request.capital_token)
+      ? request.capital_token as Address
+      : typeof evidence.capital_token === "string" && isAddress(evidence.capital_token)
+        ? evidence.capital_token as Address
+        : TESTNET_U_TOKEN;
+    const expectedCapital = rawInteger(request.capital_authorized ?? request.capital_requested, true);
+    if (expectedCapital === null || expectedCapital <= 0n) return res.status(409).json({ error: "Authorized execution capital is missing or invalid" });
+    if (expectedCapital > CONTROLLED_CAPITAL_RAW) return res.status(409).json({ error: "Authorized execution capital exceeds the 1 U Testnet proof cap" });
+
+    const requestedTokenIn = input.tokenIn;
+    const requestedTokenOut = input.tokenOut;
+    const requestedAmountIn = rawInteger(input.amountIn, true);
+    const requestedMinimumOut = rawInteger(input.amountOutMinimum ?? "0");
+    const requestedFee = rawInteger(input.fee, true);
+    const recipient = input.recipient || request.user_execution_wallet;
+
+    if (!isAddress(requestedTokenIn)) return res.status(400).json({ error: "tokenIn must be a valid EVM address" });
+    if (!requestedTokenIn.toLowerCase() === expectedTokenIn.toLowerCase()) return res.status(409).json({ error: "tokenIn must match the authorized execution-capital token" });
+    if (!isAddress(requestedTokenOut)) return res.status(400).json({ error: "tokenOut must be a valid EVM address" });
+    if (requestedTokenOut.toLowerCase() !== TESTNET_WBNB_TOKEN.toLowerCase()) return res.status(409).json({ error: "Controlled Testnet proof requires WBNB as tokenOut" });
+    if (requestedAmountIn === null || requestedAmountIn > expectedCapital || requestedAmountIn > CONTROLLED_CAPITAL_RAW) return res.status(409).json({ error: "amountIn must be positive and no greater than the authorized 1 U capital" });
+    if (requestedMinimumOut === null || requestedMinimumOut < 0n) return res.status(400).json({ error: "amountOutMinimum must be a non-negative raw integer" });
+    if (requestedFee === null || requestedFee !== BigInt(CONTROLLED_FEE)) return res.status(409).json({ error: `Controlled Testnet proof requires pool fee ${CONTROLLED_FEE}` });
+    if (!isAddress(recipient)) return res.status(400).json({ error: "recipient must be a valid EVM address" });
+    if (recipient.toLowerCase() !== request.user_execution_wallet.toLowerCase()) return res.status(409).json({ error: "recipient must equal the authorized execution wallet" });
+
+    if (!allowedTargets.some((target) => target.toLowerCase() === String(input.router || "").toLowerCase())) {
+      if (allowedTargets.length !== 1) return res.status(409).json({ error: "Requested PancakeSwap router is outside the verified provider capability target allowlist" });
     }
 
-    const response = await dispatch(executorPreflightUrl(request as Record<string, unknown>), preflightInput);
+    const router = input.router || (allowedTargets.length === 1 ? allowedTargets[0] : undefined);
+    if (!isAddress(router)) return res.status(400).json({ error: "router must be a valid EVM address" });
+    if (!allowedTargets.some((target) => target.toLowerCase() === router.toLowerCase())) return res.status(409).json({ error: "Requested PancakeSwap router is outside the verified provider capability target allowlist" });
+
+    const response = await dispatch(executorPreflightUrl(request as Record<string, unknown>), {
+      router,
+      tokenIn: requestedTokenIn,
+      tokenOut: requestedTokenOut,
+      recipient,
+      fee: Number(requestedFee),
+      amountIn: requestedAmountIn.toString(),
+      amountOutMinimum: requestedMinimumOut.toString(),
+    });
     const result = object(response.result);
     if (result.broadcast !== false) return res.status(502).json({ error: "Grid preflight did not prove that no transaction was broadcast" });
     if (typeof result.selector !== "string" || !isHex(result.selector) || !allowedSelectors.includes(selectorOf(result.selector))) {
@@ -134,17 +180,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({
       ok: true,
       request_id: requestId,
-      chain_id: 97,
+      chain_id: TESTNET_CHAIN_ID,
       capability_scope: {
         allowed_targets: allowedTargets,
         allowed_selectors: allowedSelectors,
+        authorized_token_in: expectedTokenIn,
+        authorized_capital_raw: expectedCapital.toString(),
+        controlled_token_out: TESTNET_WBNB_TOKEN,
+        controlled_fee: CONTROLLED_FEE,
       },
       preflight: result,
       note: "Read-only preflight completed through the private Grid executor. No transaction was broadcast.",
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected PancakeSwap preflight error";
-    const status = /required|must|invalid|outside|authorized|configured|scope/i.test(message) ? 409 : 500;
+    const status = /required|must|invalid|outside|authorized|configured|scope|capital|token|recipient|fee|wallet/i.test(message) ? 409 : 500;
     return res.status(status).json({ error: message });
   }
 }
