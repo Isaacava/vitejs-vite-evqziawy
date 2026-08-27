@@ -1,62 +1,96 @@
 import { BNB_TESTNET, createClient } from "@altananetwork/sdk";
-import type { Address, Hex } from "viem";
-import { ensureWalletConnectedProvider } from "./walletAuth";
+import type { Address, PasskeySigner, Wallet } from "@altananetwork/sdk";
 
 export type AltanaWalletResolution = {
   walletAddress: Address;
   signerAddress: Address;
   chainId: 97;
+  wallet: Wallet;
+  signer: PasskeySigner;
 };
 
-type AltanaSigner = {
+const RP_NAME = "AgentMarket Testnet";
+const chainId = 97 as const;
+
+let cachedResolution: AltanaWalletResolution | null = null;
+
+function rpId() {
+  return window.location.hostname;
+}
+
+function normalizeResolution(value: {
   address: Address;
-  type: "privateKey" | "injected" | "passkey";
-  publicKey: Hex;
-  signDigest: (digest: Hex) => Promise<Hex>;
-};
-
-type AltanaSdkWithInjected = typeof import("@altananetwork/sdk") & {
-  signerFromInjected?: (provider: unknown) => AltanaSigner;
-};
-
-/**
- * Resolve an Altana wallet from the user's existing AgentMarket WalletConnect signer.
- *
- * The helper first restores the shared AgentMarket WalletConnect session. It never
- * creates a second WalletConnect storage namespace and never generates or persists
- * a browser private key. The connected wallet remains the signer/admin authority.
- */
-export async function ensureAltanaWallet(): Promise<AltanaWalletResolution> {
-  const { provider, address: connectedAddress } = await ensureWalletConnectedProvider();
-  const sdk = (await import("@altananetwork/sdk")) as AltanaSdkWithInjected;
-  const signerFromInjected = sdk.signerFromInjected;
-
-  if (typeof signerFromInjected !== "function") {
-    throw new Error(
-      "The installed @altananetwork/sdk build does not expose signerFromInjected. " +
-      "AgentMarket will not substitute a private key or create a separate signer.",
-    );
+  signer: PasskeySigner;
+}): AltanaWalletResolution {
+  if (!/^0x[a-fA-F0-9]{40}$/.test(value.address)) {
+    throw new Error("Altana did not return a valid execution wallet address.");
   }
 
-  const signer = signerFromInjected(provider);
-  if (!/^0x[a-fA-F0-9]{40}$/.test(signer.address)) {
-    throw new Error("Altana injected signer did not expose the connected wallet address.");
-  }
-
-  if (signer.address.toLowerCase() !== connectedAddress.toLowerCase()) {
-    throw new Error("The WalletConnect signer address changed while resolving the Altana wallet.");
-  }
-
-  const client = createClient({ chains: [BNB_TESTNET] });
-  const wallet = await client.createWallet({ signer });
-
-  if (!/^0x[a-fA-F0-9]{40}$/.test(wallet.address)) {
-    throw new Error("Altana did not return a valid wallet address.");
+  if (!value.signer || typeof value.signer.signDigest !== "function") {
+    throw new Error("Altana did not return a usable Passkey signer.");
   }
 
   return {
-    walletAddress: wallet.address,
-    signerAddress: signer.address,
-    chainId: 97,
+    walletAddress: value.address,
+    signerAddress: value.signer.address,
+    chainId,
+    wallet: { address: value.address },
+    signer: value.signer,
   };
+}
+
+export async function createAltanaWallet(): Promise<AltanaWalletResolution> {
+  const client = createClient({ chains: [BNB_TESTNET] });
+  const result = await client.createPasskeyWallet({
+    name: RP_NAME,
+    rpId: rpId(),
+  });
+
+  const resolved = normalizeResolution({
+    address: result.address,
+    signer: result.signer,
+  });
+
+  cachedResolution = resolved;
+  return resolved;
+}
+
+export async function recoverAltanaWallet(): Promise<AltanaWalletResolution> {
+  const client = createClient({ chains: [BNB_TESTNET] });
+  const result = await client.recoverFromPasskey({
+    rpId: rpId(),
+    chainId,
+  });
+
+  const resolved = normalizeResolution({
+    address: result.address,
+    signer: result.signer,
+  });
+
+  cachedResolution = resolved;
+  return resolved;
+}
+
+/**
+ * Return the Altana execution wallet selected or created in this browser
+ * session. This intentionally does not fall back to a WalletConnect EOA:
+ * the installed Altana SDK's supported browser authorization flow is a
+ * Passkey-backed smart wallet, while WalletConnect remains the AgentMarket
+ * authentication/commerce wallet.
+ */
+export function ensureAltanaWallet(): AltanaWalletResolution {
+  if (!cachedResolution) {
+    throw new Error(
+      "Altana execution wallet is not resolved yet. Create or recover the Altana Passkey wallet first.",
+    );
+  }
+  return cachedResolution;
+}
+
+export function getAltanaWalletResolution() {
+  return cachedResolution;
+}
+
+export function clearAltanaWalletResolution() {
+  cachedResolution = null;
 }
