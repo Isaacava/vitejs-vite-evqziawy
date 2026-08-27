@@ -1,4 +1,5 @@
 import { BNB_TESTNET, createClient } from "@altananetwork/sdk";
+import { bscTestnet } from "viem/chains";
 import { createPublicClient, http, keccak256, type Address, type Hex, formatEther } from "viem";
 import { publicKeyToAddress } from "viem/accounts";
 import { ensureAltanaWallet } from "./altanaWallet";
@@ -15,7 +16,7 @@ const KEYSTORE_CONTROLLER_ABI = [{
 }] as const;
 
 const publicClient = createPublicClient({
-  chain: BNB_TESTNET.chain,
+  chain: bscTestnet,
   transport: http(BNB_TESTNET.publicRpcUrl),
 });
 
