@@ -41,13 +41,13 @@ type ReputationRow = { agent_id: string; score: number; source: string };
 type OnchainStats = CachedOnchainStats & { feedback_count: number; reputation_score: number | null };
 
 type ExecutionProfile = {
-  wallet_provider: "altana" | "twak" | "evm" | "unknown";
-  wallet_model: "agent_owned" | "external" | "unknown";
-  transaction_authority: "scoped_session" | "agent_wallet" | "restricted_commands" | "unknown";
-  supports_spend_cap: boolean;
-  supports_call_allowlist: boolean;
-  supports_expiry: boolean;
-  supports_revocation: boolean;
+  wallet_provider: string | "unknown";
+  wallet_model: string | "unknown";
+  transaction_authority: string | "unknown";
+  supports_spend_cap: boolean | null;
+  supports_call_allowlist: boolean | null;
+  supports_expiry: boolean | null;
+  supports_revocation: boolean | null;
   evidence: string[];
 };
 
@@ -58,7 +58,6 @@ const WEIGHTS = { capability: 35, verification: 20, endpointLiveness: 15, comple
 const TESTNET_CHAIN = "bsc-testnet";
 const TESTNET_CHAIN_ID = 97;
 const TESTNET_ENVIRONMENT = "testnet";
-const GRID_AGENT_ID = "grid-strategy";
 
 function clamp(value: number) { return Math.max(0, Math.min(100, value)); }
 
@@ -97,10 +96,9 @@ function deriveExecutionProfile(agent: AgentRow, endpoints: EndpointRow[]) {
   const registrationText = JSON.stringify(registration).toLowerCase();
   const text = `${registrationText} ${endpointText} ${declared.join(" ")}`;
 
-  const walletProvider = typeof execution.wallet_provider === "string" ? execution.wallet_provider.toLowerCase() : "";
-  const altana = walletProvider === "altana" || /altana/.test(text);
-  const twak = walletProvider === "twak" || /twak|trust wallet agent/.test(text);
-  const evm = walletProvider === "evm" || /evmwalletprovider|evm wallet/.test(text);
+  const explicitWallet = typeof execution.wallet_provider === "string" ? execution.wallet_provider.trim() : "";
+  const explicitWalletModel = typeof execution.wallet_model === "string" ? execution.wallet_model.trim() : "";
+  const explicitAuthority = typeof execution.transaction_authority === "string" ? execution.transaction_authority.trim() : "";
 
   const a2a = Boolean(communication.a2a) || /a2a|agent2agent|message\/send/.test(text);
   const mcp = Boolean(communication.mcp) || /mcp|model context protocol/.test(text);
@@ -110,49 +108,27 @@ function deriveExecutionProfile(agent: AgentRow, endpoints: EndpointRow[]) {
   const x402 = commerce.x402 === true || /x402/.test(text);
   const b402 = commerce.b402 === true || /b402/.test(text);
 
-  const executionProfile: ExecutionProfile = altana
-    ? {
-        wallet_provider: "altana",
-        wallet_model: "agent_owned",
-        transaction_authority: "scoped_session",
-        supports_spend_cap: true,
-        supports_call_allowlist: true,
-        supports_expiry: true,
-        supports_revocation: true,
-        evidence: ["Altana wallet/session support was explicitly declared by agent metadata or endpoint metadata"],
-      }
-    : twak
-      ? {
-          wallet_provider: "twak",
-          wallet_model: "agent_owned",
-          transaction_authority: "restricted_commands",
-          supports_spend_cap: false,
-          supports_call_allowlist: false,
-          supports_expiry: false,
-          supports_revocation: false,
-          evidence: ["Trust Wallet Agent Kit support was explicitly declared by agent metadata or endpoint metadata"],
-        }
-      : evm
-        ? {
-            wallet_provider: "evm",
-            wallet_model: "agent_owned",
-            transaction_authority: "agent_wallet",
-            supports_spend_cap: false,
-            supports_call_allowlist: false,
-            supports_expiry: false,
-            supports_revocation: false,
-            evidence: ["EVM wallet support was explicitly declared by agent metadata or endpoint metadata"],
-          }
-        : {
-            wallet_provider: "unknown",
-            wallet_model: "unknown",
-            transaction_authority: "unknown",
-            supports_spend_cap: false,
-            supports_call_allowlist: false,
-            supports_expiry: false,
-            supports_revocation: false,
-            evidence: ["No supported wallet/execution provider was explicitly declared; AgentMarket does not infer one"],
-          };
+  const executionProfile: ExecutionProfile = {
+    wallet_provider: explicitWallet || "unknown",
+    wallet_model: explicitWalletModel || "unknown",
+    transaction_authority: explicitAuthority || "unknown",
+    supports_spend_cap: typeof execution.supports_spend_cap === "boolean" ? execution.supports_spend_cap : null,
+    supports_call_allowlist: typeof execution.supports_call_allowlist === "boolean" ? execution.supports_call_allowlist : null,
+    supports_expiry: typeof execution.supports_expiry === "boolean" ? execution.supports_expiry : null,
+    supports_revocation: typeof execution.supports_revocation === "boolean" ? execution.supports_revocation : null,
+    evidence: [],
+  };
+
+  if (explicitWallet) executionProfile.evidence.push("Wallet provider explicitly declared by the agent profile");
+  if (explicitWalletModel) executionProfile.evidence.push("Wallet model explicitly declared by the agent profile");
+  if (explicitAuthority) executionProfile.evidence.push("Transaction authority explicitly declared by the agent profile");
+  if (a2a) executionProfile.evidence.push("A2A capability observed or declared");
+  if (mcp) executionProfile.evidence.push("MCP capability observed or declared");
+  if (http) executionProfile.evidence.push("HTTP capability observed or declared");
+  if (erc8183) executionProfile.evidence.push("ERC-8183 commerce capability observed or declared");
+  if (x402) executionProfile.evidence.push("x402 payment capability observed or declared");
+  if (b402) executionProfile.evidence.push("b402 payment capability observed or declared");
+  if (executionProfile.evidence.length === 0) executionProfile.evidence.push("No additional execution protocol or wallet capability has been independently observed");
 
   return {
     execution: executionProfile,
@@ -231,15 +207,11 @@ function scoreAgent(
   if (erc8183EndpointOnline) reasons.push("ERC-8183 provider endpoint is healthy");
   if (profile.commerce.erc8183) reasons.push("ERC-8183 commerce declared");
   if (profile.communication.a2a) reasons.push("A2A communication declared");
-  if (profile.execution.wallet_provider !== "unknown") reasons.push(`${profile.execution.wallet_provider.toUpperCase()} execution wallet declared`);
+  if (profile.execution.wallet_provider !== "unknown") reasons.push(`${profile.execution.wallet_provider} execution wallet declared`);
   if (onchain?.completed_jobs) reasons.push(`${onchain.completed_jobs} completed Testnet jobs verified onchain`);
   else if (onchain?.total_jobs) reasons.push(`${onchain.total_jobs} ERC-8183 Testnet jobs verified onchain`);
   if (reputationAvailable) reasons.push("On-chain reputation evidence available");
   if (!onchain?.total_jobs) reasons.push("On-chain job history not yet available");
-
-  const ownerValid = /^0x[a-fA-F0-9]{40}$/.test(agent.owner);
-  const isGrid = agent.agent_id === GRID_AGENT_ID;
-  const gridIdentityReady = !isGrid || ownerValid;
 
   const hireability = !isTestnetAgent(agent)
     ? { status: "discoverable_only" as const, canCreateJob: false, reason: "Blocked: provider is not explicitly tagged for the isolated BSC Testnet environment." }
@@ -247,11 +219,9 @@ function scoreAgent(
       ? { status: "discoverable_only" as const, canCreateJob: false, reason: "The agent is discoverable on BSC Testnet, but no healthy indexed ERC-8183 provider endpoint is available." }
       : !profile.commerce.erc8183
         ? { status: "discoverable_only" as const, canCreateJob: false, reason: "The provider does not explicitly advertise ERC-8183 commerce, so the ERC-8183 hiring path is locked." }
-        : isGrid && !gridIdentityReady
-          ? { status: "discoverable_only" as const, canCreateJob: false, reason: "Grid Agent owner address is not a valid BSC Testnet address yet." }
-          : endpoint?.status === "degraded"
-            ? { status: "degraded" as const, canCreateJob: false, reason: "The Testnet provider endpoint is reachable but degraded; do not fund a job yet." }
-            : { status: "ready" as const, canCreateJob: true, reason: "A healthy indexed ERC-8183 provider endpoint is currently available on BSC Testnet. Execution-wallet authority is reported separately and is not inferred." };
+        : endpoint?.status === "degraded"
+          ? { status: "degraded" as const, canCreateJob: false, reason: "The Testnet provider endpoint is reachable but degraded; do not fund a job yet." }
+          : { status: "ready" as const, canCreateJob: true, reason: "A healthy indexed ERC-8183 provider endpoint is currently available on BSC Testnet. Execution-wallet authority is reported separately and is not inferred." };
 
   return {
     score: normalizedScore,
