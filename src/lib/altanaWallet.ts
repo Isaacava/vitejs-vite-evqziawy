@@ -1,5 +1,6 @@
 import { BNB_TESTNET, createClient } from "@altananetwork/sdk";
-import type { Address, PasskeySigner, Wallet } from "@altananetwork/sdk";
+import type { PasskeySigner, Wallet } from "@altananetwork/sdk";
+import type { Address } from "viem";
 
 export type AltanaWalletResolution = {
   walletAddress: Address;
@@ -73,10 +74,9 @@ export async function recoverAltanaWallet(): Promise<AltanaWalletResolution> {
 
 /**
  * Return the Altana execution wallet selected or created in this browser
- * session. This intentionally does not fall back to a WalletConnect EOA:
- * the installed Altana SDK's supported browser authorization flow is a
- * Passkey-backed smart wallet, while WalletConnect remains the AgentMarket
- * authentication/commerce wallet.
+ * session. The installed Altana SDK's supported browser execution flow is
+ * a Passkey-backed smart wallet; AgentMarket's WalletConnect EOA remains the
+ * separate authentication/commerce wallet.
  */
 export function ensureAltanaWallet(): AltanaWalletResolution {
   if (!cachedResolution) {
