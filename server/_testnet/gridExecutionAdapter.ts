@@ -19,20 +19,28 @@ function object(value: unknown) {
 
 export function assertGridExecutionCapability(capability: Record<string, unknown>) {
   if (capability.execution !== "altana-scoped-session" || capability.wallet_provider !== "altana" || capability.authorization_model !== "scoped_session") {
-    throw new Error("This Testnet execution adapter requires the Grid agent's verified scoped-session execution capability");
+    throw new Error("This Testnet execution adapter requires an agent's verified Altana scoped-session execution capability");
   }
 }
 
-function executorPreflightUrl(request: Record<string, unknown>) {
+const PROTOCOL_PREFLIGHT_PATHS: Record<string, string> = {
+  "pancake-v3-swap": "/preflight/pancake",
+};
+const DEFAULT_PREFLIGHT_PATH = "/preflight";
+
+function executorPreflightUrl(request: Record<string, unknown>, protocol: string) {
+  const preflightPath = PROTOCOL_PREFLIGHT_PATHS[protocol] || DEFAULT_PREFLIGHT_PATH;
   const configured = process.env.GRID_EXECUTION_ENDPOINT_URL?.trim() || "";
-  if (configured) return `${configured.replace(/\/+$/, "")}/preflight/pancake`;
+  if (configured) return `${configured.replace(/\/+$/, "")}${preflightPath}`;
 
   const capability = object(object(request.evidence).execution_capability);
+  const declaredPath = typeof capability.preflight_path === "string" ? capability.preflight_path.trim() : "";
   const sourceUrl = typeof capability.source_url === "string" ? capability.source_url.trim() : "";
-  if (!sourceUrl) throw new Error("Grid execution adapter has no configured endpoint or capability source URL");
+  if (!sourceUrl) throw new Error("Execution adapter has no configured endpoint or capability source URL");
   const parsed = new URL(sourceUrl);
-  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new Error("Grid execution capability source URL is not HTTP(S)");
-  parsed.pathname = parsed.pathname.replace(/\/+$/, "").replace(/\/execution-capabilities$/, "") + "/preflight/pancake";
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new Error("Execution capability source URL is not HTTP(S)");
+  const path = declaredPath && declaredPath.startsWith("/") ? declaredPath : preflightPath;
+  parsed.pathname = parsed.pathname.replace(/\/+$/, "").replace(/\/execution-capabilities$/, "") + path;
   parsed.search = "";
   return parsed.toString();
 }
@@ -51,19 +59,19 @@ async function dispatch(url: string, input: GridPreflightInput) {
       signal: controller.signal,
     });
     const raw = await response.text();
-    if (new TextEncoder().encode(raw).byteLength > MAX_BODY_BYTES) throw new Error("Grid executor response is too large");
+    if (new TextEncoder().encode(raw).byteLength > MAX_BODY_BYTES) throw new Error("Execution adapter response is too large");
     let body: Record<string, unknown> = {};
     try { body = raw ? JSON.parse(raw) as Record<string, unknown> : {}; } catch { body = { raw }; }
-    if (!response.ok) throw new Error(typeof body.error === "string" ? body.error : `Grid preflight returned HTTP ${response.status}`);
+    if (!response.ok) throw new Error(typeof body.error === "string" ? body.error : `Execution preflight returned HTTP ${response.status}`);
     return body;
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") throw new Error("Grid PancakeSwap preflight timed out");
-    throw error instanceof Error ? error : new Error("Grid PancakeSwap preflight failed");
+    if (error instanceof Error && error.name === "AbortError") throw new Error("Testnet execution preflight timed out");
+    throw error instanceof Error ? error : new Error("Testnet execution preflight failed");
   } finally {
     clearTimeout(timeout);
   }
 }
 
-export async function runGridPreflight(request: Record<string, unknown>, input: GridPreflightInput) {
-  return dispatch(executorPreflightUrl(request), input);
+export async function runGridPreflight(request: Record<string, unknown>, input: GridPreflightInput, protocol = "pancake-v3-swap") {
+  return dispatch(executorPreflightUrl(request, protocol), input);
 }
