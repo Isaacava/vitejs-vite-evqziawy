@@ -1,8 +1,8 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import type { Address, Hex } from "viem";
 import { getAuthenticatedUser, serverClient } from "../_auth.js";
+import { runGridPreflight, assertGridExecutionCapability, type GridPreflightInput } from "./gridExecutionAdapter.js";
 
-const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_BODY_BYTES = 64 * 1024;
 const TESTNET_CHAIN_ID = 97;
 const TESTNET_U_TOKEN = "0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565" as Address;
@@ -44,49 +44,6 @@ async function readJson(req: VercelRequest) {
   return JSON.parse(raw || "{}") as Record<string, unknown>;
 }
 
-function executorPreflightUrl(request: Record<string, unknown>) {
-  const configured = process.env.GRID_EXECUTION_ENDPOINT_URL?.trim() || "";
-  if (configured) return `${configured.replace(/\/+$/, "")}/preflight/pancake`;
-
-  const capability = object(object(request.evidence).execution_capability);
-  const sourceUrl = typeof capability.source_url === "string" ? capability.source_url.trim() : "";
-  if (!sourceUrl) throw new Error("Grid execution endpoint is not configured and no capability source URL is stored");
-  const parsed = new URL(sourceUrl);
-  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new Error("Grid execution capability source URL is not HTTP(S)");
-  parsed.pathname = parsed.pathname.replace(/\/+$/, "").replace(/\/execution-capabilities$/, "") + "/preflight/pancake";
-  parsed.search = "";
-  return parsed.toString();
-}
-
-async function dispatch(url: string, input: Record<string, unknown>) {
-  const secret = process.env.GRID_EXECUTION_SHARED_SECRET?.trim() || "";
-  if (!secret) throw new Error("GRID_EXECUTION_SHARED_SECRET is not configured on AgentMarket");
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${secret}`,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify(input, (_, value) => typeof value === "bigint" ? value.toString() : value),
-      signal: controller.signal,
-    });
-    const raw = await response.text();
-    let body: Record<string, unknown> = {};
-    try { body = raw ? JSON.parse(raw) as Record<string, unknown> : {}; } catch { body = { raw }; }
-    if (!response.ok) throw new Error(typeof body.error === "string" ? body.error : `Grid preflight returned HTTP ${response.status}`);
-    return body;
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") throw new Error("Grid PancakeSwap preflight timed out");
-    throw error instanceof Error ? error : new Error("Grid PancakeSwap preflight failed");
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const auth = await getAuthenticatedUser(req);
@@ -111,7 +68,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(403).json({ error: "You do not own this execution-capital request" });
     }
     if (request.status !== "authorized" && request.status !== "active") {
-      return res.status(409).json({ error: `Execution capital request must be authorized before PancakeSwap preflight; current status is ${request.status}` });
+      return res.status(409).json({ error: `Execution capital request must be authorized before Testnet preflight; current status is ${request.status}` });
     }
     if (!request.authorization_verified_at || !request.session_key_id || !request.user_execution_wallet || !request.agent_session_key) {
       return res.status(409).json({ error: "Execution-capital request is missing independently verified session identity" });
@@ -122,11 +79,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const evidence = object(request.evidence);
     const capability = object(evidence.execution_capability);
+    assertGridExecutionCapability(capability);
+
     const allowedTargets = Array.isArray(capability.allowed_targets) ? capability.allowed_targets.filter(isAddress) : [];
     const allowedSelectors = Array.isArray(capability.allowed_selectors) ? capability.allowed_selectors.filter((value): value is string => typeof value === "string") : [];
     if (allowedTargets.length === 0 || allowedSelectors.length === 0) return res.status(409).json({ error: "Stored execution capability has no usable target/selector scope" });
     if (capability.network !== "bsc-testnet" || Number(capability.chainId) !== TESTNET_CHAIN_ID) return res.status(409).json({ error: "Stored execution capability is not BSC Testnet" });
-    if (capability.execution !== "altana-scoped-session" || capability.wallet_provider !== "altana" || capability.authorization_model !== "scoped_session") return res.status(409).json({ error: "Stored execution capability is not an Altana scoped-session descriptor" });
 
     const expectedTokenIn = typeof request.capital_token === "string" && isAddress(request.capital_token)
       ? request.capital_token as Address
@@ -158,9 +116,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (routerInput !== undefined && routerInput !== null && routerInput !== "" && !isAddress(routerInput)) return res.status(400).json({ error: "router must be a valid EVM address" });
     const router = routerInput || (allowedTargets.length === 1 ? allowedTargets[0] : undefined);
     if (!isAddress(router)) return res.status(400).json({ error: "router must be a valid EVM address" });
-    if (!allowedTargets.some((target) => target.toLowerCase() === router.toLowerCase())) return res.status(409).json({ error: "Requested PancakeSwap router is outside the verified provider capability target allowlist" });
+    if (!allowedTargets.some((target) => target.toLowerCase() === router.toLowerCase())) return res.status(409).json({ error: "Requested execution target is outside the verified provider capability target allowlist" });
 
-    const response = await dispatch(executorPreflightUrl(request as Record<string, unknown>), {
+    const gridInput: GridPreflightInput = {
       router,
       tokenIn: requestedTokenIn,
       tokenOut: requestedTokenOut,
@@ -168,11 +126,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       fee: Number(requestedFee),
       amountIn: requestedAmountIn.toString(),
       amountOutMinimum: requestedMinimumOut.toString(),
-    });
+    };
+    const response = await runGridPreflight(request as Record<string, unknown>, gridInput);
     const result = object(response.result);
-    if (result.broadcast !== false) return res.status(502).json({ error: "Grid preflight did not prove that no transaction was broadcast" });
+    if (result.broadcast !== false) return res.status(502).json({ error: "Testnet execution adapter did not prove that no transaction was broadcast" });
     if (typeof result.selector !== "string" || !isHex(result.selector) || !allowedSelectors.includes(selectorOf(result.selector))) {
-      return res.status(409).json({ error: "Grid preflight produced a function selector outside the verified provider capability scope" });
+      return res.status(409).json({ error: "Testnet execution adapter produced a function selector outside the verified provider capability scope" });
     }
 
     return res.status(200).json({
@@ -190,11 +149,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         controlled_fee: CONTROLLED_FEE,
       },
       preflight: result,
-      note: "Read-only preflight completed through the private Grid executor. No transaction was broadcast.",
+      note: "Read-only preflight completed through the Testnet execution adapter. No transaction was broadcast.",
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unexpected PancakeSwap preflight error";
-    const status = /required|must|invalid|outside|authorized|configured|scope|capital|token|recipient|fee|wallet/i.test(message) ? 409 : 500;
+    const message = error instanceof Error ? error.message : "Unexpected Testnet preflight error";
+    const status = /required|must|invalid|outside|authorized|configured|scope|capital|token|recipient|fee|wallet|adapter/i.test(message) ? 409 : 500;
     return res.status(status).json({ error: message });
   }
 }
