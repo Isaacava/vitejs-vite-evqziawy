@@ -117,16 +117,12 @@ async function executorUrl(request: Record<string, unknown>) {
 }
 
 async function dispatchToExecutor(url: string, session: unknown, calls: unknown[]) {
-  const secret = process.env.GRID_EXECUTION_SHARED_SECRET || "";
-  if (!secret) throw new Error("GRID_EXECUTION_SHARED_SECRET is not configured on AgentMarket");
-
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
     const response = await fetch(url, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${secret}`,
         "Content-Type": "application/json",
         Accept: "application/json",
       },
@@ -192,7 +188,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!request.authorization_verified_at || !request.session_key_id || !request.user_execution_wallet || !request.agent_session_key) {
       return res.status(409).json({ error: "Execution-capital request is missing independently verified session identity" });
     }
-    if (request.user_execution_wallet.toLowerCase() !== auth.user.wallet_address.toLowerCase()) return res.status(403).json({ error: "The execution wallet does not match the authenticated wallet" });
 
     const session = capabilityFromRequest(request as Record<string, unknown>);
     if (String(session.agentSessionAddress).toLowerCase() !== String(request.agent_session_key).toLowerCase()) return res.status(409).json({ error: "Stored session key does not match the provider capability" });
@@ -218,7 +213,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       receipt,
       receipt_verified: Boolean(receipt),
       chain_id: 97,
-      source: "grid_private_execution_service",
+      source: "grid_testnet_execution_adapter",
     };
 
     const nextEvidence = {
@@ -247,7 +242,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       receipt,
       receipt_verified: Boolean(receipt),
       calls: executionEvidence.calls,
-      source: "grid_private_execution_service",
+      source: "grid_testnet_execution_adapter",
     }, { onConflict: "execution_capital_request_id,execution_id" });
     if (evidenceError) return res.status(500).json({ error: evidenceError.message });
 
@@ -275,7 +270,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected execution bridge error";
-    const status = /required|must|invalid|outside|expired|missing|does not match|not configured|status is/i.test(message) ? 409 : 500;
+    const status = /required|must|invalid|outside|expired|missing|does not match|status is/i.test(message) ? 409 : 500;
     return res.status(status).json({ error: message });
   }
 }
