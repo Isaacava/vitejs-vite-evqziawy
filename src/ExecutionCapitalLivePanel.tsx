@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { Address } from "viem";
 import type { ExecutionCapitalRequest } from "./lib/executionCapital";
-import { getExecutionCapability } from "./lib/executionCapital";
+import { getExecutionCapability, TESTNET_U_TOKEN_ADDRESS } from "./lib/executionCapital";
 import { confirmTestnetExecutionReceipt, waitForTestnetExecutionReceipt, type TestnetExecutionReceipt } from "./lib/executionReceipt";
 
 type Props = {
@@ -23,6 +23,12 @@ type PreflightResponse = {
     selector: string;
     broadcast: false;
     call: { to: Address; data: `0x${string}`; value?: string };
+    checks?: {
+      token_in_balance?: string;
+      token_in_allowance?: string;
+      token_in_balance_ok?: boolean;
+      token_in_allowance_ok?: boolean;
+    };
   };
   error?: string;
 };
@@ -41,6 +47,9 @@ type ExecuteResponse = {
 };
 
 const TESTNET_CHAIN_ID = 97;
+const TESTNET_WBNB_ADDRESS = "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd" as Address;
+const CONTROLLED_CAPITAL_RAW = "1000000000000000000";
+const CONTROLLED_FEE = 2500;
 
 function validAddress(value: string) {
   return /^0x[a-fA-F0-9]{40}$/.test(value);
@@ -60,15 +69,37 @@ function compact(value?: string | null) {
   return value ? `${value.slice(0, 10)}…${value.slice(-8)}` : "—";
 }
 
+function requestCapitalToken(request: ExecutionCapitalRequest) {
+  const evidence = request.evidence && typeof request.evidence === "object"
+    ? request.evidence as Record<string, unknown>
+    : {};
+  const raw = typeof evidence.capital_token === "string" ? evidence.capital_token.trim() : request.capital_token?.trim() || "";
+  if (!raw || raw.toLowerCase() === "bnb" || raw.toLowerCase() === "tbnb" || raw.toLowerCase() === "tbn") {
+    return TESTNET_U_TOKEN_ADDRESS;
+  }
+  return raw;
+}
+
+function requestCapitalRaw(request: ExecutionCapitalRequest) {
+  const candidate = request.capital_authorized || request.capital_requested || "";
+  if (/^\d+$/.test(candidate)) {
+    const raw = BigInt(candidate);
+    if (raw > 0n && raw <= BigInt(CONTROLLED_CAPITAL_RAW)) return candidate;
+  }
+  return CONTROLLED_CAPITAL_RAW;
+}
+
 export default function ExecutionCapitalLivePanel({ request }: Props) {
   const capability = getExecutionCapability(request);
   const defaultRouter = capability?.allowed_targets?.length === 1 ? String(capability.allowed_targets[0]) : "";
+  const defaultTokenIn = requestCapitalToken(request);
+  const defaultAmountIn = requestCapitalRaw(request);
   const [router, setRouter] = useState(defaultRouter);
-  const [tokenIn, setTokenIn] = useState("");
-  const [tokenOut, setTokenOut] = useState("");
-  const [amountIn, setAmountIn] = useState("");
+  const [tokenIn, setTokenIn] = useState(defaultTokenIn);
+  const [tokenOut, setTokenOut] = useState(String(TESTNET_WBNB_ADDRESS));
+  const [amountIn, setAmountIn] = useState(defaultAmountIn);
   const [amountOutMinimum, setAmountOutMinimum] = useState("0");
-  const [fee, setFee] = useState("2500");
+  const [fee, setFee] = useState(String(CONTROLLED_FEE));
   const [loading, setLoading] = useState(false);
   const [preflight, setPreflight] = useState<PreflightResponse["preflight"] | null>(null);
   const [receipt, setReceipt] = useState<TestnetExecutionReceipt | null>(null);
@@ -92,6 +123,13 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
 
   if (!canUse || !capability) return null;
 
+  function resetPreflight() {
+    setPreflight(null);
+    setReceipt(null);
+    setTransactionHash("");
+    setError("");
+  }
+
   async function runPreflight() {
     setLoading(true);
     setError("");
@@ -100,12 +138,12 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
     setTransactionHash("");
     try {
       if (!validAddress(router)) throw new Error("Router must be a valid BSC Testnet address");
-      if (!validAddress(tokenIn)) throw new Error("tokenIn must be a valid BSC Testnet address");
-      if (!validAddress(tokenOut)) throw new Error("tokenOut must be a valid BSC Testnet address");
+      if (!validAddress(tokenIn)) throw new Error("Token in must be a valid BSC Testnet address");
+      if (!validAddress(tokenOut)) throw new Error("Token out must be a valid BSC Testnet address");
       if (!request.user_execution_wallet || !validAddress(request.user_execution_wallet)) throw new Error("Authorized execution wallet is not available");
-      if (!validRaw(amountIn, true)) throw new Error("amountIn must be a positive raw token amount");
-      if (!validRaw(amountOutMinimum)) throw new Error("amountOutMinimum must be a raw integer");
-      if (!/^\d+$/.test(fee) || Number(fee) <= 0) throw new Error("fee must be a positive integer");
+      if (!validRaw(amountIn, true)) throw new Error("Amount in must be a positive raw token amount");
+      if (!validRaw(amountOutMinimum)) throw new Error("Minimum out must be a raw integer");
+      if (Number(fee) !== CONTROLLED_FEE) throw new Error(`The controlled Testnet proof requires pool fee ${CONTROLLED_FEE}`);
 
       const response = await fetch("/api/testnet?route=execution-capital-preflight", {
         method: "POST",
@@ -127,7 +165,14 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
       if (!body?.ok || !body.preflight || body.chain_id !== TESTNET_CHAIN_ID) throw new Error("Preflight did not return a valid BSC Testnet plan");
       if (body.preflight.broadcast !== false) throw new Error("Preflight did not prove that no transaction was broadcast");
       setPreflight(body.preflight);
-      setMessage("Read-only preflight passed. No transaction was broadcast.");
+      const checks = body.preflight.checks;
+      if (checks && checks.token_in_balance_ok === false) {
+        setMessage("Preflight stopped before broadcast: the authorized execution wallet does not have enough input-token balance.");
+      } else if (checks && checks.token_in_allowance_ok === false) {
+        setMessage("Preflight stopped before broadcast: the execution wallet has not approved enough input tokens for the router.");
+      } else {
+        setMessage("Read-only preflight passed. No transaction was broadcast.");
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to run Testnet preflight");
       setPreflight(null);
@@ -173,30 +218,38 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
     }
   }
 
+  const balanceSummary = preflight?.checks
+    ? `balance=${preflight.checks.token_in_balance || "—"} · allowance=${preflight.checks.token_in_allowance || "—"}`
+    : "balance/allowance not yet checked";
+
   return (
     <section className="border border-line rounded-[16px_8px_18px_9px] bg-paper p-5">
       <div className="flex items-start justify-between gap-4">
         <div>
           <small className="block font-mono text-[8.5px] uppercase tracking-widest text-brass mb-1">Live execution · Testnet</small>
           <h3 className="font-display text-[18px] font-bold m-0">Run the authorized Grid scope</h3>
-          <p className="text-[10.5px] text-inksoft mt-1">Execution is limited to the provider-declared target and selector scope. Read-only preflight is mandatory before broadcast.</p>
+          <p className="text-[10.5px] text-inksoft mt-1">The controlled Testnet proof uses the authorized U capital, the documented BSC Testnet WBNB asset, and a fixed fee tier. Read-only preflight is mandatory before broadcast.</p>
         </div>
         <span className="status-green font-mono text-[9px] px-2.5 py-1 rounded-lg">AUTHORIZED</span>
       </div>
 
       <div className="grid sm:grid-cols-2 gap-3 mt-5">
-        <label className="block"><span className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Router</span><input value={router} onChange={(event) => setRouter(event.target.value.trim())} className="w-full bg-transparent border border-line rounded-lg px-3 py-2 font-mono text-[10px]" /></label>
-        <label className="block"><span className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Pool fee</span><input value={fee} onChange={(event) => setFee(event.target.value.replace(/\D/g, ""))} inputMode="numeric" className="w-full bg-transparent border border-line rounded-lg px-3 py-2 font-mono" /></label>
-        <label className="block"><span className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Token in</span><input value={tokenIn} onChange={(event) => setTokenIn(event.target.value.trim())} className="w-full bg-transparent border border-line rounded-lg px-3 py-2 font-mono text-[10px]" /></label>
-        <label className="block"><span className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Token out</span><input value={tokenOut} onChange={(event) => setTokenOut(event.target.value.trim())} className="w-full bg-transparent border border-line rounded-lg px-3 py-2 font-mono text-[10px]" /></label>
-        <label className="block"><span className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Amount in · raw units</span><input value={amountIn} onChange={(event) => setAmountIn(event.target.value.replace(/\D/g, ""))} inputMode="numeric" className="w-full bg-transparent border border-line rounded-lg px-3 py-2 font-mono" /></label>
-        <label className="block"><span className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Minimum out · raw units</span><input value={amountOutMinimum} onChange={(event) => setAmountOutMinimum(event.target.value.replace(/\D/g, ""))} inputMode="numeric" className="w-full bg-transparent border border-line rounded-lg px-3 py-2 font-mono" /></label>
+        <label className="block"><span className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Router</span><input value={router} onChange={(event) => { setRouter(event.target.value.trim()); resetPreflight(); }} className="w-full bg-transparent border border-line rounded-lg px-3 py-2 font-mono text-[10px]" /></label>
+        <label className="block"><span className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Pool fee</span><input value={fee} onChange={(event) => { setFee(event.target.value.replace(/\D/g, "")); resetPreflight(); }} inputMode="numeric" className="w-full bg-transparent border border-line rounded-lg px-3 py-2 font-mono" /></label>
+        <label className="block"><span className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Token in</span><input value={tokenIn} onChange={(event) => { setTokenIn(event.target.value.trim()); resetPreflight(); }} className="w-full bg-transparent border border-line rounded-lg px-3 py-2 font-mono text-[10px]" /></label>
+        <label className="block"><span className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Token out</span><input value={tokenOut} onChange={(event) => { setTokenOut(event.target.value.trim()); resetPreflight(); }} className="w-full bg-transparent border border-line rounded-lg px-3 py-2 font-mono text-[10px]" /></label>
+        <label className="block"><span className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Amount in · raw units</span><input value={amountIn} onChange={(event) => { setAmountIn(event.target.value.replace(/\D/g, "")); resetPreflight(); }} inputMode="numeric" className="w-full bg-transparent border border-line rounded-lg px-3 py-2 font-mono" /></label>
+        <label className="block"><span className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Minimum out · raw units</span><input value={amountOutMinimum} onChange={(event) => { setAmountOutMinimum(event.target.value.replace(/\D/g, "")); resetPreflight(); }} inputMode="numeric" className="w-full bg-transparent border border-line rounded-lg px-3 py-2 font-mono" /></label>
       </div>
 
       <div className="mt-4 border border-line rounded-lg bg-paperhi p-3 text-[10px]">
-        <div><strong>Allowed targets:</strong> {capability.allowed_targets.map(String).join(", ")}</div>
+        <div><strong>Authorized token in:</strong> {defaultTokenIn}</div>
+        <div className="mt-1"><strong>Testnet WBNB token out:</strong> {TESTNET_WBNB_ADDRESS}</div>
+        <div className="mt-1"><strong>Authorized amount cap:</strong> {CONTROLLED_CAPITAL_RAW} raw units (1 U)</div>
+        <div className="mt-1"><strong>Allowed targets:</strong> {capability.allowed_targets.map(String).join(", ")}</div>
         <div className="mt-1"><strong>Allowed selectors:</strong> {selectorList}</div>
         <div className="mt-1"><strong>Recipient:</strong> {request.user_execution_wallet}</div>
+        <div className="mt-1"><strong>Preflight asset state:</strong> {balanceSummary}</div>
       </div>
 
       {error && <div className="console-alert console-alert-error mt-4">{error}</div>}
@@ -204,7 +257,7 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
 
       <div className="mt-4 flex flex-wrap gap-2">
         <button className="console-brass-button" type="button" onClick={() => void runPreflight()} disabled={loading}>{loading ? "Working…" : "Run read-only preflight →"}</button>
-        {preflight && <button className="console-brass-button" type="button" onClick={() => void execute()} disabled={loading}>{loading ? "Executing…" : "Execute authorized Testnet call →"}</button>}
+        {preflight && preflight.checks?.token_in_balance_ok !== false && preflight.checks?.token_in_allowance_ok !== false && <button className="console-brass-button" type="button" onClick={() => void execute()} disabled={loading}>{loading ? "Executing…" : "Execute authorized Testnet call →"}</button>}
       </div>
 
       {preflight && (
@@ -213,6 +266,7 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
           <div>selector={preflight.selector}</div>
           <div>to={preflight.call.to}</div>
           <div>data={preflight.call.data}</div>
+          <div>{balanceSummary}</div>
         </div>
       )}
 
