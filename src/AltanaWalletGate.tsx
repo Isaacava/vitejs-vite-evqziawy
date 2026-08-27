@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import {
   createAltanaWallet,
+  getAltanaPasskeyReadiness,
   getAltanaWalletResolution,
   recoverAltanaWallet,
+  type AltanaPasskeyReadiness,
   type AltanaWalletResolution,
 } from "./lib/altanaWallet";
 
@@ -10,24 +12,41 @@ function compact(address: string) {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
+function readinessLabel(value: boolean | null) {
+  if (value === null) return "Not reported";
+  return value ? "Available" : "Unavailable";
+}
+
 export default function AltanaWalletGate({ onResolved }: { onResolved?: (value: AltanaWalletResolution) => void }) {
   const [state, setState] = useState<"idle" | "creating" | "recovering" | "ready" | "error">("idle");
   const [wallet, setWallet] = useState<AltanaWalletResolution | null>(() => getAltanaWalletResolution());
+  const [readiness, setReadiness] = useState<AltanaPasskeyReadiness | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
+    let mounted = true;
+    void getAltanaPasskeyReadiness().then((result) => {
+      if (mounted) setReadiness(result);
+    });
+
     const resolved = getAltanaWalletResolution();
     if (resolved) {
       setWallet(resolved);
       setState("ready");
       onResolved?.(resolved);
     }
+
+    return () => {
+      mounted = false;
+    };
   }, [onResolved]);
 
   async function resolveWith(mode: "create" | "recover") {
     setState(mode === "create" ? "creating" : "recovering");
     setError("");
     try {
+      const currentReadiness = await getAltanaPasskeyReadiness();
+      setReadiness(currentReadiness);
       const result = mode === "create" ? await createAltanaWallet() : await recoverAltanaWallet();
       setWallet(result);
       setState("ready");
@@ -62,6 +81,19 @@ export default function AltanaWalletGate({ onResolved }: { onResolved?: (value: 
         </div>
       </div>
 
+      {readiness && !wallet && (
+        <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-4">
+          <small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-2">Passkey readiness</small>
+          <div className="grid sm:grid-cols-2 gap-2 text-[10px]">
+            <div>HTTPS / secure context: <strong>{readiness.secureContext ? "OK" : "Missing"}</strong></div>
+            <div>WebAuthn: <strong>{readiness.webAuthnAvailable ? "Available" : "Unavailable"}</strong></div>
+            <div>Platform authenticator: <strong>{readinessLabel(readiness.platformAuthenticatorAvailable)}</strong></div>
+            <div>Top-level page: <strong>{readiness.topLevelContext ? "Yes" : "No"}</strong></div>
+          </div>
+          <div className="mt-2 font-mono text-[9px] text-inksoft break-all">Relying-party ID: {readiness.rpId}</div>
+        </div>
+      )}
+
       {wallet && (
         <div className="mt-4 border border-green/30 bg-green/5 rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]">
           <strong className="text-green">Altana wallet ready ✓</strong>
@@ -69,7 +101,7 @@ export default function AltanaWalletGate({ onResolved }: { onResolved?: (value: 
         </div>
       )}
 
-      {error && <div className="mt-4 border border-[#cfad9f] bg-rustsoft text-rust rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]">{error}</div>}
+      {error && <div className="mt-4 border border-[#cfad9f] bg-rustsoft text-rust rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px] break-words">{error}</div>}
 
       {!wallet && (
         <div className="mt-5 flex gap-3 flex-wrap">
