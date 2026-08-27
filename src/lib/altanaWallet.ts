@@ -1,6 +1,6 @@
 import { BNB_TESTNET, createClient } from "@altananetwork/sdk";
 import type { Address, Hex } from "viem";
-import { getConnectedWalletProvider } from "./walletAuth";
+import { ensureWalletConnectedProvider } from "./walletAuth";
 
 export type AltanaWalletResolution = {
   walletAddress: Address;
@@ -22,12 +22,12 @@ type AltanaSdkWithInjected = typeof import("@altananetwork/sdk") & {
 /**
  * Resolve an Altana wallet from the user's existing AgentMarket WalletConnect signer.
  *
- * This does not generate or persist a private key. The connected wallet remains the
- * signer/admin authority. The helper intentionally does not grant a session or execute
- * a transaction; those are separate authorization steps.
+ * The helper first restores the shared AgentMarket WalletConnect session. It never
+ * creates a second WalletConnect storage namespace and never generates or persists
+ * a browser private key. The connected wallet remains the signer/admin authority.
  */
 export async function ensureAltanaWallet(): Promise<AltanaWalletResolution> {
-  const provider = getConnectedWalletProvider();
+  const { provider, address: connectedAddress } = await ensureWalletConnectedProvider();
   const sdk = (await import("@altananetwork/sdk")) as AltanaSdkWithInjected;
   const signerFromInjected = sdk.signerFromInjected;
 
@@ -41,6 +41,10 @@ export async function ensureAltanaWallet(): Promise<AltanaWalletResolution> {
   const signer = signerFromInjected(provider);
   if (!/^0x[a-fA-F0-9]{40}$/.test(signer.address)) {
     throw new Error("Altana injected signer did not expose the connected wallet address.");
+  }
+
+  if (signer.address.toLowerCase() !== connectedAddress.toLowerCase()) {
+    throw new Error("The WalletConnect signer address changed while resolving the Altana wallet.");
   }
 
   const client = createClient({ chains: [BNB_TESTNET] });
