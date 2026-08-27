@@ -80,24 +80,14 @@ function requestCapitalToken(request: ExecutionCapitalRequest) {
   return raw;
 }
 
-function requestCapitalRaw(request: ExecutionCapitalRequest) {
-  const candidate = request.capital_authorized || request.capital_requested || "";
-  if (/^\d+$/.test(candidate)) {
-    const raw = BigInt(candidate);
-    if (raw > 0n && raw <= BigInt(CONTROLLED_CAPITAL_RAW)) return candidate;
-  }
-  return CONTROLLED_CAPITAL_RAW;
-}
-
 export default function ExecutionCapitalLivePanel({ request }: Props) {
   const capability = getExecutionCapability(request);
   const defaultRouter = capability?.allowed_targets?.length === 1 ? String(capability.allowed_targets[0]) : "";
   const defaultTokenIn = requestCapitalToken(request);
-  const defaultAmountIn = requestCapitalRaw(request);
   const [router, setRouter] = useState(defaultRouter);
   const [tokenIn, setTokenIn] = useState(defaultTokenIn);
   const [tokenOut, setTokenOut] = useState(String(TESTNET_WBNB_ADDRESS));
-  const [amountIn, setAmountIn] = useState(defaultAmountIn);
+  const [amountIn, setAmountIn] = useState(CONTROLLED_CAPITAL_RAW);
   const [amountOutMinimum, setAmountOutMinimum] = useState("0");
   const [fee, setFee] = useState(String(CONTROLLED_FEE));
   const [loading, setLoading] = useState(false);
@@ -142,6 +132,7 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
       if (!validAddress(tokenOut)) throw new Error("Token out must be a valid BSC Testnet address");
       if (!request.user_execution_wallet || !validAddress(request.user_execution_wallet)) throw new Error("Authorized execution wallet is not available");
       if (!validRaw(amountIn, true)) throw new Error("Amount in must be a positive raw token amount");
+      if (BigInt(amountIn) > BigInt(CONTROLLED_CAPITAL_RAW)) throw new Error("Amount in cannot exceed the controlled 1 U Testnet cap");
       if (!validRaw(amountOutMinimum)) throw new Error("Minimum out must be a raw integer");
       if (Number(fee) !== CONTROLLED_FEE) throw new Error(`The controlled Testnet proof requires pool fee ${CONTROLLED_FEE}`);
 
