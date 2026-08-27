@@ -38,16 +38,12 @@ function executorPreflightUrl(request: Record<string, unknown>) {
 }
 
 async function dispatch(url: string, input: GridPreflightInput) {
-  const secret = process.env.GRID_EXECUTION_SHARED_SECRET?.trim() || "";
-  if (!secret) throw new Error("Grid Testnet adapter is not configured: GRID_EXECUTION_SHARED_SECRET is missing");
-
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
     const response = await fetch(url, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${secret}`,
         "Content-Type": "application/json",
         Accept: "application/json",
       },
