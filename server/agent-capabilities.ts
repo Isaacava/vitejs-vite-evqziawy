@@ -15,6 +15,7 @@ function candidateUrls(agent: Record<string, unknown>) {
     metadata.agent_card_url,
     metadata.capabilities_url,
     metadata.capability_url,
+    metadata.execution_capabilities_url,
     metadata.a2a_url,
     metadata.mcp_url,
     metadata.api_url,
@@ -27,7 +28,16 @@ function candidateUrls(agent: Record<string, unknown>) {
 
 function endpointCandidates(endpoints: Array<Record<string, unknown>>) {
   return endpoints
-    .map((endpoint) => typeof endpoint.endpoint_url === "string" ? endpoint.endpoint_url.trim() : "")
+    .flatMap((endpoint) => {
+      const base = typeof endpoint.endpoint_url === "string" ? endpoint.endpoint_url.trim() : "";
+      if (!base) return [];
+      const protocol = typeof endpoint.protocol === "string" ? endpoint.protocol.toLowerCase() : "";
+      const candidates = [base];
+      if (protocol === "erc8183") {
+        candidates.push(`${base.replace(/\/+$/, "")}/execution-capabilities`);
+      }
+      return candidates;
+    })
     .filter(Boolean);
 }
 
@@ -77,11 +87,13 @@ export async function discoverAgentCapabilities(
   const successfulSources: string[] = [];
 
   for (const url of sourceUrls) {
+    const normalizedBase = url.replace(/\/+$/, "");
     const candidates = [
       url,
-      `${url.replace(/\/+$/, "")}/capabilities`,
-      `${url.replace(/\/+$/, "")}/.well-known/agent-card.json`,
-      `${url.replace(/\/+$/, "")}/agent-card`,
+      `${normalizedBase}/capabilities`,
+      `${normalizedBase}/execution-capabilities`,
+      `${normalizedBase}/.well-known/agent-card.json`,
+      `${normalizedBase}/agent-card`,
     ];
     for (const candidate of [...new Set(candidates)]) {
       try {
