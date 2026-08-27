@@ -1,10 +1,34 @@
 import { BNB_TESTNET, createClient } from "@altananetwork/sdk";
-import { keccak256, type Address, type Hex } from "viem";
+import { createPublicClient, http, keccak256, type Address, type Hex, formatEther } from "viem";
 import { publicKeyToAddress } from "viem/accounts";
 import { ensureAltanaWallet } from "./altanaWallet";
 
 export const TESTNET_U_TOKEN: Address = "0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565";
 const TESTNET_TOKEN_DECIMALS = 18n;
+const ALTANA_KEYSTORE_CONTROLLER: Address = "0xb530D1971f5453F3359518343F05D0AedFfF7e12";
+const KEYSTORE_CONTROLLER_ABI = [{
+  type: "function",
+  name: "getRegistrationFeeInWei",
+  stateMutability: "view",
+  inputs: [],
+  outputs: [{ type: "uint256" }],
+}] as const;
+
+const publicClient = createPublicClient({
+  chain: BNB_TESTNET.chain,
+  transport: http(BNB_TESTNET.publicRpcUrl),
+});
+
+type GrantFeeReadiness = {
+  walletAddress: Address;
+  nativeBalance: bigint;
+  registrationFee: bigint;
+  minimumRegistrationValue: bigint;
+  sufficientForRegistration: boolean;
+  nativeBalanceFormatted: string;
+  registrationFeeFormatted: string;
+  minimumRegistrationValueFormatted: string;
+};
 
 export type AltanaSessionGrantInput = {
   agentSessionAddress: Address;
@@ -39,6 +63,38 @@ function isHex(value: string): value is Hex {
 }
 
 /**
+ * Read the native BNB requirement for the first Altana session grant.
+ *
+ * A first grant can need two KeyStore payments: the wallet's initial admin
+ * registration and the additional session-key registration. Trading capital
+ * itself remains the ERC-20 U token and is not transferred by this check.
+ */
+export async function getAltanaGrantFeeReadiness(): Promise<GrantFeeReadiness> {
+  const resolved = ensureAltanaWallet();
+  const [nativeBalance, registrationFee] = await Promise.all([
+    publicClient.getBalance({ address: resolved.walletAddress }),
+    publicClient.readContract({
+      address: ALTANA_KEYSTORE_CONTROLLER,
+      abi: KEYSTORE_CONTROLLER_ABI,
+      functionName: "getRegistrationFeeInWei",
+    }),
+  ]);
+
+  const minimumRegistrationValue = registrationFee * 2n;
+
+  return {
+    walletAddress: resolved.walletAddress,
+    nativeBalance,
+    registrationFee,
+    minimumRegistrationValue,
+    sufficientForRegistration: nativeBalance >= minimumRegistrationValue,
+    nativeBalanceFormatted: formatEther(nativeBalance),
+    registrationFeeFormatted: formatEther(registrationFee),
+    minimumRegistrationValueFormatted: formatEther(minimumRegistrationValue),
+  };
+}
+
+/**
  * Grant a real Altana session to an agent's already-existing session key.
  *
  * The Altana SDK's supported browser authority is the Passkey-backed smart
@@ -70,6 +126,13 @@ export async function grantAltanaExecutionSession(
   const allowedCalls = input.allowedCalls.filter(isAddress);
   if (allowedCalls.length !== input.allowedCalls.length) {
     throw new Error("One or more allowed contract addresses are invalid.");
+  }
+
+  const feeReadiness = await getAltanaGrantFeeReadiness();
+  if (!feeReadiness.sufficientForRegistration) {
+    throw new Error(
+      `Altana wallet ${feeReadiness.walletAddress} has ${feeReadiness.nativeBalanceFormatted} tBNB, but the first session grant needs at least ${feeReadiness.minimumRegistrationValueFormatted} tBNB for two KeyStore registrations. Fund the Altana Testnet wallet with native tBNB first; the requested trading capital remains exactly 1 U.`,
+    );
   }
 
   const resolved = ensureAltanaWallet();
