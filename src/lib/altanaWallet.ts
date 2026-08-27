@@ -10,6 +10,14 @@ export type AltanaWalletResolution = {
   signer: PasskeySigner;
 };
 
+export type AltanaPasskeyReadiness = {
+  secureContext: boolean;
+  webAuthnAvailable: boolean;
+  platformAuthenticatorAvailable: boolean | null;
+  topLevelContext: boolean;
+  rpId: string;
+};
+
 const RP_NAME = "AgentMarket Testnet";
 const chainId = 97 as const;
 
@@ -17,6 +25,47 @@ let cachedResolution: AltanaWalletResolution | null = null;
 
 function rpId() {
   return window.location.hostname;
+}
+
+export async function getAltanaPasskeyReadiness(): Promise<AltanaPasskeyReadiness> {
+  const secureContext = window.isSecureContext;
+  const credentialsAvailable = typeof navigator.credentials?.create === "function";
+  const webAuthnAvailable = secureContext && credentialsAvailable && typeof window.PublicKeyCredential !== "undefined";
+  let platformAuthenticatorAvailable: boolean | null = null;
+
+  if (
+    webAuthnAvailable &&
+    typeof window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === "function"
+  ) {
+    try {
+      platformAuthenticatorAvailable = await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+    } catch {
+      platformAuthenticatorAvailable = null;
+    }
+  }
+
+  return {
+    secureContext,
+    webAuthnAvailable,
+    platformAuthenticatorAvailable,
+    topLevelContext: window.top === window.self,
+    rpId: rpId(),
+  };
+}
+
+function assertPasskeyReady(readiness: AltanaPasskeyReadiness) {
+  if (!readiness.secureContext) {
+    throw new Error("Altana Passkeys require a secure HTTPS page. Open AgentMarket from its HTTPS address.");
+  }
+  if (!readiness.webAuthnAvailable) {
+    throw new Error("This browser context does not expose WebAuthn. Use a current browser with Passkey/WebAuthn support.");
+  }
+  if (!readiness.topLevelContext) {
+    throw new Error("Passkey creation is running inside an embedded frame. Open AgentMarket as a top-level page before creating the Altana wallet.");
+  }
+  if (readiness.platformAuthenticatorAvailable === false) {
+    throw new Error("This device/browser does not report a platform authenticator for Passkeys. Use a browser/device with Passkey support or recover an existing Altana wallet.");
+  }
 }
 
 function normalizeResolution(value: {
@@ -41,10 +90,13 @@ function normalizeResolution(value: {
 }
 
 export async function createAltanaWallet(): Promise<AltanaWalletResolution> {
+  const readiness = await getAltanaPasskeyReadiness();
+  assertPasskeyReady(readiness);
+
   const client = createClient({ chains: [BNB_TESTNET] });
   const result = await client.createPasskeyWallet({
     name: RP_NAME,
-    rpId: rpId(),
+    rpId: readiness.rpId,
   });
 
   const resolved = normalizeResolution({
@@ -57,9 +109,12 @@ export async function createAltanaWallet(): Promise<AltanaWalletResolution> {
 }
 
 export async function recoverAltanaWallet(): Promise<AltanaWalletResolution> {
+  const readiness = await getAltanaPasskeyReadiness();
+  assertPasskeyReady(readiness);
+
   const client = createClient({ chains: [BNB_TESTNET] });
   const result = await client.recoverFromPasskey({
-    rpId: rpId(),
+    rpId: readiness.rpId,
     chainId,
   });
 
@@ -74,9 +129,9 @@ export async function recoverAltanaWallet(): Promise<AltanaWalletResolution> {
 
 /**
  * Return the Altana execution wallet selected or created in this browser
- * session. The installed Altana SDK's supported browser execution flow is
- * a Passkey-backed smart wallet; AgentMarket's WalletConnect EOA remains the
- * separate authentication/commerce wallet.
+ * session. The supported browser execution flow is a Passkey-backed smart
+ * wallet; AgentMarket's WalletConnect EOA remains the separate authentication/
+ * commerce wallet.
  */
 export function ensureAltanaWallet(): AltanaWalletResolution {
   if (!cachedResolution) {
