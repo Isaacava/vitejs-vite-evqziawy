@@ -4,6 +4,8 @@ import { getAuthenticatedUser, serverClient } from "../_auth.js";
 import { runGridPreflight, assertGridExecutionCapability, type GridPreflightInput } from "./gridExecutionAdapter.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
+const MAX_CAPABILITY_BYTES = 64 * 1024;
+const CAPABILITY_TIMEOUT_MS = 8_000;
 const TESTNET_CHAIN_ID = 97;
 const TESTNET_U_TOKEN = "0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565" as Address;
 const TESTNET_WBNB_TOKEN = "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd" as Address;
@@ -34,6 +36,11 @@ function normalizedSelectors(value: unknown) {
     .filter((item) => /^0x[a-f0-9]{8}$/.test(item));
 }
 
+function normalizedTargets(value: unknown) {
+  if (!Array.isArray(value)) return [] as Address[];
+  return value.filter(isAddress);
+}
+
 function rawInteger(value: unknown, field: string, positive = false) {
   const text = typeof value === "string" ? value.trim() : String(value ?? "");
   if (!/^\d+$/.test(text)) throw new Error(`${field} must be an integer raw amount`);
@@ -50,6 +57,51 @@ async function readJson(req: VercelRequest) {
     if (Buffer.byteLength(raw, "utf8") > MAX_BODY_BYTES) throw new Error("Preflight request body is too large");
   }
   return JSON.parse(raw || "{}") as Record<string, unknown>;
+}
+
+async function fetchLiveExecutionCapability(storedCapability: Record<string, unknown>) {
+  const sourceUrl = typeof storedCapability.source_url === "string" ? storedCapability.source_url.trim() : "";
+  if (!sourceUrl) return storedCapability;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(sourceUrl);
+  } catch {
+    return storedCapability;
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return storedCapability;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CAPABILITY_TIMEOUT_MS);
+  try {
+    const response = await fetch(parsed.toString(), {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    });
+    if (!response.ok) return storedCapability;
+    const contentLength = Number(response.headers.get("content-length") || 0);
+    if (Number.isFinite(contentLength) && contentLength > MAX_CAPABILITY_BYTES) return storedCapability;
+    const raw = await response.text();
+    if (new TextEncoder().encode(raw).byteLength > MAX_CAPABILITY_BYTES) return storedCapability;
+    const live = raw ? object(JSON.parse(raw)) : {};
+
+    const liveSelectors = normalizedSelectors(live.allowed_selectors);
+    const liveTargets = normalizedTargets(live.allowed_targets);
+    if (liveSelectors.length === 0 || liveTargets.length === 0) return storedCapability;
+
+    return {
+      ...storedCapability,
+      ...live,
+      allowed_selectors: liveSelectors,
+      allowed_targets: liveTargets,
+      refreshed_at: new Date().toISOString(),
+    };
+  } catch {
+    return storedCapability;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -86,13 +138,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const authenticatedWallet = auth.user.wallet_address as Address;
 
     const evidence = object(request.evidence);
-    const capability = object(evidence.execution_capability);
+    const storedCapability = object(evidence.execution_capability);
+    assertGridExecutionCapability(storedCapability);
+
+    const capability = await fetchLiveExecutionCapability(storedCapability);
     assertGridExecutionCapability(capability);
 
-    const allowedTargets = Array.isArray(capability.allowed_targets) ? capability.allowed_targets.filter(isAddress) : [];
+    const allowedTargets = normalizedTargets(capability.allowed_targets);
     const allowedSelectors = normalizedSelectors(capability.allowed_selectors);
-    if (allowedTargets.length === 0 || allowedSelectors.length === 0) return res.status(409).json({ error: "Stored execution capability has no usable target/selector scope" });
-    if (capability.network !== "bsc-testnet" || Number(capability.chainId) !== TESTNET_CHAIN_ID) return res.status(409).json({ error: "Stored execution capability is not BSC Testnet" });
+    if (allowedTargets.length === 0 || allowedSelectors.length === 0) return res.status(409).json({ error: "Provider execution capability has no usable target/selector scope" });
+    if (capability.network !== "bsc-testnet" || Number(capability.chainId) !== TESTNET_CHAIN_ID) return res.status(409).json({ error: "Provider execution capability is not BSC Testnet" });
+
+    const protocol = typeof capability.protocol === "string" && capability.protocol.trim()
+      ? capability.protocol.trim().toLowerCase()
+      : "pancake-v3-swap";
+    const isPancakeSwapProtocol = protocol === "pancake-v3-swap";
 
     const expectedTokenIn = typeof request.capital_token === "string" && isAddress(request.capital_token)
       ? request.capital_token as Address
@@ -113,10 +173,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!isAddress(requestedTokenIn)) return res.status(400).json({ error: "tokenIn must be a valid EVM address" });
     if (requestedTokenIn.toLowerCase() !== expectedTokenIn.toLowerCase()) return res.status(409).json({ error: "tokenIn must match the authorized execution-capital token" });
     if (!isAddress(requestedTokenOut)) return res.status(400).json({ error: "tokenOut must be a valid EVM address" });
-    if (requestedTokenOut.toLowerCase() !== TESTNET_WBNB_TOKEN.toLowerCase()) return res.status(409).json({ error: "Controlled Testnet proof requires WBNB as tokenOut" });
+    if (isPancakeSwapProtocol && requestedTokenOut.toLowerCase() !== TESTNET_WBNB_TOKEN.toLowerCase()) return res.status(409).json({ error: "Controlled Testnet proof requires WBNB as tokenOut" });
     if (requestedAmountIn > expectedCapital) return res.status(409).json({ error: "amountIn must not exceed the authorized 1 U capital" });
     if (requestedMinimumOut < 0n) return res.status(400).json({ error: "amountOutMinimum must be a non-negative raw integer" });
-    if (requestedFee !== BigInt(CONTROLLED_FEE)) return res.status(409).json({ error: `Controlled Testnet proof requires pool fee ${CONTROLLED_FEE}` });
+    if (isPancakeSwapProtocol && requestedFee !== BigInt(CONTROLLED_FEE)) return res.status(409).json({ error: `Controlled Testnet proof requires pool fee ${CONTROLLED_FEE}` });
     if (!isAddress(recipient)) return res.status(400).json({ error: "recipient must be a valid EVM address" });
     if (recipient.toLowerCase() !== executionWallet.toLowerCase()) return res.status(409).json({ error: "recipient must equal the independently verified execution wallet" });
 
@@ -135,7 +195,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       amountIn: requestedAmountIn.toString(),
       amountOutMinimum: requestedMinimumOut.toString(),
     };
-    const response = await runGridPreflight(request as Record<string, unknown>, gridInput);
+    const response = await runGridPreflight({ ...request, evidence: { ...evidence, execution_capability: capability } } as Record<string, unknown>, gridInput, protocol);
     const result = object(response.result);
     if (result.broadcast !== false) return res.status(502).json({ error: "Testnet execution adapter did not prove that no transaction was broadcast" });
 
@@ -155,12 +215,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       authenticated_wallet: authenticatedWallet,
       execution_wallet: executionWallet,
       capability_scope: {
+        protocol,
         allowed_targets: allowedTargets,
         allowed_selectors: allowedSelectors,
         authorized_token_in: expectedTokenIn,
         authorized_capital_raw: expectedCapital.toString(),
-        controlled_token_out: TESTNET_WBNB_TOKEN,
-        controlled_fee: CONTROLLED_FEE,
+        ...(isPancakeSwapProtocol ? { controlled_token_out: TESTNET_WBNB_TOKEN, controlled_fee: CONTROLLED_FEE } : {}),
       },
       preflight: result,
       note: "Read-only preflight completed through the Testnet execution adapter. No transaction was broadcast.",
