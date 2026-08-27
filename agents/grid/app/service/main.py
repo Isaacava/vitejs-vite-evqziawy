@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,14 @@ _STORAGE_DIR = Path(os.getenv("STORAGE_LOCAL_PATH") or ".agent-data")
 _EXECUTION_INTERNAL_URL = (
     os.getenv("GRID_EXECUTION_INTERNAL_URL") or "http://127.0.0.1:8788"
 ).rstrip("/")
+
+# A newly funded ERC-8183 job is given time for the separate execution-capital
+# request/authorization workflow before this provider submits its normal job
+# deliverable. This is deliberately configurable for the Testnet runtime.
+_EXECUTION_CAPITAL_WINDOW_SECONDS = max(
+    0,
+    int(float(os.getenv("ERC8183_EXECUTION_CAPITAL_WINDOW_SECONDS") or "3600")),
+)
 
 _wallet = EVMWalletProvider(
     password=os.environ["WALLET_PASSWORD"],
@@ -66,11 +75,46 @@ def _payment_token() -> str | None:
         return None
 
 
+_funded_first_seen: dict[int, float] = {}
+
+
 async def _on_funded(job: dict[str, Any]) -> None:
     job_id = job.get("jobId")
+
+    if job_id is None:
+        logger.warning("Funded job callback received without jobId")
+        return
+
+    try:
+        job_id_int = int(job_id)
+    except (TypeError, ValueError):
+        logger.warning("Funded job callback received invalid jobId=%r", job_id)
+        return
+
+    # The callback is invoked by funded_job_watcher on each poll while the
+    # job remains funded. Keep the first-seen timestamp in memory so a fresh
+    # funded job cannot race the execution-capital request flow.
+    if _EXECUTION_CAPITAL_WINDOW_SECONDS > 0:
+        now = time.monotonic()
+        first_seen = _funded_first_seen.setdefault(job_id_int, now)
+        elapsed = now - first_seen
+
+        if elapsed < _EXECUTION_CAPITAL_WINDOW_SECONDS:
+            remaining = _EXECUTION_CAPITAL_WINDOW_SECONDS - elapsed
+            logger.info(
+                "ERC8183_CAPITAL_WINDOW_ACTIVE job_id=%s remaining_seconds=%.0f provider=%s network=%s chain_id=97",
+                job_id_int,
+                remaining,
+                _provider_address(),
+                config["network"],
+            )
+            return
+
+        _funded_first_seen.pop(job_id_int, None)
+
     logger.info(
         "ERC8183_EXECUTION_STARTED job_id=%s provider=%s network=%s chain_id=97",
-        job_id,
+        job_id_int,
         _provider_address(),
         config["network"],
     )
@@ -78,11 +122,11 @@ async def _on_funded(job: dict[str, Any]) -> None:
         deliverable = fulfill_grid_job(job)
         logger.info(
             "ERC8183_DELIVERABLE_GENERATED job_id=%s provider=%s deliverable_type=%s",
-            job_id,
+            job_id_int,
             _provider_address(),
             type(deliverable).__name__,
         )
-        submission = await _ops.submit_result(job_id, deliverable)
+        submission = await _ops.submit_result(job_id_int, deliverable)
         tx_hash = None
         if isinstance(submission, str):
             tx_hash = submission
@@ -92,7 +136,7 @@ async def _on_funded(job: dict[str, Any]) -> None:
             tx_hash = submission.get("hash") or submission.get("tx_hash")
         logger.info(
             "ERC8183_SUBMISSION_CONFIRMED job_id=%s provider=%s tx_hash=%s network=%s chain_id=97",
-            job_id,
+            job_id_int,
             _provider_address(),
             tx_hash or "unknown",
             config["network"],
@@ -100,7 +144,7 @@ async def _on_funded(job: dict[str, Any]) -> None:
     except Exception:
         logger.exception(
             "ERC8183_EXECUTION_FAILED job_id=%s provider=%s network=%s chain_id=97",
-            job_id,
+            job_id_int,
             _provider_address(),
             config["network"],
         )
@@ -150,10 +194,11 @@ _watcher_task: asyncio.Task | None = None
 async def lifespan(_: FastAPI):
     global _watcher_task
     logger.info(
-        "ERC8183_WATCHER_STARTING provider=%s network=%s chain_id=97 poll_interval=%s",
+        "ERC8183_WATCHER_STARTING provider=%s network=%s chain_id=97 poll_interval=%s capital_window_seconds=%s",
         _provider_address(),
         config["network"],
         config["poll_interval"],
+        _EXECUTION_CAPITAL_WINDOW_SECONDS,
     )
     _watcher_task = asyncio.create_task(
         funded_job_watcher(_ops, _on_funded, interval=config["poll_interval"])
@@ -229,6 +274,7 @@ async def erc8183_status() -> dict[str, Any]:
         "service_price": config["service_price"],
         "payment_token": payment_token,
         "poll_interval": config["poll_interval"],
+        "execution_capital_window_seconds": _EXECUTION_CAPITAL_WINDOW_SECONDS,
     }
 
 
