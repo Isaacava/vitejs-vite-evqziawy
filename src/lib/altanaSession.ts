@@ -132,8 +132,6 @@ export async function grantAltanaExecutionSession(
 
   let feeReadiness = await getAltanaGrantFeeReadiness();
   if (!feeReadiness.sufficientForRegistration) {
-    // Ask the existing AgentMarket WalletConnect wallet to fund the same
-    // native Testnet setup reserve used for fresh Altana wallet creation.
     await fundAltanaWalletFromAgentMarketWallet(feeReadiness.walletAddress);
     feeReadiness = await getAltanaGrantFeeReadiness();
 
@@ -175,6 +173,8 @@ export async function grantAltanaExecutionSession(
     },
     expiry: input.expiry,
     chainId: 97,
+    // The Passkey wallet's admin key was already registered during wallet
+    // creation. Do not submit a duplicate KeyStore registration.
     register: false,
   });
 
