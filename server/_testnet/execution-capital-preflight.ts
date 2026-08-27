@@ -116,9 +116,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!request.authorization_verified_at || !request.session_key_id || !request.user_execution_wallet || !request.agent_session_key) {
       return res.status(409).json({ error: "Execution-capital request is missing independently verified session identity" });
     }
-    if (request.user_execution_wallet.toLowerCase() !== auth.user.wallet_address.toLowerCase()) {
-      return res.status(403).json({ error: "The execution wallet does not match the authenticated wallet" });
-    }
+
+    const executionWallet = request.user_execution_wallet as Address;
+    const authenticatedWallet = auth.user.wallet_address as Address;
 
     const evidence = object(request.evidence);
     const capability = object(evidence.execution_capability);
@@ -140,8 +140,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const requestedAmountIn = rawInteger(input.amountIn, "amountIn", true);
     const requestedMinimumOut = rawInteger(input.amountOutMinimum ?? "0", "amountOutMinimum");
     const requestedFee = rawInteger(input.fee, "fee", true);
-    const recipient = input.recipient || request.user_execution_wallet;
+    const recipient = input.recipient || executionWallet;
 
+    if (!isAddress(authenticatedWallet)) return res.status(403).json({ error: "Authenticated wallet identity is invalid" });
+    if (!isAddress(executionWallet)) return res.status(409).json({ error: "Verified execution wallet identity is invalid" });
     if (!isAddress(requestedTokenIn)) return res.status(400).json({ error: "tokenIn must be a valid EVM address" });
     if (requestedTokenIn.toLowerCase() !== expectedTokenIn.toLowerCase()) return res.status(409).json({ error: "tokenIn must match the authorized execution-capital token" });
     if (!isAddress(requestedTokenOut)) return res.status(400).json({ error: "tokenOut must be a valid EVM address" });
@@ -150,7 +152,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (requestedMinimumOut < 0n) return res.status(400).json({ error: "amountOutMinimum must be a non-negative raw integer" });
     if (requestedFee !== BigInt(CONTROLLED_FEE)) return res.status(409).json({ error: `Controlled Testnet proof requires pool fee ${CONTROLLED_FEE}` });
     if (!isAddress(recipient)) return res.status(400).json({ error: "recipient must be a valid EVM address" });
-    if (recipient.toLowerCase() !== request.user_execution_wallet.toLowerCase()) return res.status(409).json({ error: "recipient must equal the authorized execution wallet" });
+    if (recipient.toLowerCase() !== executionWallet.toLowerCase()) return res.status(409).json({ error: "recipient must equal the independently verified execution wallet" });
 
     const routerInput = input.router;
     if (routerInput !== undefined && routerInput !== null && routerInput !== "" && !isAddress(routerInput)) return res.status(400).json({ error: "router must be a valid EVM address" });
@@ -177,6 +179,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ok: true,
       request_id: requestId,
       chain_id: TESTNET_CHAIN_ID,
+      authenticated_wallet: authenticatedWallet,
+      execution_wallet: executionWallet,
       capability_scope: {
         allowed_targets: allowedTargets,
         allowed_selectors: allowedSelectors,
