@@ -2,7 +2,7 @@ import { BNB_TESTNET, createClient } from "@altananetwork/sdk";
 import { bscTestnet } from "viem/chains";
 import { createPublicClient, http, keccak256, type Address, type Hex, formatEther } from "viem";
 import { publicKeyToAddress } from "viem/accounts";
-import { ensureAltanaWallet } from "./altanaWallet";
+import { ensureAltanaWallet, fundAltanaWalletFromAgentMarketWallet } from "./altanaWallet";
 
 export const TESTNET_U_TOKEN: Address = "0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565";
 const TESTNET_TOKEN_DECIMALS = 18n;
@@ -98,9 +98,10 @@ export async function getAltanaGrantFeeReadiness(): Promise<GrantFeeReadiness> {
 /**
  * Grant a real Altana session to an agent's already-existing session key.
  *
- * The Altana SDK's supported browser authority is the Passkey-backed smart
- * wallet returned by ensureAltanaWallet(). AgentMarket WalletConnect remains
- * the separate commerce/login wallet. The agent private key is never exposed.
+ * When the Altana wallet is short on native Testnet BNB, the same explicit
+ * WalletConnect funding flow used during wallet creation is invoked to top it
+ * up before retrying the grant. The user still approves the native transfer;
+ * U trading capital is never transferred by this path.
  */
 export async function grantAltanaExecutionSession(
   input: AltanaSessionGrantInput,
@@ -129,11 +130,18 @@ export async function grantAltanaExecutionSession(
     throw new Error("One or more allowed contract addresses are invalid.");
   }
 
-  const feeReadiness = await getAltanaGrantFeeReadiness();
+  let feeReadiness = await getAltanaGrantFeeReadiness();
   if (!feeReadiness.sufficientForRegistration) {
-    throw new Error(
-      `Altana wallet ${feeReadiness.walletAddress} has ${feeReadiness.nativeBalanceFormatted} tBNB, but the first session grant needs at least ${feeReadiness.minimumRegistrationValueFormatted} tBNB for two KeyStore registrations. Fund the Altana Testnet wallet with native tBNB first; the requested trading capital remains exactly 1 U.`,
-    );
+    // Ask the existing AgentMarket WalletConnect wallet to fund the same
+    // native Testnet setup reserve used for fresh Altana wallet creation.
+    await fundAltanaWalletFromAgentMarketWallet(feeReadiness.walletAddress);
+    feeReadiness = await getAltanaGrantFeeReadiness();
+
+    if (!feeReadiness.sufficientForRegistration) {
+      throw new Error(
+        `Altana wallet ${feeReadiness.walletAddress} still has ${feeReadiness.nativeBalanceFormatted} tBNB after the automatic setup funding step; at least ${feeReadiness.minimumRegistrationValueFormatted} tBNB is required for the KeyStore registration fees.`,
+      );
+    }
   }
 
   const resolved = ensureAltanaWallet();
