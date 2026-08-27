@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Address, Hex } from "viem";
 import type { ExecutionCapitalRequest } from "./lib/executionCapital";
-import { getExecutionCapability } from "./lib/executionCapital";
+import { getExecutionCapability, TESTNET_U_TOKEN_ADDRESS } from "./lib/executionCapital";
 import ExecutionCapitalCard from "./ExecutionCapitalCard";
 import ExecutionCapitalRequestGate from "./ExecutionCapitalRequestGate";
 import AltanaWalletGate from "./AltanaWalletGate";
@@ -24,9 +24,18 @@ function parseCapitalAmount(value: string | null) {
   }
 }
 
+function normalizedCapitalToken(request: ExecutionCapitalRequest | null) {
+  const token = String(request?.capital_token || "").trim();
+  if (!token || token.toLowerCase() === "bnb" || token.toLowerCase() === "tbn" || token.toLowerCase() === "tbnb") {
+    return TESTNET_U_TOKEN_ADDRESS;
+  }
+  return token;
+}
+
 export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency }: Props) {
   const capability = getExecutionCapability(request);
   const capitalAmount = parseCapitalAmount(request?.capital_requested || null);
+  const capitalToken = normalizedCapitalToken(request);
   const [liveFunded, setLiveFunded] = useState(false);
   const [requestCreated, setRequestCreated] = useState(false);
   const [liveStateError, setLiveStateError] = useState("");
@@ -120,8 +129,9 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
               allowedCalls={capability.allowed_targets as readonly Address[]}
               allowedSelectors={capability.allowed_selectors as readonly Hex[]}
               capitalAmount={capitalAmount}
+              capitalToken={capitalToken as Address}
               purpose={request.purpose}
-              durationSeconds={request.duration_seconds || 3600}
+              durationSeconds={request.requested_duration_seconds || request.duration_seconds || 86400}
               capabilitySource={capability.source_url}
             />
           ) : (
