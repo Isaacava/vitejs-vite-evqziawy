@@ -145,7 +145,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const recipient = input.recipient || request.user_execution_wallet;
 
     if (!isAddress(requestedTokenIn)) return res.status(400).json({ error: "tokenIn must be a valid EVM address" });
-    if (!requestedTokenIn.toLowerCase() === expectedTokenIn.toLowerCase()) return res.status(409).json({ error: "tokenIn must match the authorized execution-capital token" });
+    if (requestedTokenIn.toLowerCase() !== expectedTokenIn.toLowerCase()) return res.status(409).json({ error: "tokenIn must match the authorized execution-capital token" });
     if (!isAddress(requestedTokenOut)) return res.status(400).json({ error: "tokenOut must be a valid EVM address" });
     if (requestedTokenOut.toLowerCase() !== TESTNET_WBNB_TOKEN.toLowerCase()) return res.status(409).json({ error: "Controlled Testnet proof requires WBNB as tokenOut" });
     if (requestedAmountIn === null || requestedAmountIn > expectedCapital || requestedAmountIn > CONTROLLED_CAPITAL_RAW) return res.status(409).json({ error: "amountIn must be positive and no greater than the authorized 1 U capital" });
@@ -154,11 +154,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!isAddress(recipient)) return res.status(400).json({ error: "recipient must be a valid EVM address" });
     if (recipient.toLowerCase() !== request.user_execution_wallet.toLowerCase()) return res.status(409).json({ error: "recipient must equal the authorized execution wallet" });
 
-    if (!allowedTargets.some((target) => target.toLowerCase() === String(input.router || "").toLowerCase())) {
-      if (allowedTargets.length !== 1) return res.status(409).json({ error: "Requested PancakeSwap router is outside the verified provider capability target allowlist" });
-    }
-
-    const router = input.router || (allowedTargets.length === 1 ? allowedTargets[0] : undefined);
+    const routerInput = input.router;
+    if (routerInput !== undefined && routerInput !== null && routerInput !== "" && !isAddress(routerInput)) return res.status(400).json({ error: "router must be a valid EVM address" });
+    const router = routerInput || (allowedTargets.length === 1 ? allowedTargets[0] : undefined);
     if (!isAddress(router)) return res.status(400).json({ error: "router must be a valid EVM address" });
     if (!allowedTargets.some((target) => target.toLowerCase() === router.toLowerCase())) return res.status(409).json({ error: "Requested PancakeSwap router is outside the verified provider capability target allowlist" });
 
