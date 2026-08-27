@@ -1,5 +1,6 @@
 import { BNB_TESTNET, createClient } from "@altananetwork/sdk";
 import type { PasskeySigner, Wallet } from "@altananetwork/sdk";
+import { bscTestnet } from "viem/chains";
 import { createPublicClient, http, type Address, formatEther } from "viem";
 import { ensureWalletConnectedProvider } from "./walletAuth";
 
@@ -41,8 +42,11 @@ const KEYSTORE_CONTROLLER_ABI = [{
 }] as const;
 const EXTRA_NATIVE_BUFFER = 500_000_000_000_000n; // 0.0005 tBNB
 
+// Use AgentMarket's top-level viem chain type for direct public-RPC reads.
+// The Altana SDK has its own nested viem dependency, so passing BNB_TESTNET.chain
+// here creates incompatible duplicate Chain types during TypeScript builds.
 const publicClient = createPublicClient({
-  chain: BNB_TESTNET.chain,
+  chain: bscTestnet,
   transport: http(BNB_TESTNET.publicRpcUrl),
 });
 
