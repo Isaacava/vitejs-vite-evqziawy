@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
+import { discoverAgentCapabilities } from "../server/_testnet/agent-capabilities.js";
 
 const REQUEST_TIMEOUT_MS = 8_000;
 const MAX_PROFILE_BYTES = 128_000;
@@ -114,7 +115,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const supabase = getServiceClient();
     const { data: endpoints, error } = await supabase
       .from("agent_endpoints")
-      .select("id,agent_id,endpoint_url,protocol,version,status")
+      .select("id,agent_id,endpoint_url,protocol,version,status,metadata")
       .limit(200);
 
     if (error) return res.status(500).json({ error: error.message });
@@ -128,19 +129,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       statusCode: number | null;
       latencyMs: number;
       checkedUrl: string | null;
+      capabilitySources: string[];
+      capabilityCount: number;
       executionCapitalProfileReported: boolean;
     }>;
 
     for (const endpoint of endpoints ?? []) {
       const probe = await probeEndpoint(endpoint.endpoint_url);
+
+      const capabilitySnapshot = await discoverAgentCapabilities(
+        { id: endpoint.agent_id, agent_id: endpoint.agent_id, metadata: {} },
+        [endpoint as Record<string, unknown>],
+      );
+
       const profile = probe.status === "online" && endpoint.protocol === "erc8183"
         ? await fetchExecutionProfile(endpoint.endpoint_url)
         : { available: false as const, statusCode: null };
 
+      const previousMetadata = endpoint.metadata && typeof endpoint.metadata === "object"
+        ? endpoint.metadata as Record<string, unknown>
+        : {};
       const metadata = {
+        ...previousMetadata,
         checked_url: probe.checkedUrl,
         checker: "agentmarket-vercel-cron",
         checked_at: new Date().toISOString(),
+        capabilities: capabilitySnapshot.capabilities,
+        capabilities_source_urls: capabilitySnapshot.source_urls,
+        capabilities_discovered_at: capabilitySnapshot.discovered_at,
+        capabilities_discovery_source: "agentmarket_runtime_discovery",
         reported_execution_capital: profile.available ? profile.profile : null,
         reported_execution_capital_source: profile.available ? "live_agent_endpoint" : null,
         reported_execution_capital_url: profile.available ? profile.sourceUrl : null,
@@ -173,6 +190,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         statusCode: probe.statusCode,
         latencyMs: probe.latencyMs,
         checkedUrl: probe.checkedUrl,
+        capabilitySources: capabilitySnapshot.source_urls,
+        capabilityCount: capabilitySnapshot.capabilities.length,
         executionCapitalProfileReported: profile.available,
       });
     }
@@ -181,10 +200,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       (acc, row) => {
         acc.total += 1;
         acc[row.status] += 1;
+        acc.capabilityProfiles += row.capabilityCount > 0 ? 1 : 0;
         if (row.executionCapitalProfileReported) acc.executionCapitalProfiles += 1;
         return acc;
       },
-      { total: 0, online: 0, degraded: 0, offline: 0, executionCapitalProfiles: 0 } as Record<string, number>,
+      { total: 0, online: 0, degraded: 0, offline: 0, capabilityProfiles: 0, executionCapitalProfiles: 0 } as Record<string, number>,
     );
 
     return res.status(200).json({
@@ -192,7 +212,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       checkedAt: new Date().toISOString(),
       summary,
       results,
-      note: "Execution-capital profiles are agent-reported capability metadata and are not treated as proof of onchain authorization or custody.",
+      note: "Agent capabilities are discovered from registered or declared endpoints and stored as observed capability metadata. Execution-capital profiles remain agent-reported and are not treated as proof of onchain authorization or custody.",
     });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Unexpected server error" });
