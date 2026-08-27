@@ -13,14 +13,21 @@ export type GridPreflightInput = {
   amountOutMinimum: string;
 };
 
+function object(value: unknown) {
+  return value && typeof value === "object" ? value as Record<string, unknown> : {};
+}
+
+export function assertGridExecutionCapability(capability: Record<string, unknown>) {
+  if (capability.execution !== "altana-scoped-session" || capability.wallet_provider !== "altana" || capability.authorization_model !== "scoped_session") {
+    throw new Error("This Testnet execution adapter requires the Grid agent's verified scoped-session execution capability");
+  }
+}
+
 function executorPreflightUrl(request: Record<string, unknown>) {
   const configured = process.env.GRID_EXECUTION_ENDPOINT_URL?.trim() || "";
   if (configured) return `${configured.replace(/\/+$/, "")}/preflight/pancake`;
 
-  const evidence = request.evidence && typeof request.evidence === "object" ? request.evidence as Record<string, unknown> : {};
-  const capability = evidence.execution_capability && typeof evidence.execution_capability === "object"
-    ? evidence.execution_capability as Record<string, unknown>
-    : {};
+  const capability = object(object(request.evidence).execution_capability);
   const sourceUrl = typeof capability.source_url === "string" ? capability.source_url.trim() : "";
   if (!sourceUrl) throw new Error("Grid execution adapter has no configured endpoint or capability source URL");
   const parsed = new URL(sourceUrl);
