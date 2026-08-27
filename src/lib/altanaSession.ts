@@ -175,7 +175,7 @@ export async function grantAltanaExecutionSession(
     },
     expiry: input.expiry,
     chainId: 97,
-    register: true,
+    register: false,
   });
 
   return {
