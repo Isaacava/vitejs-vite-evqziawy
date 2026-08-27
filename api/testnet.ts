@@ -24,6 +24,7 @@ async function loadHandler(route: string): Promise<Handler | null> {
     case "settle-plan": return (await import("../server/_testnet/settle-plan.js")).default as Handler;
     case "sync-agent": return (await import("../server/_testnet/sync-agent.js")).default as Handler;
     case "transaction-preflight": return (await import("../server/_testnet/transaction-preflight.js")).default as Handler;
+    case "agent-adapter-resolution": return (await import("../server/_testnet/agent-adapter-resolution.js")).default as Handler;
     default: return null;
   }
 }
