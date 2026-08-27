@@ -98,10 +98,16 @@ export async function getAltanaGrantFeeReadiness(): Promise<GrantFeeReadiness> {
 /**
  * Grant a real Altana session to an agent's already-existing session key.
  *
+ * The grant is deliberately split into two SDK operations:
+ * 1. grantSession(..., register:false) creates the scoped session intent without
+ *    attempting a duplicate admin-key registration.
+ * 2. registerSessionKey(session) upgrades that session to a KeyStore-visible
+ *    registered key. The Altana SDK documents this operation as idempotent.
+ *
  * When the Altana wallet is short on native Testnet BNB, the same explicit
  * WalletConnect funding flow used during wallet creation is invoked to top it
- * up before retrying the grant. The user still approves the native transfer;
- * U trading capital is never transferred by this path.
+ * up before the registration/grant sequence. The user still approves the
+ * native transfer; U trading capital is never transferred by this path.
  */
 export async function grantAltanaExecutionSession(
   input: AltanaSessionGrantInput,
@@ -173,10 +179,17 @@ export async function grantAltanaExecutionSession(
     },
     expiry: input.expiry,
     chainId: 97,
-    // The Passkey wallet's admin key was already registered during wallet
-    // creation. Do not submit a duplicate KeyStore registration.
+    // The Passkey wallet's admin key is already registered during wallet
+    // creation. This first call intentionally avoids duplicate registration.
     register: false,
   });
+
+  // A register:false session is intentionally invisible to the KeyStore.
+  // Upgrade this exact session to a registry-visible key so AgentMarket can
+  // independently verify isValidKey(wallet, sessionKeyId). The SDK documents
+  // this operation as idempotent, so retries do not recreate the prior
+  // "KeyStore: key already registered" failure.
+  await client.registerSessionKey(result);
 
   return {
     walletAddress: resolved.walletAddress,
