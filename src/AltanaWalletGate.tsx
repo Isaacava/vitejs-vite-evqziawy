@@ -6,6 +6,7 @@ import {
   recoverAltanaWallet,
   type AltanaPasskeyReadiness,
   type AltanaWalletResolution,
+  type AltanaFundingResult,
 } from "./lib/altanaWallet";
 
 function compact(address: string) {
@@ -20,6 +21,7 @@ function readinessLabel(value: boolean | null) {
 export default function AltanaWalletGate({ onResolved }: { onResolved?: (value: AltanaWalletResolution) => void }) {
   const [state, setState] = useState<"idle" | "creating" | "recovering" | "ready" | "error">("idle");
   const [wallet, setWallet] = useState<AltanaWalletResolution | null>(() => getAltanaWalletResolution());
+  const [funding, setFunding] = useState<AltanaFundingResult | null>(null);
   const [readiness, setReadiness] = useState<AltanaPasskeyReadiness | null>(null);
   const [error, setError] = useState("");
 
@@ -44,10 +46,21 @@ export default function AltanaWalletGate({ onResolved }: { onResolved?: (value: 
   async function resolveWith(mode: "create" | "recover") {
     setState(mode === "create" ? "creating" : "recovering");
     setError("");
+    setFunding(null);
     try {
       const currentReadiness = await getAltanaPasskeyReadiness();
       setReadiness(currentReadiness);
-      const result = mode === "create" ? await createAltanaWallet() : await recoverAltanaWallet();
+
+      if (mode === "create") {
+        const result = await createAltanaWallet();
+        setWallet(result);
+        setFunding(result.funding);
+        setState("ready");
+        onResolved?.(result);
+        return;
+      }
+
+      const result = await recoverAltanaWallet();
       setWallet(result);
       setState("ready");
       onResolved?.(result);
@@ -57,6 +70,10 @@ export default function AltanaWalletGate({ onResolved }: { onResolved?: (value: 
     }
   }
 
+  const createLabel = state === "creating"
+    ? "Creating and funding Altana wallet…"
+    : "Create & fund Altana Passkey wallet →";
+
   return (
     <section className="border border-line rounded-[16px_8px_18px_9px] bg-paper p-5">
       <div className="flex items-start justify-between gap-4">
@@ -64,7 +81,7 @@ export default function AltanaWalletGate({ onResolved }: { onResolved?: (value: 
           <small className="block font-mono text-[8.5px] uppercase tracking-widest text-brass mb-1.5">Execution Capital · Wallet</small>
           <h3 className="font-display text-[18px] font-bold m-0">Your Altana execution wallet</h3>
           <p className="text-[11px] text-inksoft mt-1.5 max-w-[620px]">
-            AgentMarket WalletConnect remains your marketplace and ERC-8183 wallet. Altana uses a separate user-controlled Passkey smart wallet for scoped execution authority. This step does not transfer trading capital.
+            AgentMarket WalletConnect remains your marketplace and ERC-8183 wallet. Altana uses a separate user-controlled Passkey smart wallet for scoped execution authority. Creating a new Altana wallet automatically funds its Testnet setup from your connected AgentMarket wallet after the wallet is created; trading capital is not transferred here.
           </p>
         </div>
         <span className="font-mono text-[9px] px-2.5 py-1 rounded-lg status-brass">BSC TESTNET</span>
@@ -98,6 +115,11 @@ export default function AltanaWalletGate({ onResolved }: { onResolved?: (value: 
         <div className="mt-4 border border-green/30 bg-green/5 rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]">
           <strong className="text-green">Altana wallet ready ✓</strong>
           <div className="mt-1 font-mono text-[9px]">Wallet {compact(wallet.walletAddress)} · Passkey signer {compact(wallet.signerAddress)}</div>
+          {funding && (
+            <div className="mt-2 text-[10px] text-inksoft">
+              Setup funding confirmed: {funding.fundingAmountFormatted} tBNB from your AgentMarket wallet. Tx {compact(funding.transactionHash)}
+            </div>
+          )}
         </div>
       )}
 
@@ -111,7 +133,7 @@ export default function AltanaWalletGate({ onResolved }: { onResolved?: (value: 
             disabled={state === "creating" || state === "recovering"}
             className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym"
           >
-            {state === "creating" ? "Creating Passkey wallet…" : "Create Altana Passkey wallet →"}
+            {createLabel}
           </button>
           <button
             type="button"
@@ -122,6 +144,10 @@ export default function AltanaWalletGate({ onResolved }: { onResolved?: (value: 
             {state === "recovering" ? "Recovering…" : "Recover existing Altana wallet →"}
           </button>
         </div>
+      )}
+
+      {state === "creating" && (
+        <p className="mt-4 text-[10px] text-inksoft">After the Passkey wallet is created, WalletConnect will ask you to approve the small native tBNB Testnet setup transfer. No U token is transferred or approved.</p>
       )}
 
       {wallet && <p className="mt-4 text-[10px] text-inksoft">Your Passkey is the user authority for the Altana execution wallet. The agent only receives the separate session scope shown below.</p>}
