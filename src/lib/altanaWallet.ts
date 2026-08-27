@@ -1,6 +1,7 @@
 import { BNB_TESTNET, createClient } from "@altananetwork/sdk";
 import type { PasskeySigner, Wallet } from "@altananetwork/sdk";
-import type { Address } from "viem";
+import { createPublicClient, http, type Address, formatEther } from "viem";
+import { ensureWalletConnectedProvider } from "./walletAuth";
 
 export type AltanaWalletResolution = {
   walletAddress: Address;
@@ -18,13 +19,56 @@ export type AltanaPasskeyReadiness = {
   rpId: string;
 };
 
+export type AltanaFundingResult = {
+  walletAddress: Address;
+  senderAddress: Address;
+  fundingAmount: bigint;
+  fundingAmountFormatted: string;
+  registrationFee: bigint;
+  registrationFeeFormatted: string;
+  transactionHash: `0x${string}`;
+};
+
 const RP_NAME = "AgentMarket Testnet";
 const chainId = 97 as const;
+const ALTANA_KEYSTORE_CONTROLLER: Address = "0xb530D1971f5453F3359518343F05D0AedFfF7e12";
+const KEYSTORE_CONTROLLER_ABI = [{
+  type: "function",
+  name: "getRegistrationFeeInWei",
+  stateMutability: "view",
+  inputs: [],
+  outputs: [{ type: "uint256" }],
+}] as const;
+const EXTRA_NATIVE_BUFFER = 500_000_000_000_000n; // 0.0005 tBNB
+
+const publicClient = createPublicClient({
+  chain: BNB_TESTNET.chain,
+  transport: http(BNB_TESTNET.publicRpcUrl),
+});
 
 let cachedResolution: AltanaWalletResolution | null = null;
 
 function rpId() {
   return window.location.hostname;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function waitForTransactionReceipt(hash: `0x${string}`) {
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    const receipt = await publicClient.getTransactionReceipt({ hash }).catch(() => null);
+    if (receipt) {
+      if (receipt.status !== "success") {
+        throw new Error(`Altana wallet funding transaction reverted: ${hash}`);
+      }
+      return receipt;
+    }
+    await sleep(2_000);
+  }
+  throw new Error(`Altana wallet funding transaction did not confirm within 120 seconds: ${hash}`);
 }
 
 export async function getAltanaPasskeyReadiness(): Promise<AltanaPasskeyReadiness> {
@@ -89,7 +133,65 @@ function normalizeResolution(value: {
   };
 }
 
-export async function createAltanaWallet(): Promise<AltanaWalletResolution> {
+/**
+ * Fund a freshly created Altana wallet from the user's already-connected
+ * AgentMarket WalletConnect wallet. The user gets one normal wallet approval;
+ * no address copying or faucet step is required.
+ *
+ * The amount is two KeyStore registration fees plus a small native-tBNB
+ * buffer for relay/gas costs. This is separate from the 1 U trading-capital
+ * permission and does not transfer or approve U tokens.
+ */
+export async function fundAltanaWalletFromAgentMarketWallet(
+  walletAddress: Address,
+): Promise<AltanaFundingResult> {
+  const [providerState, registrationFee] = await Promise.all([
+    ensureWalletConnectedProvider(),
+    publicClient.readContract({
+      address: ALTANA_KEYSTORE_CONTROLLER,
+      abi: KEYSTORE_CONTROLLER_ABI,
+      functionName: "getRegistrationFeeInWei",
+    }),
+  ]);
+
+  const fundingAmount = registrationFee * 2n + EXTRA_NATIVE_BUFFER;
+
+  if (fundingAmount <= 0n) {
+    throw new Error("Altana Testnet funding amount could not be calculated.");
+  }
+
+  const senderAddress = providerState.address as Address;
+  const senderBalance = await publicClient.getBalance({ address: senderAddress });
+  if (senderBalance < fundingAmount) {
+    throw new Error(
+      `AgentMarket wallet ${senderAddress} has ${formatEther(senderBalance)} tBNB, but ${formatEther(fundingAmount)} tBNB is needed to fund the new Altana wallet.`,
+    );
+  }
+
+  const value = `0x${fundingAmount.toString(16)}`;
+  const hash = await providerState.provider.request({
+    method: "eth_sendTransaction",
+    params: [{
+      from: senderAddress,
+      to: walletAddress,
+      value,
+    }],
+  }) as `0x${string}`;
+
+  await waitForTransactionReceipt(hash);
+
+  return {
+    walletAddress,
+    senderAddress,
+    fundingAmount,
+    fundingAmountFormatted: formatEther(fundingAmount),
+    registrationFee,
+    registrationFeeFormatted: formatEther(registrationFee),
+    transactionHash: hash,
+  };
+}
+
+export async function createAltanaWallet(): Promise<AltanaWalletResolution & { funding: AltanaFundingResult }> {
   const readiness = await getAltanaPasskeyReadiness();
   assertPasskeyReady(readiness);
 
@@ -104,8 +206,9 @@ export async function createAltanaWallet(): Promise<AltanaWalletResolution> {
     signer: result.signer,
   });
 
+  const funding = await fundAltanaWalletFromAgentMarketWallet(resolved.walletAddress);
   cachedResolution = resolved;
-  return resolved;
+  return { ...resolved, funding };
 }
 
 export async function recoverAltanaWallet(): Promise<AltanaWalletResolution> {
