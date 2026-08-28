@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { createPublicClient, http, type Address, type Hex } from "viem";
+import { createPublicClient, encodeFunctionData, http, type Address, type Hex } from "viem";
 import { bscTestnet } from "viem/chains";
 import { getAuthenticatedUser, serverClient } from "../_auth.js";
 import { runGridPreflight, assertGridExecutionCapability, type GridPreflightInput } from "./gridExecutionAdapter.js";
@@ -17,6 +17,17 @@ const ERC20_BALANCE_ALLOWANCE_ABI = [
   { type: "function", name: "balanceOf", stateMutability: "view", inputs: [{ name: "owner", type: "address" }], outputs: [{ name: "balance", type: "uint256" }] },
   { type: "function", name: "allowance", stateMutability: "view", inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }], outputs: [{ name: "remaining", type: "uint256" }] },
 ] as const;
+
+const ERC20_APPROVE_ABI = [{
+  type: "function",
+  name: "approve",
+  stateMutability: "nonpayable",
+  inputs: [
+    { name: "spender", type: "address" },
+    { name: "amount", type: "uint256" },
+  ],
+  outputs: [{ name: "success", type: "bool" }],
+}] as const;
 
 const publicClient = createPublicClient({
   chain: bscTestnet,
@@ -144,6 +155,22 @@ async function readExecutionAssetState(token: Address, owner: Address, spender: 
   }
 }
 
+function buildScopedApproval(token: Address, owner: Address, spender: Address, amount: bigint) {
+  return {
+    chain_id: TESTNET_CHAIN_ID,
+    token,
+    owner,
+    spender,
+    amount_raw: amount.toString(),
+    data: encodeFunctionData({
+      abi: ERC20_APPROVE_ABI,
+      functionName: "approve",
+      args: [spender, amount],
+    }),
+    note: "Approve exactly the requested execution amount for the verified provider target. AgentMarket never requires an unlimited approval.",
+  };
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const auth = await getAuthenticatedUser(req);
@@ -237,6 +264,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(409).json({
         error: "Execution router allowance is below the requested execution amount",
         asset_state: assetState,
+        approval_required: true,
+        approval_transaction: buildScopedApproval(requestedTokenIn, executionWallet, router, requestedAmountIn),
       });
     }
 
