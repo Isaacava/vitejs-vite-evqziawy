@@ -31,13 +31,10 @@ const quoteId = params.get("quote");
 const jobId = params.get("job");
 const path = window.location.pathname;
 
-function renderWorkspace(element: React.ReactNode) {
-  return <WorkspaceShell>{element}</WorkspaceShell>;
-}
+function renderWorkspace(element: React.ReactNode) { return <WorkspaceShell>{element}</WorkspaceShell>; }
 
 function renderApp() {
   if ((path === "/" || path === "/mission") && jobId) return renderWorkspace(<WorkspaceMissionConsole />);
-
   if (path === "/") return <LandingEntry />;
   if (path === "/dashboard") return renderWorkspace(<UserDashboard />);
   if (path === "/discover") return renderWorkspace(<DiscoverPage />);
@@ -46,13 +43,11 @@ function renderApp() {
   if (path === "/activity") return renderWorkspace(<DemoActivityPage />);
   if (path === "/payments") return renderWorkspace(<DemoPaymentsPage />);
   if (path === "/app") return renderWorkspace(<MarketplaceWorkspace />);
-
   if (path === "/testnet") return renderWorkspace(<TestnetConsole />);
   if (path === "/testnet/manage") return renderWorkspace(<TestnetConsole />);
   if (path === "/testnet/swap") return renderWorkspace(<TestnetSwap />);
   if (path === "/agents/register") return renderWorkspace(<DemoManagePage kind="register" />);
   if (path === "/permissions") return renderWorkspace(<DemoManagePage kind="permissions" />);
-
   if (path === "/testnet/execute") return renderWorkspace(<TestnetQuoteExecutionWalletConnect />);
   if (path === "/testnet/provider-submit") return renderWorkspace(<TestnetProviderSubmit />);
   if (path === "/testnet/quote-gate" && missionId && quoteId) return renderWorkspace(<TestnetQuoteGate />);
@@ -63,10 +58,7 @@ function renderApp() {
   if (path === "/testnet/providers") return renderWorkspace(<TestnetProviderReadiness />);
   if (path === "/testnet/preflight") return renderWorkspace(<TestnetTransactionPreflight />);
   if (path === "/testnet/run") return renderWorkspace(<TestnetGridRun />);
-
   return renderWorkspace(<TestnetConsole />);
 }
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>{renderApp()}</React.StrictMode>,
-);
+ReactDOM.createRoot(document.getElementById("root")!).render(<React.StrictMode>{renderApp()}</React.StrictMode>);
