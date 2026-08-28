@@ -13,27 +13,14 @@ const ERC20_ABI = [
   { type: "function", name: "symbol", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
 ] as const;
 
-function isAddress(value: unknown): value is Address {
-  return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value);
-}
-
-function executionObject(value: unknown) {
-  return value && typeof value === "object" ? value as Record<string, unknown> : {};
-}
-
+function isAddress(value: unknown): value is Address { return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value); }
+function executionObject(value: unknown) { return value && typeof value === "object" ? value as Record<string, unknown> : {}; }
 function metadataCapabilityUrls(agent: Record<string, unknown>) {
   const metadata = agent.metadata && typeof agent.metadata === "object" ? agent.metadata as Record<string, unknown> : {};
   const execution = metadata.execution && typeof metadata.execution === "object" ? executionObject(metadata.execution) : {};
-  return [
-    metadata.execution_capabilities_url,
-    metadata.execution_capability_url,
-    execution.execution_capabilities_url,
-    execution.execution_capability_url,
-    execution.capabilities_url,
-    execution.capability_url,
-  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => value.trim());
+  return [metadata.execution_capabilities_url, metadata.execution_capability_url, execution.execution_capabilities_url, execution.execution_capability_url, execution.capabilities_url, execution.capability_url]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => value.trim());
 }
-
 async function fetchJson(url: string) {
   const response = await fetch(url, { headers: { Accept: "application/json" } });
   if (!response.ok) throw new Error(`Execution capability endpoint returned HTTP ${response.status}`);
@@ -48,11 +35,11 @@ async function resolveRequirement(jobId: string, userId: string, wallet: string 
   if (!wallet || String(job.client_wallet || "").toLowerCase() !== wallet.toLowerCase()) throw new Error("The authenticated wallet does not own this job");
   if (!job.mission_task_id) throw new Error("Job is not attached to a mission task");
 
-  const { data: task, error: taskError } = await supabase.from("mission_tasks").select("id,agent_id").eq("id", job.mission_task_id).maybeSingle();
+  const { data: task, error: taskError } = await supabase.from("mission_tasks").select("id,mission_id,agent_id").eq("id", job.mission_task_id).maybeSingle();
   if (taskError) throw new Error(taskError.message);
-  if (!task?.agent_id) throw new Error("Job does not identify a provider agent");
+  if (!task?.agent_id || !task.mission_id) throw new Error("Job does not identify a provider agent or mission");
 
-  const { data: mission, error: missionError } = await supabase.from("missions").select("id,user_id").eq("id", task.mission_id || "").maybeSingle();
+  const { data: mission, error: missionError } = await supabase.from("missions").select("id,user_id").eq("id", task.mission_id).maybeSingle();
   if (missionError) throw new Error(missionError.message);
   if (!mission || mission.user_id !== userId) throw new Error("You do not own this mission");
 
@@ -62,11 +49,7 @@ async function resolveRequirement(jobId: string, userId: string, wallet: string 
 
   const { data: endpoints, error: endpointError } = await supabase.from("agent_endpoints").select("id,endpoint_url,status").eq("agent_id", agent.id).limit(20);
   if (endpointError) throw new Error(endpointError.message);
-
-  const candidates = [
-    ...metadataCapabilityUrls(agent as Record<string, unknown>),
-    ...(endpoints || []).map((endpoint) => `${String(endpoint.endpoint_url).replace(/\/+$/, "")}/execution-capabilities`),
-  ];
+  const candidates = [...metadataCapabilityUrls(agent as Record<string, unknown>), ...(endpoints || []).map((endpoint) => `${String(endpoint.endpoint_url).replace(/\/+$/, "")}/execution-capabilities`)];
   const unique = [...new Set(candidates)];
   if (unique.length === 0) throw new Error("Provider has no execution capability endpoint");
 
@@ -81,7 +64,7 @@ async function resolveRequirement(jobId: string, userId: string, wallet: string 
         break;
       }
     } catch {
-      // Try the next declared provider endpoint.
+      // Try another declared/registered endpoint.
     }
   }
   if (!capability) throw new Error("Provider execution capability could not be verified");
@@ -89,12 +72,11 @@ async function resolveRequirement(jobId: string, userId: string, wallet: string 
   const market = executionObject(capability.execution_market);
   const token = market.token_in;
   if (!isAddress(token)) throw new Error("Provider execution capability did not declare a valid execution token");
-
   const [decimals, chainSymbol] = await Promise.all([
     publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" }),
     publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol" }).catch(() => "TOKEN"),
   ]);
-
+  const tokenDecimals = Number(decimals);
   const symbol = typeof market.token_in_symbol === "string" && market.token_in_symbol.trim() ? market.token_in_symbol.trim() : String(chainSymbol);
   const requestedAmount = "1";
 
@@ -112,11 +94,11 @@ async function resolveRequirement(jobId: string, userId: string, wallet: string 
       fee: Number.isInteger(Number(market.fee)) ? Number(market.fee) : null,
     },
     execution_capital: {
-      token: token,
+      token,
       symbol,
-      decimals: Number(decimals),
+      decimals: tokenDecimals,
       required_amount: requestedAmount,
-      required_amount_raw: (BigInt(requestedAmount) * 10n ** BigInt(Number(decimals))).toString(),
+      required_amount_raw: (BigInt(requestedAmount) * 10n ** BigInt(tokenDecimals)).toString(),
     },
   };
 }
@@ -128,8 +110,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!auth) return res.status(401).json({ error: "Authenticated AgentMarket session required" });
     const jobId = typeof req.query?.job === "string" ? req.query.job.trim() : "";
     if (!jobId) return res.status(400).json({ error: "job is required" });
-    const result = await resolveRequirement(jobId, auth.user.id, auth.user.wallet_address);
-    return res.status(200).json({ ok: true, ...result });
+    return res.status(200).json({ ok: true, ...(await resolveRequirement(jobId, auth.user.id, auth.user.wallet_address)) });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to resolve execution capital requirement";
     return res.status(409).json({ error: message });
