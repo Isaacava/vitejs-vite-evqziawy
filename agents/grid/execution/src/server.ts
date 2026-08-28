@@ -7,9 +7,6 @@ import { observeTestnetReceipt } from "./receipt.js";
 import { getExecutionReadiness } from "./readiness.js";
 import type { GridCall, GridSessionDescriptor } from "./types.js";
 
-// Railway reserves process.env.PORT for the public FastAPI service. The
-// Altana executor must use a separate localhost-only port inside the same
-// container so the two servers never compete for Railway's public port.
 const PORT = Number(process.env.GRID_EXECUTION_PORT || 8788);
 const SESSION_PRIVATE_KEY = process.env.ALTANA_SESSION_PRIVATE_KEY || "";
 
@@ -101,12 +98,7 @@ function publicExecutionCapabilities() {
     configuration: configured,
   };
 
-  if (!configured.session_private_key_configured) {
-    return {
-      ...base,
-      execution_ready: false,
-    };
-  }
+  if (!configured.session_private_key_configured) return { ...base, execution_ready: false };
 
   const account = privateKeyToAccount((SESSION_PRIVATE_KEY.startsWith("0x") ? SESSION_PRIVATE_KEY : `0x${SESSION_PRIVATE_KEY}`) as `0x${string}`);
   return {
@@ -120,27 +112,20 @@ function publicExecutionCapabilities() {
 const server = createServer(async (req, res) => {
   try {
     if (req.method === "GET" && req.url === "/health") {
-      return json(res, 200, {
-        ...publicExecutionCapabilities(),
-        service: "AgentMarket Grid Altana Execution",
-      });
+      return json(res, 200, { ...publicExecutionCapabilities(), service: "Grid Agent Execution" });
     }
-
     if (req.method === "GET" && req.url === "/execution-capabilities") {
       return json(res, 200, publicExecutionCapabilities());
     }
-
     if (req.method === "GET" && req.url === "/execution-readiness") {
       return json(res, 200, await getExecutionReadiness());
     }
-
     if (req.method === "POST" && req.url === "/preflight/pancake") {
       if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "Grid execution service is not configured" });
       const request = await body(req) as Record<string, unknown>;
       const result = await pancakeSwapPreflight(request);
       return json(res, 200, { ok: true, result });
     }
-
     if (req.method === "GET" && req.url?.startsWith("/receipt/")) {
       if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "Grid execution service is not configured" });
       const hash = decodeURIComponent(req.url.slice("/receipt/".length)).split("?", 1)[0];
@@ -148,20 +133,11 @@ const server = createServer(async (req, res) => {
       const result = await observeTestnetReceipt(hash);
       return json(res, 200, { ok: true, result });
     }
-
-    if (req.method !== "POST" || req.url !== "/execute") {
-      return json(res, 404, { error: "Not found" });
-    }
-
+    if (req.method !== "POST" || req.url !== "/execute") return json(res, 404, { error: "Not found" });
     if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "ALTANA_SESSION_PRIVATE_KEY is not configured" });
 
     const readiness = await getExecutionReadiness();
-    if (!readiness.ready) {
-      return json(res, 503, {
-        error: "Grid execution service is not execution-ready",
-        readiness,
-      });
-    }
+    if (!readiness.ready) return json(res, 503, { error: "Grid execution service is not execution-ready", readiness });
 
     const request = await body(req) as Record<string, unknown>;
     const session = descriptor(request.session);
@@ -169,11 +145,11 @@ const server = createServer(async (req, res) => {
     const result = await executeGridAction(session, proposedCalls, SESSION_PRIVATE_KEY);
     return json(res, 200, { ok: true, result });
   } catch (error) {
-    console.error("Grid Altana execution request failed", error);
+    console.error("Grid execution request failed", error);
     return json(res, 400, { ok: false, error: error instanceof Error ? error.message : "Execution request failed" });
   }
 });
 
 server.listen(PORT, "127.0.0.1", () => {
-  console.log(`Grid Altana execution service listening on ${PORT} (localhost / BSC Testnet / chain 97)`);
+  console.log(`Grid execution service listening on ${PORT} (localhost / BSC Testnet / chain 97)`);
 });
