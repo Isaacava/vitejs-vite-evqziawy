@@ -3,7 +3,7 @@ import { normalizeAgentCapability } from "../../src/lib/agentCapability.js";
 
 const TIMEOUT_MS = 8_000;
 const MAX_BYTES = 128 * 1024;
-const MCP_PROTOCOL_VERSION = "2025-06-18";
+const MCP_PROTOCOL_VERSION = "2026-07-28";
 
 function object(value: unknown) {
   return value && typeof value === "object" ? value as Record<string, unknown> : {};
