@@ -105,16 +105,17 @@ export async function getAltanaGrantFeeReadiness(): Promise<GrantFeeReadiness> {
 /**
  * Grant a real Altana session to an agent's already-existing session key.
  *
- * The grant is performed as one SDK grant operation with registration enabled.
+ * The grant deliberately skips KeyStore registration in the initial grant
+ * transaction. Registration is performed as a second, idempotent SDK call.
+ * This avoids bundling grant + session-key registration into one operation,
+ * which is the path that was producing InvalidNonce when the browser retried
+ * an already-partially-registered session. Altana's registerSessionKey() checks
+ * the registry first and submits nothing when the key is already registered.
+ *
  * The session includes both the user-authorized U-token spend cap and a small
  * native BNB allowance because Altana relay execution consumes native spend
  * permission for gas recovery. Omitting the native entry causes execute()
  * to revert with NoSpendPermissions even when the token cap is present.
- *
- * When the Altana wallet is short on native Testnet BNB, the same explicit
- * WalletConnect funding flow used during wallet creation is invoked to top it
- * up before the registration/grant sequence. The user still approves the
- * native transfer; U trading capital is never transferred by this path.
  */
 export async function grantAltanaExecutionSession(
   input: AltanaSessionGrantInput,
@@ -181,6 +182,9 @@ export async function grantAltanaExecutionSession(
   const spendPermissions = [tokenSpendPermission, nativeSpendPermission] as const;
   const calls = allowedCalls.map((to) => ({ to }));
 
+  // Phase 1: authorize the session on the Altana account without registering
+  // its KeyStore entry in the same relay intent. The official SDK documents
+  // register:false specifically for ephemeral/lazy-registration sessions.
   const result = await client.grantSession({
     wallet: resolved.wallet,
     signer: resolved.signer,
@@ -191,8 +195,22 @@ export async function grantAltanaExecutionSession(
     },
     expiry: input.expiry,
     chainId: 97,
-    register: true,
+    register: false,
   });
+
+  // Phase 2: register the exact same session key in KeyStore. This call is
+  // idempotent: if a previous attempt already registered this key, the SDK
+  // returns alreadyRegistered=true without submitting another transaction.
+  const registration = await client.registerSessionKey({
+    wallet: resolved.wallet,
+    signer: resolved.signer,
+    session: result,
+    chainId: 97,
+  });
+
+  const transactionHash = registration.alreadyRegistered
+    ? result.transactionHash
+    : registration.transactionHash ?? result.transactionHash;
 
   return {
     walletAddress: resolved.walletAddress,
@@ -204,6 +222,6 @@ export async function grantAltanaExecutionSession(
       calls,
       spend: spendPermissions,
     },
-    transactionHash: result.transactionHash,
+    ...(transactionHash ? { transactionHash } : {}),
   };
 }
