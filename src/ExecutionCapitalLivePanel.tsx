@@ -12,6 +12,8 @@ type AssetChecks = {
   token_in_allowance?: string;
   token_in_balance_ok?: boolean;
   token_in_allowance_ok?: boolean;
+  sufficient_balance?: boolean;
+  sufficient_allowance?: boolean;
 };
 
 type PreflightResponse = {
