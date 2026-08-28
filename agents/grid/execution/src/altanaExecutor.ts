@@ -1,4 +1,4 @@
-import { BNB_TESTNET, createClient } from "@altananetwork/sdk";
+import { BNB_TESTNET, createClient, signerFromPrivateKey } from "@altananetwork/sdk";
 import type { Address, Hex } from "viem";
 import { privateKeyToAccount, publicKeyToAddress } from "viem/accounts";
 import type { GridCall, GridExecutionResult, GridSessionDescriptor } from "./types.js";
@@ -43,12 +43,7 @@ export function reconstructSession(
 
   return {
     walletAddress: descriptor.walletAddress,
-    signer: {
-      type: "privateKey" as const,
-      address: account.address,
-      publicKey: descriptor.agentSessionPublicKey,
-      signDigest: async (digest: Hex): Promise<Hex> => account.sign({ hash: digest }),
-    },
+    signer: signerFromPrivateKey(privateKey),
     publicKey: descriptor.agentSessionPublicKey,
     permissions: {
       calls: descriptor.allowedCalls.map((to) => ({ to })),
