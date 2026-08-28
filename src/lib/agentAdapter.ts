@@ -44,6 +44,36 @@ function findBest(snapshot: AgentCapabilitySnapshot, kind: AgentCapabilityKind) 
   return snapshot.capabilities.find((capability) => capability.kind === kind) ?? null;
 }
 
+function confidenceForCapability(capability: AgentCapability): { level: "high" | "medium" | "low"; reason: string } {
+  if (!capability.endpoint) {
+    return { level: "low", reason: "No callable endpoint was discovered" };
+  }
+
+  const evidence = capability.evidence;
+  if (!evidence) {
+    return { level: "medium", reason: "Endpoint was discovered without explicit provenance metadata" };
+  }
+
+  const observedAt = Date.parse(evidence.observed_at);
+  if (!Number.isFinite(observedAt)) {
+    return { level: "medium", reason: `Evidence source: ${evidence.source_kind}; observation time is not parseable` };
+  }
+
+  const ageMs = Math.max(0, Date.now() - observedAt);
+  const ageHours = ageMs / (60 * 60 * 1000);
+  const ageDays = ageHours / 24;
+
+  if (ageHours <= 24 && ["agent_card", "mcp_discovery", "mcp_tools"].includes(evidence.source_kind)) {
+    return { level: "high", reason: `Fresh ${evidence.source_kind.replaceAll("_", " ")} evidence observed within 24 hours` };
+  }
+
+  if (ageDays <= 7) {
+    return { level: "medium", reason: `${evidence.source_kind.replaceAll("_", " ")} evidence observed within 7 days` };
+  }
+
+  return { level: "low", reason: `Capability evidence is ${Math.floor(ageDays)} days old` };
+}
+
 export function selectAgentAdapter(snapshot: AgentCapabilitySnapshot, preferredKind: AgentCapabilityKind = "task_submission"): AgentAdapterSelection {
   const preferred = findBest(snapshot, preferredKind);
   const candidates = preferred ? [preferred, ...snapshot.capabilities.filter((item) => item !== preferred)] : snapshot.capabilities;
@@ -51,11 +81,16 @@ export function selectAgentAdapter(snapshot: AgentCapabilitySnapshot, preferredK
   for (const capability of candidates) {
     const protocol = protocolFromCapability(capability);
     if (protocol) {
-      const reasons = [`Observed ${capability.kind} capability`, `Compatible ${protocol.toUpperCase()} transport/protocol evidence`];
+      const confidence = confidenceForCapability(capability);
+      const reasons = [
+        `Observed ${capability.kind} capability`,
+        `Compatible ${protocol.toUpperCase()} transport/protocol evidence`,
+        confidence.reason,
+      ];
       return {
         adapter: protocol,
         capability,
-        confidence: capability.endpoint ? "high" : "medium",
+        confidence: confidence.level,
         reasons,
       };
     }
@@ -63,11 +98,16 @@ export function selectAgentAdapter(snapshot: AgentCapabilitySnapshot, preferredK
 
   const execution = findBest(snapshot, "execution");
   if (execution) {
+    const confidence = confidenceForCapability(execution);
     return {
       adapter: "execution",
       capability: execution,
-      confidence: execution.endpoint ? "medium" : "low",
-      reasons: ["Execution capability was observed", "No provider-specific execution system was inferred"],
+      confidence: confidence.level === "high" ? "medium" : confidence.level,
+      reasons: [
+        "Execution capability was observed",
+        "No provider-specific execution system was inferred",
+        confidence.reason,
+      ],
     };
   }
 
