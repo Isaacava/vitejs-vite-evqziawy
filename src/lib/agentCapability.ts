@@ -18,6 +18,12 @@ export type AgentCapabilityTransport =
   | "mcp"
   | "unknown";
 
+export type AgentCapabilityEvidence = {
+  source_url: string | null;
+  observed_at: string;
+  source_kind: "agent_card" | "mcp_discovery" | "mcp_tools" | "generic_capability" | "registered_endpoint" | "unknown";
+};
+
 export type AgentCapability = {
   kind: AgentCapabilityKind;
   name: string;
@@ -35,6 +41,7 @@ export type AgentCapability = {
   networks?: Array<{ chain_id: number; name?: string | null }>;
   assets?: Array<{ address: string; symbol?: string | null; decimals?: number | null }>;
   limits?: Record<string, unknown>;
+  evidence?: AgentCapabilityEvidence;
   metadata?: Record<string, unknown>;
 };
 
@@ -45,6 +52,16 @@ export type AgentCapabilitySnapshot = {
   capabilities: AgentCapability[];
   raw?: Record<string, unknown> | null;
 };
+
+function sourceKind(value: unknown, transport: AgentCapabilityTransport): AgentCapabilityEvidence["source_kind"] {
+  const raw = typeof value === "string" ? value.toLowerCase() : "";
+  if (raw === "a2a_agent_card" || transport === "a2a") return "agent_card";
+  if (raw === "mcp_discovery") return "mcp_discovery";
+  if (raw === "mcp_tools_list" || transport === "mcp") return "mcp_tools";
+  if (raw === "generic_capability") return "generic_capability";
+  if (raw === "registered_endpoint") return "registered_endpoint";
+  return "unknown";
+}
 
 export function normalizeAgentCapability(value: unknown, sourceUrl?: string): AgentCapability | null {
   if (!value || typeof value !== "object") return null;
@@ -72,6 +89,10 @@ export function normalizeAgentCapability(value: unknown, sourceUrl?: string): Ag
   const methods = Array.isArray(raw.methods)
     ? raw.methods.filter((item): item is string => typeof item === "string")
     : undefined;
+  const rawMetadata = raw.metadata && typeof raw.metadata === "object" ? raw.metadata as Record<string, unknown> : {};
+  const observedAt = typeof rawMetadata.observed_at === "string" && rawMetadata.observed_at.trim()
+    ? rawMetadata.observed_at.trim()
+    : new Date().toISOString();
 
   return {
     kind: normalizedKind,
@@ -102,6 +123,11 @@ export function normalizeAgentCapability(value: unknown, sourceUrl?: string): Ag
         })
       : undefined,
     limits: raw.limits && typeof raw.limits === "object" ? raw.limits as Record<string, unknown> : undefined,
+    evidence: {
+      source_url: sourceUrl || null,
+      observed_at: observedAt,
+      source_kind: sourceKind(rawMetadata.source_type, transport),
+    },
     metadata: {
       ...raw,
       discovery_source: sourceUrl || null,
