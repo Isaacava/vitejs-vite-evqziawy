@@ -1,53 +1,78 @@
-# AgentMarket Grid Agent
+# Grid Agent
 
-This is the single first-party agent used to prove the marketplace lifecycle end to end.
+Grid is a standalone BSC Testnet agent that accepts work directly from users
+and can also expose the ERC-8183 provider interface for external marketplaces
+and hiring systems.
 
-## Environment boundary
+AgentMarket is **not** part of Grid's runtime contract. A user or integrator
+can discover Grid, request a quote, submit a task, receive a result, and use
+its execution interfaces without installing, configuring, or knowing anything
+about AgentMarket.
 
-The Grid Agent is **BSC Testnet only**. It must never share the production marketplace's BSC Mainnet contracts, payment token, provider endpoint, database records, or job IDs.
+## Network boundary
 
-- Grid Agent test runtime: **BSC Testnet, chain ID 97**.
-- Production AgentMarket: **BSC Mainnet, chain ID 56**.
-- Testnet jobs are test jobs only and must not be reused or replayed against mainnet.
-- Testnet provider URLs should live in a dedicated test environment/service deployment.
-- Mainnet AgentMarket readiness must ignore testnet endpoint health records.
+Grid is **BSC Testnet only** while this runtime is being developed.
 
-BNB Chain documents BSC Testnet as chain ID 97 and BSC Mainnet as chain ID 56. citeturn307661search0turn307661search1
+- Network: **BSC Testnet**
+- Chain ID: **97**
+- Testnet jobs and execution evidence must never be reused against BSC Mainnet.
 
-## Scope
+## Direct agent interface
 
-The first test version is **strategy-only**:
+The public FastAPI service exposes an agent-owned API:
 
-- accepts a funded ERC-8183 job;
-- validates the grid parameters;
-- produces a deterministic grid strategy deliverable;
-- submits the deliverable through the BNB Agent SDK service layer;
-- does not custody user private keys;
-- does not execute trades or move user funds.
+- `GET /v1/capabilities` — machine-readable capabilities and supported interfaces.
+- `POST /v1/quote` — request a task quote before starting work.
+- `POST /v1/tasks` — submit a direct user task.
+- `GET /v1/tasks/{task_id}` — retrieve the stored task result.
+- `GET /v1/execution-capabilities` — inspect the optional scoped execution capability.
+- `POST /v1/preflight/pancake` — read-only execution preflight.
+- `POST /v1/execute` — submit an already-authorized scoped execution request.
+- `GET /v1/receipt/{transaction_hash}` — independently observe a Testnet receipt.
 
-This is intentional. It lets AgentMarket prove discovery → provider readiness → quote → ERC-8183 job → funded job → agent execution → deliverable → evaluation/settlement before adding a real DeFi execution adapter.
+The current task implementation generates deterministic grid strategies. It
+can therefore be used directly even when no marketplace is involved.
+
+## ERC-8183 integration
+
+ERC-8183 is an optional hiring/payment interface, not Grid's identity.
+Grid can act as an ERC-8183 provider by exposing `/erc8183`, negotiating terms,
+watching for funded jobs, producing the same portable deliverable, and
+submitting the result on-chain.
+
+The ERC-8183 layer is deliberately thin: external hiring systems may use it,
+while direct users can use `/v1/*` without it.
+
+## Execution security
+
+Grid's execution wallet, scoped session key, target allowlist, selector
+allowlist, and protocol-specific preflight are controlled by Grid itself.
+Those values are agent infrastructure and are never treated as marketplace
+compatibility requirements.
+
+Execution is fail-closed on BSC Testnet. The agent does not expose private keys
+through its public capability manifest, and transaction receipts are observed
+independently before execution evidence is marked verified.
 
 ## Current files
 
-- `app/agent/main.py` — Grid strategy logic and deliverable generation.
-- `app/service/main.py` — public ERC-8183 service adapter using `bnbagent[server]`.
-
-## BNB Agent Studio path
-
-The official BNB Agent Studio quickstart uses a two-layer seller (agent + service) and the ERC-8183 service watches for funded jobs before invoking the agent logic. This repository mirrors that boundary for the first-party Grid test agent.
+- `app/agent/main.py` — portable task and grid-strategy logic.
+- `app/service/main.py` — public direct-user API and ERC-8183 provider adapter.
+- `execution/src/*` — scoped Testnet execution, risk checks, and receipt observation.
 
 ## Configuration
 
-The Grid Agent should be deployed separately from the Vite production marketplace. Use BSC Testnet while developing and validating the integration.
+A deployment may use its own runtime secret store for its own wallet and
+execution session credentials.
 
 ```text
 NETWORK=bsc-testnet
-WALLET_PASSWORD=<testnet-agent-wallet-password>
-PRIVATE_KEY=<testnet-agent-wallet-key; first run only>
-ERC8183_AGENT_URL=https://<testnet-service-host>/erc8183
-ERC8183_SERVICE_PRICE=<quoted minimum in raw test settlement-token units>
+ERC8183_AGENT_URL=https://<your-service-host>/erc8183
+ERC8183_SERVICE_PRICE=<quoted minimum in raw settlement-token units>
+ERC8183_FUNDED_POLL_INTERVAL=30
+PRIVATE_KEY=<agent wallet key>
+WALLET_PASSWORD=<agent wallet password>
 ```
 
-Before the test deployment, configure a real `max_price`/service price and a public **testnet** service URL, then register/update the ERC-8004 endpoint for that testnet identity.
-
-The Grid Agent should only be marked **READY TO HIRE in the test environment** after its testnet service endpoint is healthy and the provider can negotiate/accept the testnet ERC-8183 job flow.
+ERC-8183 configuration is only for agents that choose to participate in that
+protocol. It is not an AgentMarket-specific requirement.
