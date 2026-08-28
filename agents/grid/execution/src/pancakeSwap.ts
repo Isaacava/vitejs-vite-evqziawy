@@ -38,6 +38,9 @@ const ERC20_ABI = [
   },
 ] as const;
 
+export const PANCAKE_TESTNET_WBNB: Address = "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd";
+export const PANCAKE_TESTNET_CAKE2: Address = "0x8d008B313C1d6C7fE2982F62d32Da7507cF43551";
+
 function address(value: string, field: string): Address {
   if (!/^0x[a-fA-F0-9]{40}$/.test(value)) throw new Error(`${field} must be a valid EVM address`);
   return value as Address;
@@ -62,11 +65,7 @@ export type PancakeExactInputSingleParams = {
   nativeValue?: bigint;
 };
 
-export function buildPancakeApproval(
-  token: string,
-  router: string,
-  amount: string,
-): GridCall {
+export function buildPancakeApproval(token: string, router: string, amount: string): GridCall {
   const tokenAddress = address(token, "token");
   const routerAddress = address(router, "router");
   const rawAmount = positive(amount, "amount");
@@ -118,17 +117,25 @@ export function buildPancakeExactInputSingle(params: PancakeExactInputSinglePara
 }
 
 export function buildPancakeTestnetConfig(env: NodeJS.ProcessEnv = process.env) {
-  const rawRouter = env.PANCAKE_TESTNET_ROUTER?.trim() || "";
-  if (!rawRouter) throw new Error("PANCAKE_TESTNET_ROUTER must be configured for the Grid Testnet executor");
+  const rawRouter = env.PANCAKE_TESTNET_ROUTER?.trim() || "0x9a489505a00cE272eAa5e07Dba6491314CaE3796";
   const router = address(rawRouter, "PANCAKE_TESTNET_ROUTER");
   const fee = Number(env.PANCAKE_TESTNET_POOL_FEE || "2500");
   if (!Number.isInteger(fee) || fee < 0 || fee > 1_000_000) throw new Error("PANCAKE_TESTNET_POOL_FEE is invalid");
+
+  const rawTokenIn = env.GRID_DEFAULT_TOKEN_IN?.trim() || PANCAKE_TESTNET_CAKE2;
+  const rawTokenOut = env.GRID_DEFAULT_TOKEN_OUT?.trim() || PANCAKE_TESTNET_WBNB;
+  const tokenIn = address(rawTokenIn, "GRID_DEFAULT_TOKEN_IN");
+  const tokenOut = address(rawTokenOut, "GRID_DEFAULT_TOKEN_OUT");
 
   return {
     chainId: 97 as const,
     router,
     fee,
-    note: "BSC Testnet only. Router and pool fee come from the isolated Grid executor configuration; token addresses and execution amounts must be supplied explicitly.",
+    tokenIn,
+    tokenOut,
+    tokenInSymbol: env.GRID_DEFAULT_TOKEN_IN_SYMBOL?.trim() || "CAKE2",
+    tokenOutSymbol: env.GRID_DEFAULT_TOKEN_OUT_SYMBOL?.trim() || "WBNB",
+    note: "BSC Testnet only. The Grid Agent defaults to the existing PancakeSwap CAKE2/WBNB execution market; token addresses and amounts remain configurable per provider scope.",
   };
 }
 
