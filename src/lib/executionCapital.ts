@@ -9,6 +9,14 @@ export type ExecutionCapitalStatus =
 
 export const TESTNET_U_TOKEN_ADDRESS = "0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565" as const;
 
+export type ExecutionMarketDescriptor = {
+  token_in: `0x${string}`;
+  token_out: `0x${string}` | null;
+  token_in_symbol: string;
+  token_out_symbol: string | null;
+  fee: number | null;
+};
+
 export type ExecutionCapabilityDescriptor = {
   network: "bsc-testnet";
   chainId: 97;
@@ -21,6 +29,7 @@ export type ExecutionCapabilityDescriptor = {
   allowed_selectors: readonly `0x${string}`[];
   selectors_required: true;
   private_key_exposed: false;
+  execution_market?: ExecutionMarketDescriptor;
   source_url: string;
   endpoint_id: string;
   endpoint_status: string | null;
@@ -85,6 +94,17 @@ function isSelector(value: unknown): value is `0x${string}` {
   return typeof value === "string" && /^0x[a-fA-F0-9]{8}$/.test(value);
 }
 
+function parseExecutionMarket(value: unknown): ExecutionMarketDescriptor | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const market = value as Record<string, unknown>;
+  if (!isAddress(market.token_in)) return undefined;
+  const tokenOut = market.token_out === null || market.token_out === undefined ? null : isAddress(market.token_out) ? market.token_out : null;
+  const tokenInSymbol = typeof market.token_in_symbol === "string" && market.token_in_symbol.trim() ? market.token_in_symbol.trim() : "TOKEN";
+  const tokenOutSymbol = typeof market.token_out_symbol === "string" && market.token_out_symbol.trim() ? market.token_out_symbol.trim() : null;
+  const fee = market.fee === null || market.fee === undefined ? null : Number(market.fee);
+  return { token_in: market.token_in, token_out: tokenOut, token_in_symbol: tokenInSymbol, token_out_symbol: tokenOutSymbol, fee: Number.isInteger(fee) ? fee : null };
+}
+
 export function getExecutionCapability(request: ExecutionCapitalRequest | null | undefined): ExecutionCapabilityDescriptor | null {
   const raw = request?.evidence?.execution_capability;
   if (!raw || typeof raw !== "object") return null;
@@ -123,6 +143,7 @@ export function getExecutionCapability(request: ExecutionCapitalRequest | null |
     allowed_selectors: value.allowed_selectors,
     selectors_required: true,
     private_key_exposed: false,
+    execution_market: parseExecutionMarket(value.execution_market),
     source_url: value.source_url,
     endpoint_id: value.endpoint_id,
     endpoint_status: typeof value.endpoint_status === "string" ? value.endpoint_status : null,
