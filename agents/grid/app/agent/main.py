@@ -1,9 +1,10 @@
 """Grid Agent test runtime.
 
-The first-party Grid Agent deliberately produces a strategy deliverable only.
-It does not custody or execute user trading funds. The BNB Agent SDK service
-layer watches for FUNDED ERC-8183 jobs, calls ``fulfill_grid_job()``, stores the
-result, and submits the deliverable on-chain.
+The first-party Grid Agent produces a strategy deliverable and declares the
+execution market it expects. It does not custody or execute user trading
+funds directly. The BNB Agent SDK service layer watches for FUNDED ERC-8183
+jobs, calls ``fulfill_grid_job()``, stores the result, and submits the
+ deliverable on-chain.
 """
 
 from __future__ import annotations
@@ -11,6 +12,11 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any
+
+
+TESTNET_CAKE2 = "0x8d008B313C1d6C7fE2982F62d32Da7507cF43551"
+TESTNET_WBNB = "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd"
+TESTNET_PANCAKE_FEE = 2500
 
 
 @dataclass(frozen=True)
@@ -59,8 +65,8 @@ def build_grid_plan(job: dict[str, Any]) -> GridPlan:
     """Build a deterministic grid strategy from a funded ERC-8183 job.
 
     Missing values fail closed instead of silently producing a strategy.
-    This agent remains strategy-only: it never executes trades or moves user
-    funds.
+    This agent remains strategy-first: execution is separately controlled by
+    the scoped execution service and declared capability.
     """
     parameters = _job_parameters(job)
 
@@ -99,6 +105,19 @@ def fulfill_grid_job(job: dict[str, Any]) -> str:
         "agent": "agentmarket-grid-test",
         "job_id": str(job.get("jobId", job.get("id", ""))),
         "execution": "strategy_only",
+        "execution_market": {
+            "network": "bsc-testnet",
+            "protocol": "pancake-v3",
+            "token_in": {
+                "symbol": "CAKE2",
+                "address": TESTNET_CAKE2,
+            },
+            "token_out": {
+                "symbol": "WBNB",
+                "address": TESTNET_WBNB,
+            },
+            "fee": TESTNET_PANCAKE_FEE,
+        },
         "plan": {
             "lower_price": plan.lower_price,
             "upper_price": plan.upper_price,
@@ -107,7 +126,7 @@ def fulfill_grid_job(job: dict[str, Any]) -> str:
             "total_notional": plan.total_notional,
             "risk": plan.risk,
         },
-        "note": "No user funds were traded; this deliverable is a testnet execution plan pending Risk Guardian approval and scoped wallet execution.",
+        "note": "No user funds were traded; this deliverable declares the Testnet execution market and provides a strategy plan pending Risk Guardian approval and scoped wallet execution.",
     }
     return json.dumps(payload, separators=(",", ":"))
 
