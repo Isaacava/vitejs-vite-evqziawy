@@ -76,39 +76,35 @@ function executionConfigState() {
 
 function publicExecutionCapabilities() {
   const configured = executionConfigState();
-  if (!configured.session_private_key_configured) {
-    return {
-      ok: true,
-      execution_ready: false,
-      network: "bsc-testnet",
-      chainId: 97,
-      execution: "altana-scoped-session",
-      wallet_provider: "altana",
-      authorization_model: "scoped_session",
-      allowed_targets: configuredList(process.env.GRID_ALLOWED_TARGETS || ""),
-      allowed_selectors: configuredList(process.env.GRID_ALLOWED_SELECTORS || ""),
-      selectors_required: true,
-      private_key_exposed: false,
-      configuration: configured,
-    };
-  }
-
-  const account = privateKeyToAccount((SESSION_PRIVATE_KEY.startsWith("0x") ? SESSION_PRIVATE_KEY : `0x${SESSION_PRIVATE_KEY}`) as `0x${string}`);
-  return {
+  const base = {
     ok: true,
-    execution_ready: configured.session_private_key_configured && configured.allowed_targets_configured && configured.allowed_selectors_configured && configured.pancake_router_configured,
     network: "bsc-testnet",
     chainId: 97,
     execution: "altana-scoped-session",
     wallet_provider: "altana",
     authorization_model: "scoped_session",
-    session_key_address: account.address,
-    session_key_public_key: account.publicKey,
+    protocol: "pancake-v3-swap",
+    preflight_path: "/preflight/pancake",
     allowed_targets: configuredList(process.env.GRID_ALLOWED_TARGETS || ""),
     allowed_selectors: configuredList(process.env.GRID_ALLOWED_SELECTORS || ""),
     selectors_required: true,
     private_key_exposed: false,
     configuration: configured,
+  };
+
+  if (!configured.session_private_key_configured) {
+    return {
+      ...base,
+      execution_ready: false,
+    };
+  }
+
+  const account = privateKeyToAccount((SESSION_PRIVATE_KEY.startsWith("0x") ? SESSION_PRIVATE_KEY : `0x${SESSION_PRIVATE_KEY}`) as `0x${string}`);
+  return {
+    ...base,
+    execution_ready: configured.session_private_key_configured && configured.allowed_targets_configured && configured.allowed_selectors_configured && configured.pancake_router_configured,
+    session_key_address: account.address,
+    session_key_public_key: account.publicKey,
   };
 }
 
