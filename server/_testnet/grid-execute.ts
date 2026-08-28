@@ -11,6 +11,7 @@ const publicClient = createPublicClient({
 const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_CALLS = 8;
+const DEFAULT_NATIVE_GAS_SPEND_LIMIT_WEI = 20_000_000_000_000_000n;
 
 function isAddress(value: unknown): value is Address {
   return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value);
@@ -92,6 +93,7 @@ function capabilityFromRequest(request: Record<string, unknown>) {
     allowedSelectors: capability.allowed_selectors,
     spendLimit: BigInt(spendRaw),
     spendToken,
+    nativeSpendLimit: DEFAULT_NATIVE_GAS_SPEND_LIMIT_WEI,
     expiry: sessionExpiry,
   };
 }
