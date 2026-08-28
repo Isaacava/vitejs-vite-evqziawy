@@ -89,7 +89,20 @@ async function fetchExecutionCapability(capabilityUrl: string) {
     if (Number.isFinite(contentLength) && contentLength > MAX_CAPABILITY_BYTES) throw new Error("Execution capability response is too large");
     const raw = await response.text();
     if (new TextEncoder().encode(raw).byteLength > MAX_CAPABILITY_BYTES) throw new Error("Execution capability response is too large");
-    return validateCapability(raw ? JSON.parse(raw) : null);
+    const parsedBody = raw ? JSON.parse(raw) : null;
+    const capability = validateCapability(parsedBody);
+    const market = executionObject(executionObject(parsedBody).execution_market);
+    if (!address(market.token_in)) throw new Error("Provider execution capability did not declare a valid execution token");
+    return {
+      ...capability,
+      execution_market: {
+        token_in: market.token_in,
+        token_out: address(market.token_out) ? market.token_out : null,
+        token_in_symbol: typeof market.token_in_symbol === "string" && market.token_in_symbol.trim() ? market.token_in_symbol.trim() : null,
+        token_out_symbol: typeof market.token_out_symbol === "string" && market.token_out_symbol.trim() ? market.token_out_symbol.trim() : null,
+        fee: Number.isInteger(Number(market.fee)) ? Number(market.fee) : null,
+      },
+    };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") throw new Error("Execution capability endpoint timed out");
     throw error instanceof Error ? error : new Error("Execution capability endpoint failed");
@@ -242,6 +255,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (walletProvider !== "altana" || authorizationModel !== "scoped_session") return res.status(400).json({ error: "Execution capital is currently available only through Altana scoped sessions" });
     const owned = await loadOwnedFundedJob(supabase, jobId, auth.user.id, auth.user.wallet_address);
     const capability = await loadExecutionCapability(supabase, owned.agent as Record<string, unknown>);
+    if (!address(capability.capability.execution_market.token_in)) return res.status(409).json({ error: "Provider execution capability did not declare a valid execution-capital token" });
     const { data: existing, error: existingError } = await supabase.from("execution_capital_requests").select("*").eq("job_id", jobId).maybeSingle();
     if (existingError) return res.status(500).json({ error: existingError.message });
     if (existing) return res.status(409).json({ error: "An execution capital request already exists for this job", request: existing });
@@ -260,6 +274,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       user_execution_wallet: null,
       agent_session_key: capability.capability.session_key_address,
       capital_requested: String(TESTNET_EXECUTION_CAPITAL_MAX),
+      capital_token: capability.capability.execution_market.token_in,
       purpose,
       duration_seconds: Number(duration),
       wallet_provider: "altana",
