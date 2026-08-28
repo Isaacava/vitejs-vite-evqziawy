@@ -1,0 +1,45 @@
+name: Apply execution capital fix
+
+on:
+  push:
+    branches: [marketplace-testnet]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.head_commit.message != 'fix: correct capital token lookup and unit scale in Grid execution capability'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: marketplace-testnet
+
+      - name: Apply supplied fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/execution-capital-fix.patch <<'PATCH'
+          ***PATCH_PLACEHOLDER***
+          PATCH
+          git apply --3way /tmp/execution-capital-fix.patch
+
+      - name: Verify patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'const humanAmountRaw = String(request.capital_authorized ?? request.capital_requested ?? "");' server/_testnet/grid-execute.ts
+          grep -q 'const spendToken = typeof request.capital_token === "string"' server/_testnet/grid-execute.ts
+
+      - name: Commit and push fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add server/_testnet/grid-execute.ts
+          git rm .github/workflows/apply-execution-capital-fix.yml
+          git commit -m 'fix: correct capital token lookup and unit scale in Grid execution capability'
+          git push origin HEAD:marketplace-testnet
