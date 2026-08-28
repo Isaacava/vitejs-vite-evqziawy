@@ -110,8 +110,8 @@ async function discoverV3Pools(tokenIn: Address, tokenOut: Address) {
 export async function pancakeSwapPreflight(input: Record<string, unknown>) {
   const config = buildPancakeTestnetConfig();
   const router = address(input.router ?? config.router, "router");
-  const tokenIn = address(input.tokenIn, "tokenIn");
-  const tokenOut = address(input.tokenOut, "tokenOut");
+  const tokenIn = address(input.tokenIn ?? config.tokenIn, "tokenIn");
+  const tokenOut = address(input.tokenOut ?? config.tokenOut, "tokenOut");
   const recipient = address(input.recipient, "recipient");
   const fee = Number(input.fee ?? config.fee);
   const amountIn = rawInteger(input.amountIn, "amountIn", true);
@@ -228,6 +228,6 @@ export async function pancakeSwapPreflight(input: Record<string, unknown>) {
     },
     simulation_return_data: simulationData,
     broadcast: false,
-    note: "Read-only BSC Testnet preflight. Factory pool discovery, active pool liquidity, balance, allowance and exact swap calldata are checked before the swap simulation; no transaction is broadcast by this endpoint.",
+    note: `Read-only BSC Testnet preflight. The provider defaults to ${config.tokenInSymbol}/${config.tokenOutSymbol}; factory pool discovery, active pool liquidity, balance, allowance and exact swap calldata are checked before simulation.`,
   };
 }
