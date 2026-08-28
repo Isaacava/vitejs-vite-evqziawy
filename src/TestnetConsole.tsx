@@ -1,7 +1,7 @@
 import "./mission-console.css";
 
 const actions = [
-  { label: "Add Testnet liquidity", detail: "Optional U / WBNB V3 liquidity lab", href: "/testnet/liquidity", tone: "brass" },
+  { label: "Swap tBNB → CAKE2", detail: "Open PancakeSwap Testnet with the Grid Agent's test asset preselected", href: "/testnet/swap", tone: "brass" },
   { label: "Run a Testnet job", detail: "Create and execute a controlled sandbox mission", href: "/testnet/run", tone: "dark" },
   { label: "Provider readiness", detail: "Check identities, verification and service health", href: "/testnet/providers", tone: "outline" },
   { label: "Job history", detail: "Review active and chain-verified Testnet jobs", href: "/testnet/jobs", tone: "outline" },
