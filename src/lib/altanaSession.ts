@@ -6,6 +6,7 @@ import { ensureAltanaWallet, fundAltanaWalletFromAgentMarketWallet } from "./alt
 
 export const TESTNET_U_TOKEN: Address = "0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565";
 const TESTNET_TOKEN_DECIMALS = 18n;
+const DEFAULT_NATIVE_GAS_ALLOWANCE_WEI = 20_000_000_000_000_000n;
 const ALTANA_KEYSTORE_CONTROLLER: Address = "0xb530D1971f5453F3359518343F05D0AedFfF7e12";
 const KEYSTORE_CONTROLLER_ABI = [{
   type: "function",
@@ -42,6 +43,12 @@ export type AltanaSessionGrantInput = {
   expiry: number;
 };
 
+type AltanaSpendPermission = {
+  limit: bigint;
+  period: "day";
+  token?: Address;
+};
+
 export type AltanaSessionGrantResult = {
   walletAddress: Address;
   signerAddress: Address;
@@ -50,7 +57,7 @@ export type AltanaSessionGrantResult = {
   expiry: number;
   permissions: {
     calls: readonly { to: Address }[];
-    spend: readonly { limit: bigint; period: "day"; token: Address }[];
+    spend: readonly AltanaSpendPermission[];
   };
   transactionHash?: Hex;
 };
@@ -99,9 +106,10 @@ export async function getAltanaGrantFeeReadiness(): Promise<GrantFeeReadiness> {
  * Grant a real Altana session to an agent's already-existing session key.
  *
  * The grant is performed as one SDK grant operation with registration enabled.
- * Keeping the permissions and KeyStore registration in the same Altana SDK
- * operation prevents a separately registered key from losing the spend scope
- * that was declared for the execution session.
+ * The session includes both the user-authorized U-token spend cap and a small
+ * native BNB allowance because Altana relay execution consumes native spend
+ * permission for gas recovery. Omitting the native entry causes execute()
+ * to revert with NoSpendPermissions even when the token cap is present.
  *
  * When the Altana wallet is short on native Testnet BNB, the same explicit
  * WalletConnect funding flow used during wallet creation is invoked to top it
@@ -161,11 +169,16 @@ export async function grantAltanaExecutionSession(
     },
   };
 
-  const spendPermission = {
+  const tokenSpendPermission: AltanaSpendPermission = {
     limit: rawCapitalAmount,
-    period: "day" as const,
+    period: "day",
     token,
   };
+  const nativeSpendPermission: AltanaSpendPermission = {
+    limit: DEFAULT_NATIVE_GAS_ALLOWANCE_WEI,
+    period: "day",
+  };
+  const spendPermissions = [tokenSpendPermission, nativeSpendPermission] as const;
   const calls = allowedCalls.map((to) => ({ to }));
 
   const result = await client.grantSession({
@@ -174,7 +187,7 @@ export async function grantAltanaExecutionSession(
     sessionSigner,
     permissions: {
       calls,
-      spend: [spendPermission],
+      spend: spendPermissions,
     },
     expiry: input.expiry,
     chainId: 97,
@@ -189,7 +202,7 @@ export async function grantAltanaExecutionSession(
     expiry: input.expiry,
     permissions: {
       calls,
-      spend: [spendPermission],
+      spend: spendPermissions,
     },
     transactionHash: result.transactionHash,
   };
