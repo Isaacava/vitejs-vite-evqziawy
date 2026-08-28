@@ -1,0 +1,1 @@
+Signer fix verified on 2026-08-28: Grid executor now constructs the Altana signer with signerFromPrivateKey(privateKey) from @altananetwork/sdk 0.7.1 instead of manually constructing a privateKey signer object.
