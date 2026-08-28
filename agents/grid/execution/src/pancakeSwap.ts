@@ -121,7 +121,7 @@ export function buildPancakeTestnetConfig(env: NodeJS.ProcessEnv = process.env) 
   const rawRouter = env.PANCAKE_TESTNET_ROUTER?.trim() || "";
   if (!rawRouter) throw new Error("PANCAKE_TESTNET_ROUTER must be configured for the Grid Testnet executor");
   const router = address(rawRouter, "PANCAKE_TESTNET_ROUTER");
-  const fee = Number(env.PANCAKE_TESTNET_POOL_FEE || "2500");
+  const fee = Number(env.PANCAKE_TESTNET_POOL_FEE || "500");
   if (!Number.isInteger(fee) || fee < 0 || fee > 1_000_000) throw new Error("PANCAKE_TESTNET_POOL_FEE is invalid");
 
   return {
