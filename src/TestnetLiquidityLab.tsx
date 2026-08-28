@@ -138,7 +138,6 @@ export default function TestnetLiquidityLab() {
     setBusy(true); setTxs([]); setSimulatedLiquidity(null);
     try {
       const state = await readState(account);
-      if (state.u < state.uDec) throw new Error("Unable to read the U token balance correctly.");
       if (state.u < pow10(state.uDec)) throw new Error(`At least 1 U is required. Current balance: ${formatUnits(state.u, state.uDec)} U.`);
       if (state.targetWbnb === 0n) throw new Error("Computed WBNB amount is zero; token decimals/price cannot be resolved safely.");
 
@@ -158,7 +157,7 @@ export default function TestnetLiquidityLab() {
       if (candidate === ZERO) {
         const rawPriceNumerator = PRICE_U_PER_WBNB * pow10(state.uDec);
         const rawPriceDenominator = pow10(state.wDec);
-        const sqrtPrice = sqrtPriceX96ForRatio(rawPriceNumerator, rawPriceDenominator);
+        const sqrtPrice = sqrtPriceX96ForRawRatio(rawPriceNumerator, rawPriceDenominator);
         setStatus("Simulating U/WBNB V3 pool initialization.");
         const sim = await publicClient.simulateContract({ address: POSITION_MANAGER, abi: POSITION_MANAGER_ABI, functionName: "createAndInitializePoolIfNecessary", args: [TOKEN0, TOKEN1, FEE, sqrtPrice], account });
         const hash = await walletClient.writeContract(sim.request); await waitFor(hash);
