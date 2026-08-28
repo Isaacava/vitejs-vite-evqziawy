@@ -1,0 +1,68 @@
+name: Temporary execution approval fix
+
+on:
+  push:
+    branches:
+      - marketplace-testnet
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: ${{ !contains(github.event.head_commit.message, 'fix execution wallet approval') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: marketplace-testnet
+          fetch-depth: 0
+      - name: Patch approval flow
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/ExecutionCapitalLivePanel.tsx')
+          s = p.read_text()
+          s = s.replace(
+              'import { encodeFunctionData, type Address, type Hex } from "viem";',
+              'import type { Address } from "viem";'
+          )
+          s = s.replace(
+              'import { connectTestnetWallet } from "./lib/testnetWalletAuth";',
+              'import { ensureAltanaTokenAllowance } from "./lib/altanaAllowance";'
+          )
+          s = s.replace(
+              '  data: Hex;\n};',
+              '};'
+          )
+          start = s.find('const ERC20_APPROVE_ABI = [{')
+          if start != -1:
+              end = s.find('}] as const;\n\n', start)
+              if end == -1:
+                  raise SystemExit('ERC20_APPROVE_ABI block not found')
+              end += len('}] as const;\n\n')
+              s = s[:start] + s[end:]
+          old = '''          const owner = request.user_execution_wallet as Address;\n          const spender = router as Address;\n          const token = tokenIn as Address;\n          const data = encodeFunctionData({ abi: ERC20_APPROVE_ABI, functionName: "approve", args: [spender, BigInt(amountIn)] });\n          setApproval({ token, owner, spender, amount: amountIn, data });'''
+          new = '''          const owner = request.user_execution_wallet as Address;\n          const spender = router as Address;\n          const token = tokenIn as Address;\n          setApproval({ token, owner, spender, amount: amountIn });'''
+          if old not in s:
+              raise SystemExit('preflight approval construction not found')
+          s = s.replace(old, new, 1)
+          old_func = '''  async function approveRouter() {\n    if (!approval) return;\n    setLoading(true);\n    setError(\"\");\n    setMessage(\"\");\n    try {\n      const { provider, address } = await connectTestnetWallet();\n      if (address.toLowerCase() !== approval.owner.toLowerCase()) throw new Error(\"Connected wallet does not match the authorized execution wallet\");\n      const hash = await provider.request({ method: \"eth_sendTransaction\", params: [{ from: approval.owner, to: approval.token, data: approval.data, value: \"0x0\" }] }) as string;\n      if (!hash || !validHash(hash)) throw new Error(\"Wallet returned an invalid approval transaction hash\");\n      setApprovalHash(hash);\n      setMessage(\"Router approval broadcast. Waiting for an independently observed BSC Testnet receipt…\");\n      const observed = await waitForTestnetExecutionReceipt(hash, { intervalMs: 1_500, timeoutMs: 90_000 });\n      setApprovalReceipt(observed);\n      if (observed.status !== \"success\") throw new Error(`BSC Testnet approval transaction was observed with status ${observed.status}`);\n      setApproval(null);\n      setMessage(\"Router approval confirmed. Run read-only preflight again to verify the new allowance.\");\n    } catch (cause) {\n      setError(cause instanceof Error ? cause.message : \"Unable to approve router\");\n    } finally { setLoading(false); }\n  }'''
+          new_func = '''  async function approveRouter() {\n    if (!approval) return;\n    setLoading(true);\n    setError(\"\");\n    setMessage(\"\");\n    try {\n      const result = await ensureAltanaTokenAllowance(approval.token, approval.spender, BigInt(approval.amount));\n      if (result.transactionHash) setApprovalHash(result.transactionHash);\n      setApproval(null);\n      setApprovalReceipt(null);\n      setMessage(\"Router approval confirmed from the authorized Altana execution wallet. Run read-only preflight again to verify the allowance.\");\n    } catch (cause) {\n      setError(cause instanceof Error ? cause.message : \"Unable to approve router from the execution wallet\");\n    } finally { setLoading(false); }\n  }'''
+          if old_func not in s:
+              raise SystemExit('approveRouter function not found')
+          s = s.replace(old_func, new_func, 1)
+          p.write_text(s)
+          PY
+      - name: Commit source fix and remove temporary workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/ExecutionCapitalLivePanel.tsx
+          git commit -m "fix execution wallet approval" || true
+          git rm .github/workflows/temporary-fix-execution-approval.yml
+          git add -u
+          git commit -m "chore: remove temporary execution approval workflow" || true
+          git push origin HEAD:marketplace-testnet
