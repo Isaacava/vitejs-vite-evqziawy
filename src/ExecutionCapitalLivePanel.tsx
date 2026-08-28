@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
-import { encodeFunctionData, type Address, type Hex } from "viem";
+import type { Address } from "viem";
 import type { ExecutionCapitalRequest } from "./lib/executionCapital";
 import { getExecutionCapability, TESTNET_U_TOKEN_ADDRESS } from "./lib/executionCapital";
 import { confirmTestnetExecutionReceipt, waitForTestnetExecutionReceipt, type TestnetExecutionReceipt } from "./lib/executionReceipt";
-import { connectTestnetWallet } from "./lib/testnetWalletAuth";
+import { ensureAltanaTokenAllowance } from "./lib/altanaAllowance";
 
 type Props = { request: ExecutionCapitalRequest };
 
@@ -55,24 +55,12 @@ type ApprovalState = {
   owner: Address;
   spender: Address;
   amount: string;
-  data: Hex;
 };
 
 const TESTNET_CHAIN_ID = 97;
 const TESTNET_WBNB_ADDRESS = "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd" as Address;
 const CONTROLLED_CAPITAL_RAW = "1000000000000000000";
 const CONTROLLED_FEE = 2500;
-const ERC20_APPROVE_ABI = [{
-  type: "function",
-  name: "approve",
-  stateMutability: "nonpayable",
-  inputs: [
-    { name: "spender", type: "address" },
-    { name: "amount", type: "uint256" },
-  ],
-  outputs: [{ name: "approved", type: "bool" }],
-}] as const;
-
 function validAddress(value: string) { return /^0x[a-fA-F0-9]{40}$/.test(value); }
 function validHash(value: string) { return /^0x[a-fA-F0-9]{64}$/.test(value); }
 function validRaw(value: string, positive = false) {
@@ -157,8 +145,7 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
           const owner = request.user_execution_wallet as Address;
           const spender = router as Address;
           const token = tokenIn as Address;
-          const data = encodeFunctionData({ abi: ERC20_APPROVE_ABI, functionName: "approve", args: [spender, BigInt(amountIn)] });
-          setApproval({ token, owner, spender, amount: amountIn, data });
+          setApproval({ token, owner, spender, amount: amountIn });
           setMessage("Preflight stopped before broadcast: the router needs an ERC-20 approval from the authorized execution wallet.");
           return;
         }
@@ -181,19 +168,13 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
     setError("");
     setMessage("");
     try {
-      const { provider, address } = await connectTestnetWallet();
-      if (address.toLowerCase() !== approval.owner.toLowerCase()) throw new Error("Connected wallet does not match the authorized execution wallet");
-      const hash = await provider.request({ method: "eth_sendTransaction", params: [{ from: approval.owner, to: approval.token, data: approval.data, value: "0x0" }] }) as string;
-      if (!hash || !validHash(hash)) throw new Error("Wallet returned an invalid approval transaction hash");
-      setApprovalHash(hash);
-      setMessage("Router approval broadcast. Waiting for an independently observed BSC Testnet receipt…");
-      const observed = await waitForTestnetExecutionReceipt(hash, { intervalMs: 1_500, timeoutMs: 90_000 });
-      setApprovalReceipt(observed);
-      if (observed.status !== "success") throw new Error(`BSC Testnet approval transaction was observed with status ${observed.status}`);
+      const result = await ensureAltanaTokenAllowance(approval.token, approval.spender, BigInt(approval.amount));
+      if (result.transactionHash) setApprovalHash(result.transactionHash);
       setApproval(null);
-      setMessage("Router approval confirmed. Run read-only preflight again to verify the new allowance.");
+      setApprovalReceipt(null);
+      setMessage("Router approval confirmed from the authorized Altana execution wallet. Run read-only preflight again to verify the allowance.");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to approve router");
+      setError(cause instanceof Error ? cause.message : "Unable to approve router from the execution wallet");
     } finally { setLoading(false); }
   }
 
