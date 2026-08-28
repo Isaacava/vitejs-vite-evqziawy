@@ -6,6 +6,7 @@ import {
   TESTNET_U_TOKEN,
 } from "./lib/altanaSession";
 import { ensureAltanaWallet, fundAltanaTradingCapital } from "./lib/altanaWallet";
+import { ensureAltanaTokenAllowance } from "./lib/altanaAllowance";
 
 export type AltanaSessionGrantGateProps = {
   requestId: string;
@@ -15,6 +16,7 @@ export type AltanaSessionGrantGateProps = {
   allowedSelectors: readonly Hex[];
   capitalAmount: bigint;
   capitalToken?: Address;
+  approvalSpender?: Address;
   purpose: string;
   durationSeconds: number;
   capabilitySource?: string;
@@ -30,21 +32,27 @@ function compactHex(value: string) {
 }
 
 export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProps) {
-  const [status, setStatus] = useState<"idle" | "checking" | "funding_capital" | "signing" | "verifying" | "authorized" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "checking" | "funding_capital" | "approving_allowance" | "signing" | "verifying" | "authorized" | "error">("idle");
   const [error, setError] = useState("");
   const [sessionKeyId, setSessionKeyId] = useState("");
   const [walletAddress, setWalletAddress] = useState("");
   const [capitalTxHash, setCapitalTxHash] = useState("");
+  const [allowanceTxHash, setAllowanceTxHash] = useState("");
   const [feeReadiness, setFeeReadiness] = useState<Awaited<ReturnType<typeof getAltanaGrantFeeReadiness>> | null>(null);
 
   async function grant() {
     setStatus("checking");
     setError("");
     setCapitalTxHash("");
+    setAllowanceTxHash("");
     try {
       const executionWallet = ensureAltanaWallet();
       const capitalToken = props.capitalToken || TESTNET_U_TOKEN;
       const rawCapitalAmount = props.capitalAmount * 10n ** 18n;
+      const approvalSpender = props.approvalSpender || (props.allowedCalls.length === 1 ? props.allowedCalls[0] : null);
+      if (!approvalSpender) {
+        throw new Error("A single execution spender must be identified before requesting an ERC-20 allowance.");
+      }
 
       const readiness = await getAltanaGrantFeeReadiness();
       setFeeReadiness(readiness);
@@ -61,6 +69,14 @@ export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProp
         rawCapitalAmount,
       );
       if (capitalFunding.transactionHash) setCapitalTxHash(capitalFunding.transactionHash);
+
+      setStatus("approving_allowance");
+      const allowance = await ensureAltanaTokenAllowance(
+        capitalToken,
+        approvalSpender,
+        rawCapitalAmount,
+      );
+      if (allowance.transactionHash) setAllowanceTxHash(allowance.transactionHash);
 
       setStatus("signing");
       const expiry = Math.floor(Date.now() / 1000) + props.durationSeconds;
@@ -110,13 +126,15 @@ export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProp
     ? "Checking Testnet fee and execution wallet…"
     : status === "funding_capital"
       ? `Approve ${props.capitalAmount.toString()} U transfer to your Altana execution wallet…`
-      : status === "signing"
-        ? "Waiting for Passkey approval…"
-        : status === "verifying"
-          ? "Verifying onchain authority…"
-          : status === "authorized"
-            ? "Authorized and independently verified ✓"
-            : "Approve the agent's trading authority";
+      : status === "approving_allowance"
+        ? `Approve ${props.capitalAmount.toString()} U router allowance in your Altana wallet…`
+        : status === "signing"
+          ? "Waiting for Passkey approval…"
+          : status === "verifying"
+            ? "Verifying onchain authority…"
+            : status === "authorized"
+              ? "Authorized and independently verified ✓"
+              : "Approve the agent's trading authority";
 
   return (
     <section className="border border-line rounded-[16px_8px_18px_9px] bg-paper p-5">
@@ -125,7 +143,7 @@ export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProp
           <small className="block font-mono text-[8.5px] uppercase tracking-widest text-brass mb-1.5">Execution Capital · Altana Session</small>
           <h3 className="font-display text-[18px] font-bold m-0">Approve the agent's trading authority</h3>
           <p className="text-[11px] text-inksoft mt-1.5 max-w-[600px]">
-            Your Altana Passkey wallet is the execution wallet you control. AgentMarket first ensures the displayed trading capital is present there using an explicit wallet-signed Testnet transfer, then grants the agent only the displayed targets, selector policy, spend cap, and expiry.
+            Your Altana Passkey wallet is the execution wallet you control. AgentMarket first ensures the displayed trading capital is present there using an explicit wallet-signed Testnet transfer, then ensures the declared execution router can spend that token allowance, and finally grants the agent only the displayed targets, selector policy, spend cap, and expiry.
           </p>
         </div>
         <span className={`font-mono text-[9px] px-2.5 py-1 rounded-lg ${status === "authorized" ? "status-green" : "status-brass"}`}>BSC TESTNET</span>
@@ -158,6 +176,15 @@ export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProp
       </div>
 
       <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-4">
+        <small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-2">Router allowance</small>
+        <div className="text-[10.5px] text-inksoft leading-5">
+          Before the agent session is granted, the user's Altana wallet must approve the declared execution spender for exactly the requested Testnet capital. This approval is an admin-wallet action and does not add the token contract to the agent's session allowlist.
+        </div>
+        {props.approvalSpender && <div className="mt-2 font-mono text-[9px] break-all">Spender: {props.approvalSpender}</div>}
+        {allowanceTxHash && <a className="inline-block mt-2 text-[9px] font-mono text-brass break-all" href={`https://testnet.bscscan.com/tx/${allowanceTxHash}`} target="_blank" rel="noreferrer">Router allowance approval ↗</a>}
+      </div>
+
+      <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-4">
         <small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-2">Contract allowlist</small>
         <div className="flex flex-wrap gap-2">{props.allowedCalls.map((address) => <span key={address} className="font-mono text-[9px] px-2 py-1 rounded-md border border-line">{compact(address)}</span>)}</div>
         <small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-2 mt-4">Function selector allowlist</small>
@@ -169,10 +196,10 @@ export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProp
       {walletAddress && sessionKeyId && <div className="mt-4 border border-green/30 bg-green/5 rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]"><strong className="text-green">{statusText}</strong><div className="mt-1 font-mono text-[9px]">Altana wallet {compact(walletAddress)} · Agent key {compact(sessionKeyId)}</div></div>}
       {error && <div className="mt-4 border border-[#cfad9f] bg-rustsoft text-rust rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]">{error}</div>}
 
-      <button type="button" onClick={() => void grant()} disabled={status === "checking" || status === "funding_capital" || status === "signing" || status === "verifying" || status === "authorized"} className="mt-5 font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">
+      <button type="button" onClick={() => void grant()} disabled={status === "checking" || status === "funding_capital" || status === "approving_allowance" || status === "signing" || status === "verifying" || status === "authorized"} className="mt-5 font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">
         {statusText} →
       </button>
-      <p className="mt-3 text-[10px] text-inksoft">AgentMarket never receives the agent private key. The U transfer and the execution-session grant both require explicit user-controlled signing and are independently verified on BSC Testnet.</p>
+      <p className="mt-3 text-[10px] text-inksoft">AgentMarket never receives the agent private key. The U transfer, router allowance approval, and execution-session grant each require explicit user-controlled signing and are independently verified on BSC Testnet.</p>
     </section>
   );
 }
