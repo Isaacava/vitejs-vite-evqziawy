@@ -1,7 +1,7 @@
 import { BNB_TESTNET, createClient } from "@altananetwork/sdk";
 import type { PasskeySigner, Wallet } from "@altananetwork/sdk";
 import { bscTestnet } from "viem/chains";
-import { createPublicClient, http, type Address, formatEther } from "viem";
+import { createPublicClient, encodeFunctionData, http, type Address, formatEther } from "viem";
 import { ensureWalletConnectedProvider } from "./walletAuth";
 
 export type AltanaWalletResolution = {
@@ -30,6 +30,16 @@ export type AltanaFundingResult = {
   transactionHash: `0x${string}`;
 };
 
+export type AltanaTradingCapitalResult = {
+  walletAddress: Address;
+  senderAddress: Address;
+  token: Address;
+  amount: bigint;
+  amountFormatted: string;
+  transactionHash?: `0x${string}`;
+  alreadyFunded: boolean;
+};
+
 const RP_NAME = "AgentMarket Testnet";
 const chainId = 97 as const;
 const ALTANA_KEYSTORE_CONTROLLER: Address = "0xb530D1971f5453F3359518343F05D0AedFfF7e12";
@@ -40,6 +50,11 @@ const KEYSTORE_CONTROLLER_ABI = [{
   inputs: [],
   outputs: [{ type: "uint256" }],
 }] as const;
+
+const ERC20_BALANCE_TRANSFER_ABI = [
+  { type: "function", name: "balanceOf", stateMutability: "view", inputs: [{ name: "owner", type: "address" }], outputs: [{ name: "balance", type: "uint256" }] },
+  { type: "function", name: "transfer", stateMutability: "nonpayable", inputs: [{ name: "to", type: "address" }, { name: "value", type: "uint256" }], outputs: [{ name: "success", type: "bool" }] },
+] as const;
 
 // Keep a conservative native Testnet balance reserve for the first Altana grant.
 // The grant can include two KeyStore registrations plus relay/gas recovery.
@@ -66,13 +81,13 @@ async function waitForTransactionReceipt(hash: `0x${string}`) {
     const receipt = await publicClient.getTransactionReceipt({ hash }).catch(() => null);
     if (receipt) {
       if (receipt.status !== "success") {
-        throw new Error(`Altana wallet funding transaction reverted: ${hash}`);
+        throw new Error(`Altana wallet transaction reverted: ${hash}`);
       }
       return receipt;
     }
     await sleep(2_000);
   }
-  throw new Error(`Altana wallet funding transaction did not confirm within 120 seconds: ${hash}`);
+  throw new Error(`Altana wallet transaction did not confirm within 120 seconds: ${hash}`);
 }
 
 export async function getAltanaPasskeyReadiness(): Promise<AltanaPasskeyReadiness> {
@@ -190,6 +205,108 @@ export async function fundAltanaWalletFromAgentMarketWallet(
     registrationFeeFormatted: formatEther(registrationFee),
     transactionHash: hash,
   };
+}
+
+/**
+ * Ensure the Altana execution wallet contains the requested ERC-20 trading capital.
+ *
+ * This is an explicit user-approved transfer from the connected AgentMarket wallet
+ * into the user's own Altana execution wallet. The marketplace never signs it and
+ * never receives custody of the token. The helper is intentionally generic over
+ * the token address while the controlled Testnet flow supplies the 1 U token.
+ */
+export async function fundAltanaTradingCapital(
+  walletAddress: Address,
+  tokenAddress: Address,
+  rawAmount: bigint,
+): Promise<AltanaTradingCapitalResult> {
+  if (!/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) {
+    throw new Error("Altana execution wallet address is invalid.");
+  }
+  if (!/^0x[a-fA-F0-9]{40}$/.test(tokenAddress)) {
+    throw new Error("Trading-capital token address is invalid.");
+  }
+  if (rawAmount <= 0n) {
+    throw new Error("Trading-capital amount must be greater than zero.");
+  }
+
+  const providerState = await ensureWalletConnectedProvider();
+  const senderAddress = providerState.address as Address;
+
+  const [senderBalance, existingTargetBalance] = await Promise.all([
+    publicClient.readContract({
+      address: tokenAddress,
+      abi: ERC20_BALANCE_TRANSFER_ABI,
+      functionName: "balanceOf",
+      args: [senderAddress],
+    }),
+    publicClient.readContract({
+      address: tokenAddress,
+      abi: ERC20_BALANCE_TRANSFER_ABI,
+      functionName: "balanceOf",
+      args: [walletAddress],
+    }),
+  ]);
+
+  if (existingTargetBalance >= rawAmount) {
+    return {
+      walletAddress,
+      senderAddress,
+      token: tokenAddress,
+      amount: rawAmount,
+      amountFormatted: formatTokenAmount(rawAmount),
+      alreadyFunded: true,
+    };
+  }
+
+  const topUpAmount = rawAmount - existingTargetBalance;
+  if (senderBalance < topUpAmount) {
+    throw new Error(
+      `Connected wallet ${senderAddress} has ${formatTokenAmount(senderBalance)} U, but ${formatTokenAmount(topUpAmount)} U is needed to bring the Altana execution wallet up to the requested ${formatTokenAmount(rawAmount)} U.`,
+    );
+  }
+
+  const data = encodeFunctionData({
+    abi: ERC20_BALANCE_TRANSFER_ABI,
+    functionName: "transfer",
+    args: [walletAddress, topUpAmount],
+  });
+  const hash = await providerState.provider.request({
+    method: "eth_sendTransaction",
+    params: [{
+      from: senderAddress,
+      to: tokenAddress,
+      data,
+    }],
+  }) as `0x${string}`;
+
+  await waitForTransactionReceipt(hash);
+
+  const finalBalance = await publicClient.readContract({
+    address: tokenAddress,
+    abi: ERC20_BALANCE_TRANSFER_ABI,
+    functionName: "balanceOf",
+    args: [walletAddress],
+  });
+  if (finalBalance < rawAmount) {
+    throw new Error(`Trading-capital transfer confirmed, but the Altana execution wallet still has only ${formatTokenAmount(finalBalance)} U.`);
+  }
+
+  return {
+    walletAddress,
+    senderAddress,
+    token: tokenAddress,
+    amount: rawAmount,
+    amountFormatted: formatTokenAmount(rawAmount),
+    transactionHash: hash,
+    alreadyFunded: false,
+  };
+}
+
+function formatTokenAmount(value: bigint) {
+  const whole = value / 10n ** 18n;
+  const fraction = (value % 10n ** 18n).toString().padStart(18, "0").replace(/0+$/, "");
+  return fraction ? `${whole}.${fraction}` : whole.toString();
 }
 
 export async function createAltanaWallet(): Promise<AltanaWalletResolution & { funding: AltanaFundingResult }> {
