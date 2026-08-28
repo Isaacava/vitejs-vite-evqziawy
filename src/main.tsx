@@ -12,6 +12,7 @@ import DemoManagePage from "./DemoManagePage";
 import DemoActivityPage from "./DemoActivityPage";
 import DemoPaymentsPage from "./DemoPaymentsPage";
 import TestnetConsole from "./TestnetConsole";
+import TestnetSwap from "./TestnetSwap";
 import TestnetQuoteExecutionWalletConnect from "./TestnetQuoteExecutionWalletConnect";
 import TestnetQuoteGate from "./TestnetQuoteGate";
 import TestnetProviderSubmit from "./ProviderSubmit";
@@ -22,7 +23,6 @@ import TestnetTransactionPreflight from "./TestnetTransactionPreflight";
 import TestnetGridRun from "./TestnetGridRun";
 import TestnetPolicyReview from "./TestnetPolicyReview";
 import TestnetJobResult from "./TestnetJobResult";
-import TestnetLiquidityLabV2 from "./TestnetLiquidityLabV2";
 import "./index.css";
 
 const params = new URLSearchParams(window.location.search);
@@ -49,7 +49,7 @@ function renderApp() {
 
   if (path === "/testnet") return renderWorkspace(<TestnetConsole />);
   if (path === "/testnet/manage") return renderWorkspace(<TestnetConsole />);
-  if (path === "/testnet/liquidity") return renderWorkspace(<TestnetLiquidityLabV2 />);
+  if (path === "/testnet/swap") return renderWorkspace(<TestnetSwap />);
   if (path === "/agents/register") return renderWorkspace(<DemoManagePage kind="register" />);
   if (path === "/permissions") return renderWorkspace(<DemoManagePage kind="permissions" />);
 
