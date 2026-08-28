@@ -21,7 +21,6 @@ import TestnetTransactionPreflight from "./TestnetTransactionPreflight";
 import TestnetGridRun from "./TestnetGridRun";
 import TestnetPolicyReview from "./TestnetPolicyReview";
 import TestnetJobResult from "./TestnetJobResult";
-import TestnetPoolSetup from "./TestnetPoolSetup";
 import "./index.css";
 
 const params = new URLSearchParams(window.location.search);
@@ -46,7 +45,7 @@ function renderApp() {
   if (path === "/payments") return renderWorkspace(<DemoPaymentsPage />);
   if (path === "/app") return renderWorkspace(<MarketplaceWorkspace />);
 
-  if (path === "/testnet") return renderWorkspace(<TestnetPoolSetup />);
+  if (path === "/testnet") return renderWorkspace(<DemoManagePage kind="testnet" />);
   if (path === "/testnet/manage") return renderWorkspace(<DemoManagePage kind="testnet" />);
   if (path === "/agents/register") return renderWorkspace(<DemoManagePage kind="register" />);
   if (path === "/permissions") return renderWorkspace(<DemoManagePage kind="permissions" />);
