@@ -1,9 +1,13 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { createPublicClient, http } from "viem";
+import { bscTestnet } from "viem/chains";
 import { getAuthenticatedUser } from "../../src/server/authHandlers.js";
 import { serverClient } from "../../src/server/authHandlers.js";
 
-const GRID_AGENT_URL = "https://grid-agent-testnet-v4-production.up.railway.app";
-const SHARED_SECRET = process.env.GRID_EXECUTION_SHARED_SECRET || "";
+const publicClient = createPublicClient({
+  chain: bscTestnet,
+  transport: http(process.env.BSC_TESTNET_RPC_URL || "https://bsc-testnet-rpc.publicnode.com"),
+});
 
 function validHash(value: string): value is `0x${string}` {
   return /^0x[a-fA-F0-9]{64}$/.test(value);
@@ -13,36 +17,38 @@ function object(value: unknown) {
   return value && typeof value === "object" ? value as Record<string, unknown> : {};
 }
 
-async function fetchReceipt(txHash: string) {
-  if (!SHARED_SECRET) throw new Error("Grid execution receipt verification is not configured");
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10_000);
+async function fetchReceipt(txHash: `0x${string}`) {
   try {
-    const response = await fetch(`${GRID_AGENT_URL}/erc8183/receipt/${txHash}`, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${SHARED_SECRET}`,
-      },
-      signal: controller.signal,
-    });
-
-    const body = await response.json().catch(() => null);
-    if (!response.ok) {
-      throw new Error(body?.error || body?.detail || "Grid execution receipt observer failed");
-    }
-
-    return body?.result ?? body;
+    const receipt = await publicClient.getTransactionReceipt({ hash: txHash });
+    return {
+      observed: true,
+      transaction_hash: receipt.transactionHash,
+      block_number: receipt.blockNumber.toString(),
+      block_hash: receipt.blockHash,
+      status: receipt.status,
+      gas_used: receipt.gasUsed.toString(),
+      effective_gas_price: receipt.effectiveGasPrice.toString(),
+      contract_address: receipt.contractAddress,
+      from: receipt.from,
+      to: receipt.to,
+    };
   } catch (cause) {
-    const detail = cause instanceof Error && cause.name === "AbortError"
-      ? "Grid execution receipt observer timed out"
-      : cause instanceof Error
-        ? cause.message
-        : "Grid execution receipt observer unavailable";
-    throw new Error(detail);
-  } finally {
-    clearTimeout(timeout);
+    const message = cause instanceof Error ? cause.message.toLowerCase() : "";
+    if (
+      cause instanceof Error &&
+      (
+        cause.name === "TransactionReceiptNotFoundError" ||
+        message.includes("transaction receipt") ||
+        message.includes("receipt not found") ||
+        message.includes("could not find transaction")
+      )
+    ) {
+      return {
+        observed: false,
+        transaction_hash: txHash,
+      };
+    }
+    throw new Error("Unable to independently read the BSC Testnet transaction receipt");
   }
 }
 
@@ -69,13 +75,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const receipt = await fetchReceipt(txHash);
     const normalized = {
       chain_id: 97,
-      transaction_hash: txHash,
-      ...(object(receipt)),
+      ...receipt,
     };
 
     if (req.method === "GET") {
       return res.status(200).json({
         ok: true,
+        network: "bsc-testnet",
+        chain_id: 97,
+        transaction_hash: txHash,
+        observed: normalized.observed,
+        receipt: normalized,
+      });
+    }
+
+    if (!normalized.observed) {
+      return res.status(409).json({
+        ok: false,
+        confirmed: false,
+        error: "Transaction receipt is not yet observed on BSC Testnet",
         network: "bsc-testnet",
         chain_id: 97,
         transaction_hash: txHash,
@@ -119,7 +137,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ...evidenceRoot,
       last_execution: mergedExecution,
       execution_receipt_verification: {
-        method: "grid_testnet_receipt_observer",
+        method: "bsc_testnet_public_rpc_receipt",
         chain_id: 97,
         transaction_hash: txHash,
         verified_at: now,
@@ -172,11 +190,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         receipt: normalized,
         receipt_verified: true,
       } : null,
-      note: "Testnet receipt independently observed and persisted as execution evidence. Capital deployed/returned and P&L remain unchanged until independent accounting evidence exists.",
+      note: "BSC Testnet receipt independently observed from the public RPC and persisted as execution evidence. Capital deployed/returned and P&L remain unchanged until independent accounting evidence exists.",
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to verify Testnet execution receipt";
-    const status = /not configured|not found|does not own|requires|current status|does not match/i.test(message) ? 409 : 503;
+    const status = /not found|does not own|requires|current status|does not match/i.test(message) ? 409 : 503;
     return res.status(status).json({ error: message });
   }
 }
