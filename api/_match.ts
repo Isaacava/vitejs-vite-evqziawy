@@ -4,7 +4,7 @@ import { parseMarketplaceIntent } from "../src/lib/intent.js";
 import { readAgentOnchainStats, type OnchainAgentStats } from "../src/server/testnetOnchain.js";
 
 type CachedOnchainStats = {
-  source: "erc8183_commerce" | "erc8183_commerce_provider_wallet";
+  source: OnchainAgentStats["source"];
   network: "bsc-testnet";
   chain_id: 97;
   synced_at: string;
