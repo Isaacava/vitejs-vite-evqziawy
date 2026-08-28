@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage } from "node:http";
 import { privateKeyToAccount } from "viem/accounts";
 import { executeGridAction } from "./altanaExecutor.js";
 import { pancakeSwapPreflight } from "./preflight.js";
+import { buildPancakeTestnetConfig } from "./pancakeSwap.js";
 import { observeTestnetReceipt } from "./receipt.js";
 import { getExecutionReadiness } from "./readiness.js";
 import type { GridCall, GridSessionDescriptor } from "./types.js";
@@ -76,6 +77,7 @@ function executionConfigState() {
 
 function publicExecutionCapabilities() {
   const configured = executionConfigState();
+  const market = buildPancakeTestnetConfig();
   const base = {
     ok: true,
     network: "bsc-testnet",
@@ -84,6 +86,13 @@ function publicExecutionCapabilities() {
     wallet_provider: "altana",
     authorization_model: "scoped_session",
     protocol: "pancake-v3-swap",
+    execution_market: {
+      token_in: market.tokenIn,
+      token_out: market.tokenOut,
+      token_in_symbol: market.tokenInSymbol,
+      token_out_symbol: market.tokenOutSymbol,
+      fee: market.fee,
+    },
     preflight_path: "/preflight/pancake",
     allowed_targets: configuredList(process.env.GRID_ALLOWED_TARGETS || ""),
     allowed_selectors: configuredList(process.env.GRID_ALLOWED_SELECTORS || ""),
