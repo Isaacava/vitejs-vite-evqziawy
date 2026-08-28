@@ -25,8 +25,8 @@ export function adapterCanHandleKind(
   kind: AgentCapabilityKind,
   descriptors: AgentAdapterDescriptor[] = DEFAULT_ADAPTERS,
 ) {
-  const descriptor = descriptors.find((item) => item.id === adapter);
-  return Boolean(descriptor?.supportedKinds.includes(kind));
+  const match = descriptors.find((item) => item.id === adapter);
+  return Boolean(match?.supportedKinds.includes(kind));
 }
 
 export function selectBestAdapterForCapability(
@@ -35,12 +35,12 @@ export function selectBestAdapterForCapability(
   selection: AgentAdapterSelection,
   descriptors: AgentAdapterDescriptor[] = DEFAULT_ADAPTERS,
 ): AgentAdapterDescriptor | null {
-  const selected = descriptors.find((descriptor) => descriptor.id === selection.adapter) ?? null;
+  const selected = descriptors.find((item) => item.id === selection.adapter) ?? null;
   if (selected && adapterCanHandleKind(selected.id, kind, descriptors)) return selected;
 
   const candidates = descriptors
-    .filter((descriptor) => adapterCanHandleKind(descriptor.id, kind, descriptors))
-    .filter((descriptor) => snapshot.capabilities.some((capability) => capability.kind === kind));
+    .filter((item) => adapterCanHandleKind(item.id, kind, descriptors))
+    .filter(() => snapshot.capabilities.some((capability) => capability.kind === kind));
 
   return candidates.sort((a, b) => b.priority - a.priority)[0] ?? null;
 }
