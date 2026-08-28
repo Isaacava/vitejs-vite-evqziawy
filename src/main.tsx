@@ -22,7 +22,7 @@ import TestnetTransactionPreflight from "./TestnetTransactionPreflight";
 import TestnetGridRun from "./TestnetGridRun";
 import TestnetPolicyReview from "./TestnetPolicyReview";
 import TestnetJobResult from "./TestnetJobResult";
-import TestnetLiquidityLab from "./TestnetLiquidityLab";
+import TestnetLiquidityLabV2 from "./TestnetLiquidityLabV2";
 import "./index.css";
 
 const params = new URLSearchParams(window.location.search);
@@ -49,7 +49,7 @@ function renderApp() {
 
   if (path === "/testnet") return renderWorkspace(<TestnetConsole />);
   if (path === "/testnet/manage") return renderWorkspace(<TestnetConsole />);
-  if (path === "/testnet/liquidity") return renderWorkspace(<TestnetLiquidityLab />);
+  if (path === "/testnet/liquidity") return renderWorkspace(<TestnetLiquidityLabV2 />);
   if (path === "/agents/register") return renderWorkspace(<DemoManagePage kind="register" />);
   if (path === "/permissions") return renderWorkspace(<DemoManagePage kind="permissions" />);
 
