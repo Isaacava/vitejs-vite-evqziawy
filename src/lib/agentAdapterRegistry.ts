@@ -16,10 +16,6 @@ const DEFAULT_ADAPTERS: AgentAdapterDescriptor[] = [
   { id: "execution", label: "Execution", supportedKinds: ["execution"], priority: 10 },
 ];
 
-function descriptorFor(selection: AgentAdapterSelection, descriptors: AgentAdapterDescriptor[]) {
-  return descriptors.find((descriptor) => descriptor.id === selection.adapter) ?? null;
-}
-
 export function listAgentAdapters(): AgentAdapterDescriptor[] {
   return [...DEFAULT_ADAPTERS].sort((a, b) => b.priority - a.priority);
 }
@@ -39,7 +35,7 @@ export function selectBestAdapterForCapability(
   selection: AgentAdapterSelection,
   descriptors: AgentAdapterDescriptor[] = DEFAULT_ADAPTERS,
 ): AgentAdapterDescriptor | null {
-  const selected = descriptorFor(selection, descriptors);
+  const selected = descriptors.find((descriptor) => descriptor.id === selection.adapter) ?? null;
   if (selected && adapterCanHandleKind(selected.id, kind, descriptors)) return selected;
 
   const candidates = descriptors
