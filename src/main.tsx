@@ -11,6 +11,7 @@ import WorkspaceMissionPage from "./WorkspaceMissionPage";
 import DemoManagePage from "./DemoManagePage";
 import DemoActivityPage from "./DemoActivityPage";
 import DemoPaymentsPage from "./DemoPaymentsPage";
+import TestnetConsole from "./TestnetConsole";
 import TestnetQuoteExecutionWalletConnect from "./TestnetQuoteExecutionWalletConnect";
 import TestnetQuoteGate from "./TestnetQuoteGate";
 import TestnetProviderSubmit from "./ProviderSubmit";
@@ -46,8 +47,8 @@ function renderApp() {
   if (path === "/payments") return renderWorkspace(<DemoPaymentsPage />);
   if (path === "/app") return renderWorkspace(<MarketplaceWorkspace />);
 
-  if (path === "/testnet") return renderWorkspace(<DemoManagePage kind="testnet" />);
-  if (path === "/testnet/manage") return renderWorkspace(<DemoManagePage kind="testnet" />);
+  if (path === "/testnet") return renderWorkspace(<TestnetConsole />);
+  if (path === "/testnet/manage") return renderWorkspace(<TestnetConsole />);
   if (path === "/testnet/liquidity") return renderWorkspace(<TestnetLiquidityLab />);
   if (path === "/agents/register") return renderWorkspace(<DemoManagePage kind="register" />);
   if (path === "/permissions") return renderWorkspace(<DemoManagePage kind="permissions" />);
@@ -63,7 +64,7 @@ function renderApp() {
   if (path === "/testnet/preflight") return renderWorkspace(<TestnetTransactionPreflight />);
   if (path === "/testnet/run") return renderWorkspace(<TestnetGridRun />);
 
-  return renderWorkspace(<DemoManagePage kind="testnet" />);
+  return renderWorkspace(<TestnetConsole />);
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
