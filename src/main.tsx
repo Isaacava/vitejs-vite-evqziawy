@@ -14,6 +14,7 @@ import AgentInbox from "./AgentInbox";
 import UserDashboard from "./UserDashboard";
 import SessionPermissions from "./SessionPermissions";
 import AgentEvidence from "./AgentEvidence";
+import TestnetPoolSetup from "./TestnetPoolSetup";
 import "./index.css";
 
 const params = new URLSearchParams(window.location.search);
@@ -30,6 +31,7 @@ const providerSubmitMode = window.location.pathname === "/provider/submit";
 const lifecycleMode = window.location.pathname === "/lifecycle";
 const registerMode = window.location.pathname === "/agents/register";
 const inboxMode = window.location.pathname === "/agent/inbox";
+const testnetMode = window.location.pathname === "/testnet";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
@@ -51,6 +53,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       <AgentRegistration />
     ) : inboxMode ? (
       <AgentInbox />
+    ) : testnetMode ? (
+      <TestnetPoolSetup />
     ) : dashboardMode ? (
       <UserDashboard />
     ) : permissionsMode ? (
