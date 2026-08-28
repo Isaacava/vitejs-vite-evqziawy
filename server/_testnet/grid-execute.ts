@@ -55,8 +55,34 @@ function capabilityFromRequest(request: Record<string, unknown>) {
   if (!Array.isArray(capability.allowed_selectors) || capability.allowed_selectors.length === 0 || !capability.allowed_selectors.every((value) => typeof value === "string" && isSelector(value))) throw new Error("Stored execution capability has no valid selector allowlist");
   if (!Number.isInteger(sessionExpiry) || sessionExpiry <= Math.floor(Date.now() / 1000)) throw new Error("Verified Altana session has expired");
 
-  const spendRaw = String(request.capital_authorized ?? request.capital_requested ?? "");
-  if (!/^\d+$/.test(spendRaw) || BigInt(spendRaw) <= 0n) throw new Error("Authorized execution capital must be a positive integer raw amount");
+  // capital_authorized/capital_requested are stored in human-readable token
+  // units (e.g. "1" meaning 1 U), not raw wei — see execution-capital.ts,
+  // where capital_requested is set to String(TESTNET_EXECUTION_CAPITAL_MAX).
+  // The on-chain grant (src/lib/altanaSession.ts) authorized
+  // capitalAmount * 10 ** decimals raw units, so the executor's spend
+  // permission must be scaled the same way or its reconstructed session
+  // permissions won't match what was actually registered on-chain.
+  const humanAmountRaw = String(request.capital_authorized ?? request.capital_requested ?? "");
+  if (!/^\d+(\.\d+)?$/.test(humanAmountRaw) || Number(humanAmountRaw) <= 0) {
+    throw new Error("Authorized execution capital must be a positive numeric amount");
+  }
+  const decimals = Number.isInteger(request.capital_decimals) && Number(request.capital_decimals) > 0
+    ? BigInt(request.capital_decimals as number)
+    : 18n;
+  const [wholePart, fractionPart = ""] = humanAmountRaw.split(".");
+  const fraction = (fractionPart + "0".repeat(Number(decimals))).slice(0, Number(decimals));
+  const spendRaw = (BigInt(wholePart) * 10n ** decimals + BigInt(fraction || "0")).toString();
+  if (BigInt(spendRaw) <= 0n) throw new Error("Authorized execution capital must be a positive integer raw amount");
+
+  // capital_token is a top-level column on execution_capital_requests, not
+  // nested under evidence — check it first (matching execution-capital-preflight.ts
+  // and ExecutionCapitalLivePanel.tsx), falling back to evidence for older rows.
+  const spendToken = typeof request.capital_token === "string" && isAddress(request.capital_token)
+    ? request.capital_token
+    : typeof evidence.capital_token === "string" && isAddress(evidence.capital_token)
+      ? evidence.capital_token
+      : undefined;
+  if (!spendToken) throw new Error("Execution-capital request has no valid capital_token to scope the spend permission to");
 
   return {
     walletAddress: request.user_execution_wallet,
@@ -65,7 +91,7 @@ function capabilityFromRequest(request: Record<string, unknown>) {
     allowedCalls: capability.allowed_targets,
     allowedSelectors: capability.allowed_selectors,
     spendLimit: BigInt(spendRaw),
-    spendToken: typeof evidence.capital_token === "string" && isAddress(evidence.capital_token) ? evidence.capital_token : undefined,
+    spendToken,
     expiry: sessionExpiry,
   };
 }
