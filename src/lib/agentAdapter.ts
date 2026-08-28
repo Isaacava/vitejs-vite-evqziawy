@@ -1,4 +1,4 @@
-import type { AgentCapability, AgentCapabilityKind, AgentCapabilitySnapshot } from "./agentCapability";
+import type { AgentCapability, AgentCapabilityKind, AgentCapabilitySnapshot } from "./agentCapability.js";
 
 export type AgentAdapterId =
   | "erc8183"
