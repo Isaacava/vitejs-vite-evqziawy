@@ -29,8 +29,6 @@ from app.agent.main import AGENT_ID, AGENT_VERSION, fulfill_grid_job, fulfill_us
 from app.service.config import validate_runtime_config
 
 logger = logging.getLogger("grid_agent")
-
-# Fail closed at process startup. This service is deliberately Testnet-only.
 config = validate_runtime_config()
 
 _STORAGE_DIR = Path(os.getenv("STORAGE_LOCAL_PATH") or ".agent-data")
@@ -38,33 +36,39 @@ _TASK_DIR = _STORAGE_DIR / "tasks"
 _EXECUTION_INTERNAL_URL = (
     os.getenv("GRID_EXECUTION_INTERNAL_URL") or "http://127.0.0.1:8788"
 ).rstrip("/")
-
 _EXECUTION_CAPITAL_WINDOW_SECONDS = max(
     0,
     int(float(os.getenv("ERC8183_EXECUTION_CAPITAL_WINDOW_SECONDS") or "3600")),
 )
 
-_wallet = EVMWalletProvider(
-    password=os.environ["WALLET_PASSWORD"],
-    private_key=os.environ.get("PRIVATE_KEY"),
-)
+_ERC8183_ENABLED = bool(config["erc8183_enabled"])
+_wallet: EVMWalletProvider | None = None
+_ops: ERC8183JobOps | None = None
 
-_storage = LocalStorageProvider(base_dir=str(_STORAGE_DIR))
-
-_ops = ERC8183JobOps(
-    _wallet,
-    network=config["network"],
-    storage_provider=_storage,
-    service_price=config["service_price"],
-    agent_url=config["endpoint"],
-)
+if _ERC8183_ENABLED:
+    _wallet = EVMWalletProvider(
+        password=os.environ["WALLET_PASSWORD"],
+        private_key=os.environ.get("PRIVATE_KEY"),
+    )
+    _storage = LocalStorageProvider(base_dir=str(_STORAGE_DIR))
+    _ops = ERC8183JobOps(
+        _wallet,
+        network=config["network"],
+        storage_provider=_storage,
+        service_price=config["service_price"],
+        agent_url=config["endpoint"],
+    )
 
 
 def _provider_address() -> str:
-    return str(_ops.agent_address)
+    if _ops is not None:
+        return str(_ops.agent_address)
+    return str(os.getenv("AGENT_PUBLIC_ADDRESS") or "unregistered")
 
 
 def _payment_token() -> str | None:
+    if _ops is None:
+        return None
     try:
         return str(_ops.erc8183_client.payment_token)
     except Exception:
@@ -87,20 +91,28 @@ def _public_identity() -> dict[str, Any]:
             "tasks": "/v1/tasks",
             "task": "/v1/tasks/{task_id}",
         },
-        "erc8183_interface": "/erc8183",
+        "erc8183_interface": {
+            "enabled": _ERC8183_ENABLED,
+            "root": "/erc8183",
+        },
     }
+
+
+def _require_erc8183() -> None:
+    if not _ERC8183_ENABLED or _ops is None:
+        raise HTTPException(status_code=404, detail="ERC-8183 provider interface is disabled for this deployment")
 
 
 _funded_first_seen: dict[int, float] = {}
 
 
 async def _on_funded(job: dict[str, Any]) -> None:
+    if _ops is None:
+        return
     job_id = job.get("jobId")
-
     if job_id is None:
         logger.warning("Funded job callback received without jobId")
         return
-
     try:
         job_id_int = int(job_id)
     except (TypeError, ValueError):
@@ -111,18 +123,8 @@ async def _on_funded(job: dict[str, Any]) -> None:
         now = time.monotonic()
         first_seen = _funded_first_seen.setdefault(job_id_int, now)
         elapsed = now - first_seen
-
         if elapsed < _EXECUTION_CAPITAL_WINDOW_SECONDS:
-            remaining = _EXECUTION_CAPITAL_WINDOW_SECONDS - elapsed
-            logger.info(
-                "ERC8183_CAPITAL_WINDOW_ACTIVE job_id=%s remaining_seconds=%.0f provider=%s network=%s chain_id=97",
-                job_id_int,
-                remaining,
-                _provider_address(),
-                config["network"],
-            )
             return
-
         _funded_first_seen.pop(job_id_int, None)
 
     logger.info(
@@ -149,19 +151,16 @@ async def _on_funded(job: dict[str, Any]) -> None:
             config["network"],
         )
     except Exception:
-        logger.exception(
-            "ERC8183_EXECUTION_FAILED job_id=%s provider=%s network=%s chain_id=97",
-            job_id_int,
-            _provider_address(),
-            config["network"],
-        )
+        logger.exception("ERC8183_EXECUTION_FAILED job_id=%s provider=%s", job_id_int, _provider_address())
         raise
 
 
 def _save_task(task: dict[str, Any]) -> None:
     _TASK_DIR.mkdir(parents=True, exist_ok=True)
     task_id = str(task["task_id"])
-    (_TASK_DIR / f"{task_id}.json").write_text(json.dumps(task, separators=(",", ":")), encoding="utf-8")
+    (_TASK_DIR / f"{task_id}.json").write_text(
+        json.dumps(task, separators=(",", ":")), encoding="utf-8"
+    )
 
 
 def _load_task(task_id: str) -> dict[str, Any]:
@@ -177,13 +176,11 @@ async def _proxy_execution(request: Request, endpoint: str) -> Response:
     body = None
     if request.method not in {"GET", "HEAD"}:
         body = await request.body()
-
     headers: dict[str, str] = {}
     for name in ("authorization", "content-type", "accept"):
         value = request.headers.get(name)
         if value:
             headers[name] = value
-
     try:
         async with httpx.AsyncClient(timeout=90.0) as client:
             upstream = await client.request(
@@ -195,7 +192,6 @@ async def _proxy_execution(request: Request, endpoint: str) -> Response:
     except httpx.HTTPError as exc:
         logger.exception("Grid execution upstream unavailable")
         raise HTTPException(status_code=503, detail="Grid execution service unavailable") from exc
-
     return Response(
         content=upstream.content,
         status_code=upstream.status_code,
@@ -213,27 +209,25 @@ _watcher_task: asyncio.Task | None = None
 async def lifespan(_: FastAPI):
     global _watcher_task
     _TASK_DIR.mkdir(parents=True, exist_ok=True)
-    logger.info(
-        "ERC8183_WATCHER_STARTING provider=%s network=%s chain_id=97 poll_interval=%s capital_window_seconds=%s",
-        _provider_address(),
-        config["network"],
-        config["poll_interval"],
-        _EXECUTION_CAPITAL_WINDOW_SECONDS,
-    )
-    _watcher_task = asyncio.create_task(
-        funded_job_watcher(_ops, _on_funded, interval=config["poll_interval"])
-    )
+    if _ERC8183_ENABLED and _ops is not None:
+        logger.info(
+            "ERC8183_WATCHER_STARTING provider=%s network=%s chain_id=97 poll_interval=%s",
+            _provider_address(),
+            config["network"],
+            config["poll_interval"],
+        )
+        _watcher_task = asyncio.create_task(
+            funded_job_watcher(_ops, _on_funded, interval=config["poll_interval"])
+        )
+    else:
+        logger.info("ERC8183_DISABLED direct_user_mode=true network=%s chain_id=97", config["network"])
     try:
         yield
     finally:
         if _watcher_task is not None:
             _watcher_task.cancel()
             await asyncio.gather(_watcher_task, return_exceptions=True)
-        logger.info(
-            "ERC8183_WATCHER_STOPPED provider=%s network=%s chain_id=97",
-            _provider_address(),
-            config["network"],
-        )
+        logger.info("GRID_AGENT_STOPPED provider=%s network=%s chain_id=97", _provider_address(), config["network"])
 
 
 app = FastAPI(
@@ -250,12 +244,11 @@ async def health() -> dict[str, Any]:
 
 @app.get("/v1/capabilities")
 async def capabilities() -> dict[str, Any]:
-    """Public, agent-owned capability manifest for direct users and integrators."""
     return {
         **_public_identity(),
         "provider_address": _provider_address(),
         "pricing": {
-            "erc8183_service_price_raw": config["service_price"],
+            "erc8183_service_price_raw": config["service_price"] if _ERC8183_ENABLED else None,
             "payment_token": _payment_token(),
         },
         "execution": {
@@ -280,18 +273,17 @@ async def quote(request: Request) -> dict[str, Any]:
     description = body.get("task_description") or body.get("description") or ""
     if not isinstance(description, str):
         raise HTTPException(status_code=400, detail="task_description must be a string")
-    terms = body.get("terms") if isinstance(body.get("terms"), dict) else {}
     return {
         "accepted": True,
         "quote_id": str(uuid.uuid4()),
         "agent": _public_identity(),
-        "price": str(config["service_price"]),
-        "currency": _payment_token() or "testnet-settlement-token",
+        "price": str(config["service_price"]) if _ERC8183_ENABLED else None,
+        "currency": _payment_token() if _ERC8183_ENABLED else None,
+        "quote_mode": "erc-8183" if _ERC8183_ENABLED else "direct-task",
         "chain_id": 97,
         "network": "bsc-testnet",
         "quote_expires_at": int(time.time()) + 300,
         "task_description": description,
-        "terms": terms,
     }
 
 
@@ -325,13 +317,7 @@ async def create_direct_task(request: Request) -> dict[str, Any]:
     task["status"] = "completed"
     task["result"] = result
     _save_task(task)
-    return {
-        "ok": True,
-        "task_id": task_id,
-        "status": "completed",
-        "agent": _public_identity(),
-        "result": result,
-    }
+    return {"ok": True, "task_id": task_id, "status": "completed", "agent": _public_identity(), "result": result}
 
 
 @app.get("/v1/tasks/{task_id}")
@@ -341,7 +327,7 @@ async def get_direct_task(task_id: str) -> dict[str, Any]:
 
 @app.get("/erc8183")
 async def erc8183_root() -> dict[str, Any]:
-    """Public ERC-8183 compatibility manifest. This is an integration protocol, not agent identity."""
+    _require_erc8183()
     return {
         "status": "ok",
         "service": "Grid Agent ERC-8183 Provider",
@@ -364,11 +350,14 @@ async def erc8183_root() -> dict[str, Any]:
 
 @app.get("/erc8183/health")
 async def erc8183_health() -> dict[str, Any]:
+    _require_erc8183()
     return {"status": "ok", "service": "Grid Agent ERC-8183 Provider", "network": "bsc-testnet", "chain_id": 97}
 
 
 @app.get("/erc8183/status")
 async def erc8183_status() -> dict[str, Any]:
+    _require_erc8183()
+    assert _ops is not None
     return {
         "status": "ok",
         "network": "bsc-testnet",
@@ -380,38 +369,32 @@ async def erc8183_status() -> dict[str, Any]:
         "service_price": config["service_price"],
         "payment_token": _payment_token(),
         "poll_interval": config["poll_interval"],
-        "execution_capital_window_seconds": _EXECUTION_CAPITAL_WINDOW_SECONDS,
     }
 
 
 @app.post("/erc8183/negotiate")
 async def negotiate(request: Request) -> dict[str, Any]:
+    _require_erc8183()
     try:
         body = await request.json()
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Invalid JSON") from exc
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="Request body must be an object")
-    terms = body.get("terms")
-    if terms is not None and not isinstance(terms, dict):
-        raise HTTPException(status_code=400, detail="terms must be an object")
     task_description = body.get("task_description")
     if task_description is not None and not isinstance(task_description, str):
         raise HTTPException(status_code=400, detail="task_description must be a string")
-
-    expires_at = int(time.time()) + 300
     return {
         "accepted": True,
         "quote_id": str(uuid.uuid4()),
         "price": str(config["service_price"]),
         "currency": _payment_token() or "testnet-settlement-token",
-        "quote_expires_at": expires_at,
+        "quote_expires_at": int(time.time()) + 300,
         "chain_id": 97,
         "network": "bsc-testnet",
         "environment": "testnet",
         "provider_address": _provider_address(),
         "task_description": task_description or "",
-        "terms": terms or {},
     }
 
 
@@ -437,31 +420,37 @@ async def direct_execution_receipt(transaction_hash: str, request: Request) -> R
 
 @app.get("/erc8183/execution-capabilities")
 async def execution_capabilities(request: Request) -> Response:
+    _require_erc8183()
     return await _proxy_execution(request, "/execution-capabilities")
 
 
 @app.get("/erc8183/execution-health")
 async def execution_health(request: Request) -> Response:
+    _require_erc8183()
     return await _proxy_execution(request, "/health")
 
 
 @app.post("/erc8183/preflight/pancake")
 async def pancake_preflight(request: Request) -> Response:
+    _require_erc8183()
     return await _proxy_execution(request, "/preflight/pancake")
 
 
 @app.post("/erc8183/execute")
 async def execute(request: Request) -> Response:
+    _require_erc8183()
     return await _proxy_execution(request, "/execute")
 
 
 @app.get("/erc8183/receipt/{transaction_hash}")
 async def execution_receipt(transaction_hash: str, request: Request) -> Response:
+    _require_erc8183()
     return await _proxy_execution(request, f"/receipt/{transaction_hash}")
 
 
 @app.get("/erc8183/job/{job_id}/response")
 async def job_response(job_id: int) -> Response:
+    _require_erc8183()
     filepath = _STORAGE_DIR / f"erc8183-job-{job_id}.json"
     try:
         content = filepath.read_bytes()
