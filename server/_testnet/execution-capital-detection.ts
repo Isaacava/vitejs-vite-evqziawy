@@ -73,6 +73,23 @@ function candidateRequestObjects(document: unknown): Record<string, unknown>[] {
     .map((value) => object(value));
 }
 
+function findRequest(document: unknown, inheritedParent?: Record<string, unknown>) {
+  const root = object(document);
+  for (const request of candidateRequestObjects(root)) {
+    const token = requestedToken(request, root);
+    const amount = requestedAmount(request, root);
+    if (token && amount) return { request, parent: root };
+  }
+  if (inheritedParent) {
+    for (const request of candidateRequestObjects(inheritedParent)) {
+      const token = requestedToken(request, inheritedParent);
+      const amount = requestedAmount(request, inheritedParent);
+      if (token && amount) return { request, parent: inheritedParent };
+    }
+  }
+  return null;
+}
+
 function requestedToken(request: Record<string, unknown>, parent: Record<string, unknown>) {
   const value = firstValue(
     request.token,
@@ -159,7 +176,7 @@ function conventionalUrls(baseUrls: string[]) {
         output.push(candidate.toString());
       }
     } catch {
-      // Ignore invalid provider-declared URLs; capability validation handles the provider itself.
+      // Ignore invalid provider-declared URLs.
     }
   }
   return [...new Set(output)];
@@ -196,15 +213,12 @@ export async function detectAgentCapitalRequest(options: {
 }): Promise<DetectedCapitalRequest> {
   const { agent, endpoints, capability, jobId, readToken, storedRequests = [] } = options;
 
-  const explicitStored = storedRequests
-    .map((stored) => ({ stored, objects: candidateRequestObjects(stored) }))
-    .flatMap(({ stored, objects }) => objects.map((request) => ({ stored, request })))
-    .map(({ stored, request }) => {
-      const token = requestedToken(request, stored);
-      const amount = requestedAmount(request, stored);
-      return token && amount ? { stored, request, token, amount } : null;
+  const storedMatch = storedRequests
+    .map((stored) => {
+      const found = findRequest(stored);
+      return found ? { ...found, stored } : null;
     })
-    .filter((value): value is { stored: Record<string, unknown>; request: Record<string, unknown>; token: Address; amount: { amount: string | null; amount_raw: string | null } } => Boolean(value));
+    .find((value): value is { stored: Record<string, unknown>; request: Record<string, unknown>; parent: Record<string, unknown> } => Boolean(value));
 
   const baseUrls = [
     ...urlsFromAgent(agent, endpoints),
@@ -214,13 +228,13 @@ export async function detectAgentCapitalRequest(options: {
   const endpointUrls = [...new Set([...urlsFromAgent(agent, endpoints), ...conventionalUrls(baseUrls)])];
   const endpointFailures: string[] = [];
 
-  let endpointResponse: { url: string; body: Record<string, unknown> } | null = null;
+  let endpointMatch: { url: string; request: Record<string, unknown>; parent: Record<string, unknown> } | null = null;
   for (const url of endpointUrls) {
     try {
       const body = object(await fetchJson(url, jobId));
-      const hasRequest = candidateRequestObjects(body).some((candidate) => requestedToken(candidate, body) && requestedAmount(candidate, body));
-      if (hasRequest) {
-        endpointResponse = { url, body };
+      const found = findRequest(body);
+      if (found) {
+        endpointMatch = { url, request: found.request, parent: found.parent };
         break;
       }
     } catch (error) {
@@ -228,15 +242,14 @@ export async function detectAgentCapitalRequest(options: {
     }
   }
 
-  const capabilityCandidates = candidateRequestObjects(capability);
-  const capabilityCandidate = capabilityCandidates.find((candidate) => requestedToken(candidate, capability) && requestedAmount(candidate, capability));
+  const capabilityMatch = findRequest(capability);
 
-  const selected = endpointResponse
-    ? { source: "agent_request_endpoint" as const, requestUrl: endpointResponse.url, parent: endpointResponse.body, request: candidateRequestObjects(endpointResponse.body)[0] }
-    : explicitStored[0]
-      ? { source: "stored_request" as const, requestUrl: null, parent: explicitStored[0].stored, request: explicitStored[0].request }
-      : capabilityCandidate
-        ? { source: "agent_capability" as const, requestUrl: null, parent: capability, request: capabilityCandidate }
+  const selected = endpointMatch
+    ? { source: "agent_request_endpoint" as const, requestUrl: endpointMatch.url, parent: endpointMatch.parent, request: endpointMatch.request }
+    : storedMatch
+      ? { source: "stored_request" as const, requestUrl: null, parent: storedMatch.parent, request: storedMatch.request }
+      : capabilityMatch
+        ? { source: "agent_capability" as const, requestUrl: null, parent: capabilityMatch.parent, request: capabilityMatch.request }
         : null;
 
   if (!selected) {
@@ -248,12 +261,12 @@ export async function detectAgentCapitalRequest(options: {
   if (!token || !amountInfo) throw new Error("Agent capital request is missing a valid token or amount");
 
   const metadata = object(agent.metadata);
-  const request = selected.request;
   const tokenMeta = await readToken(token);
   const decimalAmount = amountInfo.amount ?? undefined;
   const rawAmount = amountInfo.amount_raw ?? (decimalAmount ? parseUnits(decimalAmount, tokenMeta.decimals).toString() : null);
   if (!rawAmount || BigInt(rawAmount) <= 0n) throw new Error("Agent capital request amount is invalid");
 
+  const request = selected.request;
   const tokenOut = firstValue(request.token_out, selected.parent.token_out);
   const target = firstValue(request.target, request.router, request.to, selected.parent.target, selected.parent.router, selected.parent.to);
   const selector = firstValue(request.selector, request.function_selector, selected.parent.selector, selected.parent.function_selector);
@@ -268,7 +281,7 @@ export async function detectAgentCapitalRequest(options: {
     network: typeof firstValue(request.network, selected.parent.network, capability.network) === "string" ? String(firstValue(request.network, selected.parent.network, capability.network)) : null,
     chain_id: Number(firstValue(request.chain_id, request.chainId, selected.parent.chain_id, selected.parent.chainId, capability.chainId)) || null,
     token,
-    amount: decimalAmount ?? `${Number(rawAmount) / (10 ** tokenMeta.decimals)}`,
+    amount: decimalAmount ?? "0",
     amount_raw: rawAmount,
     symbol: tokenMeta.symbol,
     decimals: tokenMeta.decimals,
