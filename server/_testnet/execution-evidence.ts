@@ -42,8 +42,6 @@ const TRANSFER_ABI = [{
   ],
 }] as const;
 
-const SWAP_TOPIC = "0xd78ad95fa46c994b6551d0da85fc275fe6135f1ecf99f4e2f1d6f7c6f5f3d7f" as Hex;
-
 function isAddress(value: unknown): value is Address {
   return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value);
 }
@@ -103,7 +101,7 @@ async function loadOwnedJob(jobId: string, authUserId: string, wallet: string) {
 
   const { data: request, error: requestError } = await supabase
     .from("execution_capital_requests")
-    .select("user_execution_wallet,agent_session_key,status")
+    .select("user_execution_wallet,agent_session_key,status,evidence")
     .eq("job_id", job.id)
     .order("created_at", { ascending: false })
     .limit(1)
@@ -230,7 +228,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const { executionEvidence, request } = await loadOwnedJob(jobId, auth.user.id, auth.user.wallet_address);
-    const txHash = typeof executionEvidence?.transaction_hash === "string" && isHash(executionEvidence.transaction_hash) ? executionEvidence.transaction_hash : null;
+    const requestEvidence = object(request?.evidence);
+    const lastExecution = object(requestEvidence.last_execution);
+    const transactionCandidate = String(executionEvidence?.transaction_hash || lastExecution.transaction_hash || "").trim();
+    const txHash = isHash(transactionCandidate) ? transactionCandidate : null;
     if (!txHash) return res.status(200).json({ ok: true, observed: false, network: "bsc-testnet", chain_id: 97, source: "agentmarket_independent_bsc_rpc_verification", message: "No execution transaction has been independently linked to this job yet." });
 
     const executionWallet = isAddress(request?.user_execution_wallet) ? request.user_execution_wallet as Address : null;
