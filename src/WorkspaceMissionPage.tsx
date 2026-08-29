@@ -26,7 +26,6 @@ function cleanDisplay(value: unknown, fallback = "Untitled mission") {
   if (typeof value !== "string") return fallback;
   let text = value.trim();
   if (!text) return fallback;
-
   for (let attempt = 0; attempt < 2; attempt += 1) {
     if (!(text.startsWith("{") || text.startsWith("["))) break;
     try {
@@ -54,13 +53,16 @@ function cleanDisplay(value: unknown, fallback = "Untitled mission") {
       break;
     }
   }
-
   return text;
 }
 
 function Status({ value }: { value: string }) {
   const lower = value.toLowerCase();
-  const state = terminalStates.has(lower) ? "green" : ["rejected", "cancelled", "expired", "disputed"].includes(lower) ? "rust" : "brass";
+  const state = terminalStates.has(lower)
+    ? "green"
+    : ["rejected", "cancelled", "expired", "disputed"].includes(lower)
+      ? "rust"
+      : "brass";
   return <span className={`font-mono text-[9.5px] px-2.5 py-1 rounded-lg status-${state}`}>{human(value)}</span>;
 }
 
@@ -90,13 +92,21 @@ export default function WorkspaceMissionPage() {
     if (filter === "all") return jobs;
     return jobs.filter((job) => {
       const state = String(job.chain_status || job.job_status || "").toLowerCase();
-      if (filter === "planning") return ["open", "planning"].includes(state);
-      if (filter === "executing") return ["funded", "accepted", "in_progress"].includes(state);
-      if (filter === "review") return reviewStates.has(state);
-      if (filter === "completed") return terminalStates.has(state);
+      if (filter === "funded") return state === "funded";
+      if (filter === "in_progress") return ["accepted", "in_progress"].includes(state);
+      if (filter === "submitted") return reviewStates.has(state);
+      if (filter === "terminal") return terminalStates.has(state);
       return true;
     });
   }, [filter, jobs]);
+
+  const filters = [
+    ["all", "All"],
+    ["funded", "Funded"],
+    ["in_progress", "In progress"],
+    ["submitted", "Submitted"],
+    ["terminal", "Terminal"],
+  ] as const;
 
   return (
     <main className="mx-auto max-w-[1240px] px-6 py-8 font-body text-ink md:px-8">
@@ -106,14 +116,9 @@ export default function WorkspaceMissionPage() {
       </div>
 
       <div className="mb-5 flex flex-wrap gap-2 font-mono text-[10.5px]">
-        {["all", "planning", "executing", "review", "completed"].map((value) => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => setFilter(value)}
-            className={`cursor-pointer rounded-full border-0 px-3.5 py-1.5 ${filter === value ? "bg-ink text-paperhi" : "border border-line bg-paperhi text-inksoft"}`}
-          >
-            {value === "all" ? "All" : human(value)}
+        {filters.map(([value, label]) => (
+          <button key={value} type="button" onClick={() => setFilter(value)} className={`cursor-pointer rounded-full px-3.5 py-1.5 ${filter === value ? "bg-ink text-paperhi" : "border border-line bg-paperhi text-inksoft"}`}>
+            {label}
           </button>
         ))}
       </div>
@@ -128,20 +133,25 @@ export default function WorkspaceMissionPage() {
             const state = String(job.chain_status || job.job_status || "open");
             const fallbackTitle = cleanDisplay(job.task_title || job.mission_title, job.chain_job_id ? `Chain job #${job.chain_job_id}` : "Testnet mission");
             const title = cleanDisplay(job.mission_title, fallbackTitle);
-            const subtitle = cleanDisplay(job.task_title, title);
+            const category = cleanDisplay(job.task_title, "Mission");
+            const description = cleanDisplay(job.task_title, title);
             const consoleTarget = job.id || (job.chain_job_id != null ? String(job.chain_job_id) : "");
             const rowKey = job.id || `chain-${job.chain_job_id ?? index}`;
+            const last = index === filtered.length - 1;
 
             return (
-              <article key={rowKey} className={`flex min-w-0 flex-col gap-5 py-[19px] sm:flex-row sm:items-start sm:justify-between ${index < filtered.length - 1 ? "border-b border-line" : ""}`}>
+              <article key={rowKey} className={`flex min-w-0 flex-col gap-4 py-[19px] sm:flex-row sm:items-start sm:justify-between ${!last ? "border-b border-line" : ""}`}>
                 <div className="min-w-0 flex-1">
-                  <div className="font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477]">{subtitle}</div>
+                  <div className="font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477]">{category}</div>
                   <h2 className="my-1.5 text-[16px] font-bold">{title}</h2>
-                  <p className="max-w-[520px] text-[12px] text-inksoft">{subtitle}</p>
+                  <p className="max-w-[400px] text-[12px] text-inksoft">{description}</p>
+                  {job.chain_job_id != null && state !== "terminal" && (
+                    <span className="mt-2 inline-block rounded-full bg-brasssoft px-2 py-1 font-mono text-[9px] text-brass">◈ Chain job #{job.chain_job_id}</span>
+                  )}
                 </div>
                 <div className="min-w-0 shrink-0 text-left sm:min-w-[150px] sm:text-right">
                   <Status value={state} />
-                  <small className="my-2 block text-[11px] text-inksoft">{job.chain_job_id == null ? "Marketplace job" : `Chain job #${job.chain_job_id}`}</small>
+                  <small className="my-2 block text-[11px] text-inksoft">{job.chain_job_id == null ? "Marketplace job" : "Agent provider"}</small>
                   {consoleTarget && <a href={`/mission?job=${encodeURIComponent(consoleTarget)}`} className="text-[11.5px] font-extrabold text-brass no-underline">Open console →</a>}
                 </div>
               </article>
