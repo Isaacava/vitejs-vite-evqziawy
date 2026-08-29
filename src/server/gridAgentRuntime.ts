@@ -15,12 +15,16 @@ export type GridRuntimeState = MissionExecutionState;
 export type GridRuntimeEvent = MissionExecutionEvent;
 export type GridRuntimeContext = MissionExecutionContext & { proposal: GridProposal };
 
-function asGenericProposal(proposal: GridProposal) {
-  return proposal;
+function toExecutionProposal(proposal: GridProposal) {
+  return {
+    ...proposal,
+    agent_id: "grid",
+    parameters: { ...proposal.parameters },
+  };
 }
 
 export function createGridRuntime(proposal: GridProposal): GridRuntimeContext {
-  return createMissionExecution(asGenericProposal(proposal)) as GridRuntimeContext;
+  return createMissionExecution(toExecutionProposal(proposal)) as GridRuntimeContext;
 }
 
 export function applyGridRiskDecision(
