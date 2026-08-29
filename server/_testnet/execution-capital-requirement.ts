@@ -43,10 +43,7 @@ async function fetchJson(url: string) {
   return response.json() as Promise<Record<string, unknown>>;
 }
 
-async function loadCapability(
-  agent: Record<string, unknown>,
-  endpoints: Array<Record<string, unknown>>,
-) {
+async function loadCapability(agent: Record<string, unknown>, endpoints: Array<Record<string, unknown>>) {
   const candidates = [
     ...metadataCapabilityUrls(agent),
     ...(endpoints || []).map((endpoint) => `${String(endpoint.endpoint_url).replace(/\/+$/, "")}/execution-capabilities`),
@@ -141,8 +138,7 @@ async function resolveRequirement(jobId: string, userId: string, wallet: string 
 
   if (detected.chain_id !== null && detected.chain_id !== 97) throw new Error("Agent capital request is not for BSC Testnet");
   if (detected.network && detected.network !== "bsc-testnet") throw new Error("Agent capital request is not for BSC Testnet");
-  if (detected.amount_raw === "0") throw new Error("Agent capital request amount is zero");
-  if (BigInt(detected.amount_raw) > 1_000_000_000_000_000_000n) throw new Error("Testnet execution capital request exceeds the marketplace safety cap of 1 whole token");
+  if (BigInt(detected.amount_raw) > 10n ** BigInt(detected.decimals)) throw new Error("Testnet execution capital request exceeds the marketplace safety cap of 1 whole token");
 
   const market = executionObject(capability.execution_market);
   if (isAddress(market.token_in) && detected.token.toLowerCase() !== String(market.token_in).toLowerCase()) {
