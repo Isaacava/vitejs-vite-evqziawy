@@ -13,6 +13,8 @@ export type OnchainExecutionSummary = {
   };
   market?: {
     verified_onchain?: boolean;
+    token_in?: string | null;
+    token_out?: string | null;
     token_in_symbol?: string | null;
     token_in_amount?: string | null;
     token_out_symbol?: string | null;
