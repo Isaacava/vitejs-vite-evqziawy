@@ -20,6 +20,7 @@ from bnbagent.storage import LocalStorageProvider
 
 from app.agent.main import fulfill_grid_job_with_execution
 from app.service.config import validate_runtime_config
+from app.execution.readiness import getExecutionReadiness
 
 logger = logging.getLogger("grid_agent")
 config = validate_runtime_config()
@@ -30,6 +31,7 @@ _EXECUTION_CAPITAL_WINDOW_SECONDS = max(
     0,
     int(float(os.getenv("ERC8183_EXECUTION_CAPITAL_WINDOW_SECONDS") or "0")),
 )
+_AUTHORIZATION_POLL_SECONDS = max(5, int(float(os.getenv("ERC8183_ALTANA_AUTHORIZATION_POLL_SECONDS") or "10")))
 
 _wallet = EVMWalletProvider(
     password=os.environ["WALLET_PASSWORD"],
@@ -57,6 +59,45 @@ def _payment_token() -> str | None:
 
 
 _funded_first_seen: dict[int, float] = {}
+
+
+async def _wait_for_altana_authorization(job: dict[str, Any]) -> dict[str, Any]:
+    """Hold a funded job until the exact configured Altana session is live on KeyStore.
+
+    The provider must not turn a merely-funded ERC-8183 job into a submission before
+    the user has granted the scoped Altana session. The KeyStore is the authority for
+    this gate; no marketplace API or cached boolean is treated as sufficient.
+    """
+    expired_at_raw = job.get("expiredAt") or job.get("expired_at") or 0
+    try:
+        expired_at = int(expired_at_raw)
+    except (TypeError, ValueError):
+        expired_at = 0
+
+    while True:
+        readiness = await getExecutionReadiness()
+        if readiness["ready"]:
+            logger.info(
+                "ERC8183_ALTANA_AUTHORIZED job_id=%s wallet=%s session_key=%s session_key_id=%s",
+                job.get("jobId"),
+                readiness.get("walletAddress"),
+                readiness.get("sessionKeyAddress"),
+                readiness.get("sessionKeyId"),
+            )
+            return readiness
+
+        if expired_at and int(time.time()) >= expired_at:
+            raise RuntimeError(
+                f"ERC-8183 job {job.get('jobId')} expired while waiting for the required Altana session authorization; no deliverable was submitted"
+            )
+
+        logger.info(
+            "ERC8183_ALTANA_AUTHORIZATION_WAIT job_id=%s wallet=%s reasons=%s",
+            job.get("jobId"),
+            readiness.get("walletAddress"),
+            " | ".join(readiness.get("reasons") or ["Altana session not yet authorized"]),
+        )
+        await asyncio.sleep(_AUTHORIZATION_POLL_SECONDS)
 
 
 async def _on_funded(job: dict[str, Any]) -> None:
@@ -87,13 +128,21 @@ async def _on_funded(job: dict[str, Any]) -> None:
         _funded_first_seen.pop(job_id_int, None)
 
     logger.info(
-        "ERC8183_AGENT_EXECUTION_STARTED job_id=%s provider=%s network=%s chain_id=97",
+        "ERC8183_FUNDED_JOB_OBSERVED job_id=%s provider=%s network=%s chain_id=97",
         job_id_int,
         _provider_address(),
         config["network"],
     )
 
     try:
+        await _wait_for_altana_authorization(job)
+
+        logger.info(
+            "ERC8183_AGENT_EXECUTION_STARTED job_id=%s provider=%s network=%s chain_id=97",
+            job_id_int,
+            _provider_address(),
+            config["network"],
+        )
         deliverable, metadata = await fulfill_grid_job_with_execution(job)
         logger.info(
             "ERC8183_AGENT_DELIVERABLE_GENERATED job_id=%s provider=%s execution_status=%s",
@@ -161,11 +210,12 @@ _watcher_task: asyncio.Task | None = None
 async def lifespan(_: FastAPI):
     global _watcher_task
     logger.info(
-        "ERC8183_WATCHER_STARTING provider=%s network=%s chain_id=97 poll_interval=%s capital_window_seconds=%s",
+        "ERC8183_WATCHER_STARTING provider=%s network=%s chain_id=97 poll_interval=%s capital_window_seconds=%s altana_authorization_poll_seconds=%s",
         _provider_address(),
         config["network"],
         config["poll_interval"],
         _EXECUTION_CAPITAL_WINDOW_SECONDS,
+        _AUTHORIZATION_POLL_SECONDS,
     )
     _watcher_task = asyncio.create_task(funded_job_watcher(_ops, _on_funded, interval=config["poll_interval"]))
     try:
@@ -229,6 +279,7 @@ async def erc8183_status() -> dict[str, Any]:
         "payment_token": _payment_token(),
         "poll_interval": config["poll_interval"],
         "execution_capital_window_seconds": _EXECUTION_CAPITAL_WINDOW_SECONDS,
+        "altana_authorization_poll_seconds": _AUTHORIZATION_POLL_SECONDS,
     }
 
 
