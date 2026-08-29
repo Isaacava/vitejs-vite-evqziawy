@@ -18,7 +18,7 @@ function normalizePrivateKey(value: string): `0x${string}` {
   return `0x${raw}`;
 }
 
-function configuredList(name: string): Address[] {
+function configuredAddressList(name: string): Address[] {
   return (process.env[name] || "")
     .split(",")
     .map((value) => value.trim())
@@ -26,6 +26,20 @@ function configuredList(name: string): Address[] {
     .map((value) => {
       if (!isAddress(value)) throw new Error(`${name} contains an invalid address: ${value}`);
       return value as Address;
+    });
+}
+
+function configuredHexList(name: string, expectedBytes?: number): Hex[] {
+  return (process.env[name] || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => {
+      if (!isHex(value)) throw new Error(`${name} contains invalid hex: ${value}`);
+      if (expectedBytes !== undefined && value.length !== 2 + expectedBytes * 2) {
+        throw new Error(`${name} contains a hex value with invalid length: ${value}`);
+      }
+      return value as Hex;
     });
 }
 
@@ -79,7 +93,7 @@ export function configuredSessionDescriptor(env: NodeJS.ProcessEnv = process.env
   const walletAddress = env.ALTANA_WALLET_ADDRESS?.trim() || "";
   if (!isAddress(walletAddress)) throw new Error("ALTANA_WALLET_ADDRESS must be the user Altana wallet address that granted this session");
 
-  const allowedCalls = configuredList("GRID_ALLOWED_TARGETS");
+  const allowedCalls = configuredAddressList("GRID_ALLOWED_TARGETS");
   if (allowedCalls.length === 0) throw new Error("GRID_ALLOWED_TARGETS must contain at least one contract target");
 
   const spendTokenRaw = (env.ALTANA_SESSION_SPEND_TOKEN || env.GRID_DEFAULT_TOKEN_IN || "").trim();
@@ -99,7 +113,7 @@ export function configuredSessionDescriptor(env: NodeJS.ProcessEnv = process.env
     agentSessionAddress: account.address,
     agentSessionPublicKey: publicKey,
     allowedCalls,
-    allowedSelectors: configuredList("GRID_ALLOWED_SELECTORS").map(String),
+    allowedSelectors: configuredHexList("GRID_ALLOWED_SELECTORS", 4),
     spendLimit: BigInt(spendLimitRaw),
     spendToken: spendTokenRaw as Address,
     nativeSpendLimit: BigInt(nativeSpendLimitRaw),
