@@ -15,7 +15,7 @@ function observed(value?: string | null) {
   return value === null || value === undefined || value === "" ? "Not yet observed" : displayObservedNumber(value);
 }
 
-export default function ExecutionCapitalCard({ request, jobBudget, jobCurrency }: ExecutionCapitalCardProps) {
+export default function ExecutionCapitalCard({ request }: ExecutionCapitalCardProps) {
   const verified = request ? isVerifiedAuthorization(request) : false;
   const status = request?.status ? request.status.toUpperCase() : "NOT REQUESTED";
 
