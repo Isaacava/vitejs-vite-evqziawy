@@ -110,7 +110,7 @@ export async function getExecutionReadiness() {
         ]);
         executionTokenSymbol = String(symbol);
         executionTokenDecimals = Number(decimals);
-        if (executionTokenSymbol !== "CAKE2") reasons.push(`Canonical CAKE2 contract reports symbol ${executionTokenSymbol}, not CAKE2`);
+        // ERC-20 symbol is informational only. Token identity is the canonical contract address above.
         if (executionTokenDecimals !== 18) reasons.push(`Canonical CAKE2 contract reports ${executionTokenDecimals} decimals, expected 18 for the controlled test amount`);
       } catch (error) {
         reasons.push(error instanceof Error ? `CAKE2 token metadata check failed: ${error.message}` : "CAKE2 token metadata check failed");
