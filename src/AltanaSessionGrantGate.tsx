@@ -86,7 +86,19 @@ export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProp
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ request_id: props.requestId, user_execution_wallet: granted.walletAddress, signer_address: granted.signerAddress, session_key_id: granted.sessionKeyId, session_expiry: granted.expiry, session_grant_tx_hash: granted.transactionHash }),
+        body: JSON.stringify({
+          request_id: props.requestId,
+          user_execution_wallet: granted.walletAddress,
+          signer_address: granted.signerAddress,
+          session_key_id: granted.sessionKeyId,
+          session_expiry: granted.expiry,
+          session_grant_tx_hash: granted.transactionHash,
+          capital_token: props.capitalToken,
+          capital_amount_raw: rawCapitalAmount.toString(),
+          capital_funding_tx_hash: capitalFunding.transactionHash || null,
+          allowance_tx_hash: allowance.transactionHash || null,
+          allowance_spender: approvalSpender,
+        }),
       });
       const body = await response.json() as { ok?: boolean; authorized?: boolean; error?: string };
       if (!response.ok || !body.authorized) throw new Error(body.error || "AgentMarket could not independently verify the Altana session.");
