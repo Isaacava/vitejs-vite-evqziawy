@@ -8,63 +8,45 @@ export type ExecutionCapitalCardProps = {
 };
 
 function compact(value?: string | null) {
-  return value ? `${value.slice(0, 6)}…${value.slice(-4)}` : "—";
+  return value ? `${value.slice(0, 8)}…${value.slice(-6)}` : "—";
+}
+
+function observed(value?: string | null) {
+  return value === null || value === undefined || value === "" ? "Not yet observed" : displayObservedNumber(value);
 }
 
 export default function ExecutionCapitalCard({ request, jobBudget, jobCurrency }: ExecutionCapitalCardProps) {
-  if (!request) {
-    return (
-      <section className="border border-line rounded-[16px_8px_18px_9px] bg-paper p-5">
-        <div className="grid sm:grid-cols-2 gap-4">
-          <div>
-            <small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1">ERC-8183 Job</small>
-            <strong className="font-display text-[18px]">{jobBudget ?? "Not yet observed"} {jobCurrency || ""}</strong>
-            <p className="text-[10.5px] text-inksoft mt-1">Payment for the agent's job. Separate from execution capital.</p>
-          </div>
-          <div>
-            <small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1">Execution Capital</small>
-            <strong className="font-display text-[18px]">Not requested</strong>
-            <p className="text-[10.5px] text-inksoft mt-1">No trading capital has been requested for this job.</p>
-          </div>
-        </div>
-      </section>
-    );
-  }
-
-  const verified = isVerifiedAuthorization(request);
+  const verified = request ? isVerifiedAuthorization(request) : false;
+  const status = request?.status ? request.status.toUpperCase() : "NOT REQUESTED";
 
   return (
-    <section className="border border-line rounded-[16px_8px_18px_9px] bg-paper p-5">
-      <div className="flex items-start justify-between gap-4">
+    <section className="mb-6 rounded-[18px_9px_20px_10px] border border-brass/40 bg-brasssoft/30 p-5">
+      <div className="mb-4 flex items-start justify-between gap-4">
         <div>
-          <small className="block font-mono text-[8.5px] uppercase tracking-widest text-brass mb-1">Execution Capital</small>
-          <h3 className="font-display text-[18px] font-bold m-0">{request.purpose || "Agent execution"}</h3>
-          <p className="text-[10.5px] text-inksoft mt-1">This capital is separate from the ERC-8183 job payment.</p>
+          <small className="mb-1 block font-mono text-[8.5px] uppercase text-brass">Execution Capital</small>
+          <strong className="font-display text-[17px] font-bold">{request?.purpose || "Agent execution"}</strong>
+          <span className="mt-0.5 block text-[11px] text-inksoft">This capital is separate from the ERC-8183 job payment.</span>
         </div>
-        <span className={`font-mono text-[9px] px-2.5 py-1 rounded-lg ${verified ? "status-green" : "status-brass"}`}>{request.status.toUpperCase()}</span>
+        <span className={`rounded-lg px-2.5 py-1 font-mono text-[9.5px] ${verified || status === "ACTIVE" || status === "AUTHORIZED" ? "status-green" : "status-brass"}`}>{status.toLowerCase()}</span>
       </div>
 
-      <div className="grid sm:grid-cols-3 gap-3 mt-5">
-        <div className="border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-3.5"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Requested</small><strong className="font-mono text-[11px]">{displayObservedNumber(request.capital_requested)}</strong></div>
-        <div className="border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-3.5"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Authorized</small><strong className="font-mono text-[11px]">{displayObservedNumber(request.capital_authorized)}</strong></div>
-        <div className="border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-3.5"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Deployed</small><strong className="font-mono text-[11px]">{displayObservedNumber(request.capital_deployed)}</strong></div>
-        <div className="border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-3.5"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Returned</small><strong className="font-mono text-[11px]">{displayObservedNumber(request.capital_returned)}</strong></div>
-        <div className="border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-3.5"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Realized P&amp;L</small><strong className="font-mono text-[11px]">{displayObservedNumber(request.realized_pnl)}</strong></div>
-        <div className="border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-3.5"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Session key</small><strong className="font-mono text-[11px]">{compact(request.agent_session_key)}</strong></div>
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div><small className="mb-1 block font-mono text-[8px] uppercase text-[#8a8477]">Requested</small><strong className="font-mono text-[13px]">{observed(request?.capital_requested)}</strong></div>
+        <div><small className="mb-1 block font-mono text-[8px] uppercase text-[#8a8477]">Authorized</small><strong className="font-mono text-[13px]">{observed(request?.capital_authorized)}</strong></div>
+        <div><small className="mb-1 block font-mono text-[8px] uppercase text-[#8a8477]">Deployed</small><strong className="font-mono text-[13px]">{observed(request?.capital_deployed)}</strong></div>
+        <div><small className="mb-1 block font-mono text-[8px] uppercase text-[#8a8477]">Realized P&amp;L</small><strong className="font-mono text-[13px]">{observed(request?.realized_pnl)}</strong></div>
       </div>
 
-      <div className="mt-4 flex flex-wrap gap-2">
-        <span className={`font-mono text-[9px] px-2.5 py-1 rounded-lg ${request.wallet_provider === "altana" ? "status-green" : "status-brass"}`}>Altana</span>
-        <span className={`font-mono text-[9px] px-2.5 py-1 rounded-lg ${verified ? "status-green" : "status-brass"}`}>{verified ? "KeyStore verified" : "Not independently verified"}</span>
-        <span className="font-mono text-[9px] px-2.5 py-1 rounded-lg border border-line">Scoped session</span>
-        {request.duration_seconds !== null && request.duration_seconds !== undefined && (
-          <span className="font-mono text-[9px] px-2.5 py-1 rounded-lg border border-line">
-            Duration {Math.round(request.duration_seconds / 3600)}h
-          </span>
-        )}
+      <div className="mb-4 flex flex-wrap gap-2">
+        <span className="rounded-full border border-line bg-paperhi px-2 py-1 font-mono text-[9px] text-inksoft">wallet: {request?.wallet_provider || "altana"}</span>
+        <span className="rounded-full border border-line bg-paperhi px-2 py-1 font-mono text-[9px] text-inksoft">authorization: scoped_session</span>
+        <span className="rounded-full border border-line bg-paperhi px-2 py-1 font-mono text-[9px] text-inksoft">session key: {compact(request?.agent_session_key)}</span>
+        {request?.duration_seconds !== null && request?.duration_seconds !== undefined && <span className="rounded-full border border-line bg-paperhi px-2 py-1 font-mono text-[9px] text-inksoft">Duration {Math.round(request.duration_seconds / 3600)}h</span>}
       </div>
 
-      <p className="mt-4 text-[10px] text-inksoft">Any value shown as “Not yet observed” has not been independently verified. The marketplace never renders an unknown capital or P&amp;L value as zero.</p>
+      {request?.session_grant_tx_hash && <p className="mb-0 border-t border-dashed border-line pt-3 text-[10px] text-inksoft">Session grant tx: <span className="font-mono text-brass">{compact(request.session_grant_tx_hash)}</span> · user-owned authorization, independently verified where observable.</p>}
+      {!request && <p className="mb-0 text-[10px] text-inksoft">No execution capital request has been observed yet. ERC-8183 job budget remains separate.</p>}
+      {request && <p className="mb-0 mt-3 text-[10px] text-inksoft">Any value shown as “Not yet observed” has not been independently verified. The marketplace never renders an unknown capital or P&amp;L value as zero.</p>}
     </section>
   );
 }
