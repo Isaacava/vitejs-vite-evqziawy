@@ -18,7 +18,7 @@ from app.agent.execution import execute_grid_trade
 
 TESTNET_CAKE2 = "0x8d008B313C1d6C7fE2982F62d32Da7507cF43551"
 TESTNET_WBNB = "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd"
-TESTNET_PANCAKE_FEE = 2500
+TESTNET_PANCAKE_FEE = 500
 
 
 @dataclass(frozen=True)
@@ -115,33 +115,46 @@ def fulfill_grid_job(job: dict[str, Any]) -> str:
 
 
 async def fulfill_grid_job_with_execution(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    """Execute the funded job through Grid's own scoped Altana session."""
+    """Execute the funded job through Grid's own scoped Altana session.
+
+    A live ERC-8183 provider result is submit-worthy only after the agent has
+    completed its execution and observed a successful receipt. Authorization,
+    funding, allowance, or execution failures are raised back to the watcher so
+    the funded job remains pending and can be retried after the blocker clears.
+    """
     plan = build_grid_plan(job)
     payload = _strategy_payload(job, plan)
     execution_enabled = (os.getenv("GRID_AUTO_EXECUTE_TESTNET", "true") or "true").strip().lower() not in {"0", "false", "no", "off"}
 
     if not execution_enabled:
-        payload["execution"] = "strategy_only"
-        payload["note"] = "Grid Testnet execution is disabled by GRID_AUTO_EXECUTE_TESTNET."
-        return json.dumps(payload, separators=(",", ":")), {"execution_status": "disabled"}
+        raise RuntimeError("Grid Testnet execution is disabled; no ERC-8183 deliverable will be submitted")
 
-    try:
-        result = await execute_grid_trade(job)
-        transaction_hash = result["transaction_hash"]
-        payload["execution"] = "agent_owned_testnet"
-        payload["execution_result"] = {
-            "status": result.get("status"),
-            "calls_id": result.get("calls_id"),
-            "transaction_hash": transaction_hash,
-            "receipt": result.get("receipt"),
-        }
-        payload["note"] = "Grid autonomously ran the authorized Testnet execution through its own Altana session and observed the receipt before submitting this ERC-8183 deliverable."
-        return json.dumps(payload, separators=(",", ":")), {"execution_status": "executed", "transaction_hash": transaction_hash, "calls_id": result.get("calls_id")}
-    except Exception as exc:
-        payload["execution"] = "agent_owned_testnet"
-        payload["execution_result"] = {"status": "failed", "error": str(exc)}
-        payload["note"] = "Grid could not complete its authorized Testnet execution; the deliverable is marked failed rather than pretending the trade occurred."
-        return json.dumps(payload, separators=(",", ":")), {"execution_status": "failed", "error": str(exc)}
+    result = await execute_grid_trade(job)
+    transaction_hash = result.get("transaction_hash")
+    execution_status = result.get("status")
+    if not transaction_hash:
+        raise RuntimeError("Grid execution completed without a transaction hash")
+    if execution_status not in {"CONFIRMED", "PENDING"}:
+        raise RuntimeError(f"Grid execution did not return an acceptable transaction status: {execution_status}")
+
+    receipt = result.get("receipt") or {}
+    receipt_status = str(receipt.get("status") or receipt.get("executionStatus") or "").lower()
+    if receipt_status and receipt_status not in {"success", "confirmed", "0x1", "1"}:
+        raise RuntimeError(f"Grid observed an unsuccessful Testnet receipt for transaction {transaction_hash}")
+
+    payload["execution"] = "agent_owned_testnet"
+    payload["execution_result"] = {
+        "status": execution_status,
+        "calls_id": result.get("calls_id"),
+        "transaction_hash": transaction_hash,
+        "receipt": receipt,
+    }
+    payload["note"] = "Grid autonomously ran the authorized Testnet execution through its own Altana session and observed the receipt before submitting this ERC-8183 deliverable."
+    return json.dumps(payload, separators=(",", ":")), {
+        "execution_status": "executed",
+        "transaction_hash": transaction_hash,
+        "calls_id": result.get("calls_id"),
+    }
 
 
 if __name__ == "__main__":
