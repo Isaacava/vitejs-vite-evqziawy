@@ -26,24 +26,12 @@ config = validate_runtime_config()
 
 _STORAGE_DIR = Path(os.getenv("STORAGE_LOCAL_PATH") or ".agent-data")
 _EXECUTION_INTERNAL_URL = (os.getenv("GRID_EXECUTION_INTERNAL_URL") or "http://127.0.0.1:8788").rstrip("/")
-_EXECUTION_CAPITAL_WINDOW_SECONDS = max(
-    0,
-    int(float(os.getenv("ERC8183_EXECUTION_CAPITAL_WINDOW_SECONDS") or "0")),
-)
+_EXECUTION_CAPITAL_WINDOW_SECONDS = max(0, int(float(os.getenv("ERC8183_EXECUTION_CAPITAL_WINDOW_SECONDS") or "0")))
 _AUTHORIZATION_POLL_SECONDS = max(5, int(float(os.getenv("ERC8183_ALTANA_AUTHORIZATION_POLL_SECONDS") or "10")))
 
-_wallet = EVMWalletProvider(
-    password=os.environ["WALLET_PASSWORD"],
-    private_key=os.environ.get("PRIVATE_KEY"),
-)
+_wallet = EVMWalletProvider(password=os.environ["WALLET_PASSWORD"], private_key=os.environ.get("PRIVATE_KEY"))
 _storage = LocalStorageProvider(base_dir=str(_STORAGE_DIR))
-_ops = ERC8183JobOps(
-    _wallet,
-    network=config["network"],
-    storage_provider=_storage,
-    service_price=config["service_price"],
-    agent_url=config["endpoint"],
-)
+_ops = ERC8183JobOps(_wallet, network=config["network"], storage_provider=_storage, service_price=config["service_price"], agent_url=config["endpoint"])
 
 
 def _provider_address() -> str:
@@ -58,10 +46,19 @@ def _payment_token() -> str | None:
 
 
 _funded_first_seen: dict[int, float] = {}
+_runtime: dict[str, Any] = {
+    "watcher_started_at": None,
+    "last_funded_job_observed": None,
+    "last_job_id": None,
+    "last_execution_started": None,
+    "last_execution_completed": None,
+    "last_execution_failed": None,
+    "last_error": None,
+    "last_submission": None,
+}
 
 
 async def _read_local_execution_readiness() -> dict[str, Any]:
-    """Read the isolated Node execution service's live Altana and token readiness state."""
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.get(f"{_EXECUTION_INTERNAL_URL}/execution-readiness")
@@ -75,55 +72,23 @@ async def _read_local_execution_readiness() -> dict[str, Any]:
                 raise RuntimeError("execution readiness response was not an object")
             return body
     except (httpx.HTTPError, RuntimeError) as exc:
-        return {
-            "ready": False,
-            "walletAddress": os.getenv("ALTANA_WALLET_ADDRESS"),
-            "reasons": [f"Grid local execution readiness unavailable: {exc}"],
-        }
+        return {"ready": False, "walletAddress": os.getenv("ALTANA_WALLET_ADDRESS"), "reasons": [f"Grid local execution readiness unavailable: {exc}"]}
 
 
 async def _wait_for_altana_authorization(job: dict[str, Any]) -> dict[str, Any]:
-    """Hold a funded job until exact execution authorization and capital readiness exist.
-
-    The KeyStore authorization, exact CAKE2 token, required amount, balance, and
-    router allowance are all prerequisites. A merely-funded ERC-8183 job never
-    becomes a submitted deliverable by itself.
-    """
     expired_at_raw = job.get("expiredAt") or job.get("expired_at") or 0
     try:
         expired_at = int(expired_at_raw)
     except (TypeError, ValueError):
         expired_at = 0
-
     while True:
         readiness = await _read_local_execution_readiness()
         if readiness.get("ready") is True:
-            logger.info(
-                "ERC8183_EXECUTION_READY job_id=%s wallet=%s token=%s amount_raw=%s balance_raw=%s allowance_raw=%s session_key=%s session_key_id=%s",
-                job.get("jobId"),
-                readiness.get("walletAddress"),
-                readiness.get("executionToken"),
-                readiness.get("requiredAmountRaw"),
-                readiness.get("tokenBalanceRaw"),
-                readiness.get("tokenAllowanceRaw"),
-                readiness.get("sessionKeyAddress"),
-                readiness.get("sessionKeyId"),
-            )
+            logger.info("ERC8183_EXECUTION_READY job_id=%s wallet=%s token=%s amount_raw=%s balance_raw=%s allowance_raw=%s session_key=%s session_key_id=%s", job.get("jobId"), readiness.get("walletAddress"), readiness.get("executionToken"), readiness.get("requiredAmountRaw"), readiness.get("tokenBalanceRaw"), readiness.get("tokenAllowanceRaw"), readiness.get("sessionKeyAddress"), readiness.get("sessionKeyId"))
             return readiness
-
         if expired_at and int(time.time()) >= expired_at:
-            raise RuntimeError(
-                f"ERC-8183 job {job.get('jobId')} expired while waiting for Altana authorization and exact execution-capital readiness; no deliverable was submitted"
-            )
-
-        logger.info(
-            "ERC8183_EXECUTION_WAIT job_id=%s wallet=%s token=%s amount_raw=%s reasons=%s",
-            job.get("jobId"),
-            readiness.get("walletAddress"),
-            readiness.get("executionToken"),
-            readiness.get("requiredAmountRaw"),
-            " | ".join(readiness.get("reasons") or ["Execution not ready"]),
-        )
+            raise RuntimeError(f"ERC-8183 job {job.get('jobId')} expired while waiting for Altana authorization and exact execution-capital readiness; no deliverable was submitted")
+        logger.info("ERC8183_EXECUTION_WAIT job_id=%s wallet=%s token=%s amount_raw=%s reasons=%s", job.get("jobId"), readiness.get("walletAddress"), readiness.get("executionToken"), readiness.get("requiredAmountRaw"), " | ".join(readiness.get("reasons") or ["Execution not ready"]))
         await asyncio.sleep(_AUTHORIZATION_POLL_SECONDS)
 
 
@@ -132,7 +97,6 @@ async def _on_funded(job: dict[str, Any]) -> None:
     if job_id is None:
         logger.warning("Funded job callback received without jobId")
         return
-
     try:
         job_id_int = int(job_id)
     except (TypeError, ValueError):
@@ -144,53 +108,27 @@ async def _on_funded(job: dict[str, Any]) -> None:
         first_seen = _funded_first_seen.setdefault(job_id_int, now)
         elapsed = now - first_seen
         if elapsed < _EXECUTION_CAPITAL_WINDOW_SECONDS:
-            logger.info(
-                "ERC8183_CAPITAL_WINDOW_ACTIVE job_id=%s remaining_seconds=%.0f provider=%s network=%s chain_id=97",
-                job_id_int,
-                _EXECUTION_CAPITAL_WINDOW_SECONDS - elapsed,
-                _provider_address(),
-                config["network"],
-            )
+            logger.info("ERC8183_CAPITAL_WINDOW_ACTIVE job_id=%s remaining_seconds=%.0f provider=%s network=%s chain_id=97", job_id_int, _EXECUTION_CAPITAL_WINDOW_SECONDS - elapsed, _provider_address(), config["network"])
             return
         _funded_first_seen.pop(job_id_int, None)
 
-    logger.info(
-        "ERC8183_FUNDED_JOB_OBSERVED job_id=%s provider=%s network=%s chain_id=97",
-        job_id_int,
-        _provider_address(),
-        config["network"],
-    )
+    _runtime["last_funded_job_observed"] = int(time.time())
+    _runtime["last_job_id"] = job_id_int
+    _runtime["last_error"] = None
+    logger.info("ERC8183_FUNDED_JOB_OBSERVED job_id=%s provider=%s network=%s chain_id=97", job_id_int, _provider_address(), config["network"])
 
     try:
         readiness = await _wait_for_altana_authorization(job)
-
-        logger.info(
-            "ERC8183_AGENT_EXECUTION_STARTED job_id=%s provider=%s network=%s chain_id=97",
-            job_id_int,
-            _provider_address(),
-            config["network"],
-        )
+        _runtime["last_execution_started"] = int(time.time())
+        logger.info("ERC8183_AGENT_EXECUTION_STARTED job_id=%s provider=%s network=%s chain_id=97", job_id_int, _provider_address(), config["network"])
         deliverable, metadata = await fulfill_grid_job_with_execution(job)
         execution_status = str(metadata.get("execution_status") or "").lower()
         transaction_hash = str(metadata.get("transaction_hash") or "")
-
         if execution_status != "executed" or not transaction_hash:
-            raise RuntimeError(
-                f"Grid execution did not produce successful execution evidence for job {job_id_int}; execution_status={execution_status or 'unknown'}; no ERC-8183 deliverable was submitted"
-            )
-
-        logger.info(
-            "ERC8183_AGENT_DELIVERABLE_GENERATED job_id=%s provider=%s execution_status=%s tx_hash=%s token=%s amount_raw=%s",
-            job_id_int,
-            _provider_address(),
-            execution_status,
-            transaction_hash,
-            readiness.get("executionToken"),
-            readiness.get("requiredAmountRaw"),
-        )
-
+            raise RuntimeError(f"Grid execution did not produce successful execution evidence for job {job_id_int}; execution_status={execution_status or 'unknown'}; no ERC-8183 deliverable was submitted")
+        _runtime["last_execution_completed"] = int(time.time())
+        logger.info("ERC8183_AGENT_DELIVERABLE_GENERATED job_id=%s provider=%s execution_status=%s tx_hash=%s token=%s amount_raw=%s", job_id_int, _provider_address(), execution_status, transaction_hash, readiness.get("executionToken"), readiness.get("requiredAmountRaw"))
         submission = await _ops.submit_result(job_id_int, deliverable)
-
         tx_hash = None
         if isinstance(submission, str):
             tx_hash = submission
@@ -198,22 +136,12 @@ async def _on_funded(job: dict[str, Any]) -> None:
             tx_hash = str(submission.hash)
         elif isinstance(submission, dict):
             tx_hash = submission.get("hash") or submission.get("tx_hash")
-
-        logger.info(
-            "ERC8183_SUBMISSION_CONFIRMED job_id=%s provider=%s tx_hash=%s network=%s chain_id=97",
-            job_id_int,
-            _provider_address(),
-            tx_hash or "unknown",
-            config["network"],
-            config["network"],
-        )
-    except Exception:
-        logger.exception(
-            "ERC8183_AGENT_EXECUTION_FAILED job_id=%s provider=%s network=%s chain_id=97",
-            job_id_int,
-            _provider_address(),
-            config["network"],
-        )
+        _runtime["last_submission"] = {"timestamp": int(time.time()), "job_id": job_id_int, "tx_hash": tx_hash}
+        logger.info("ERC8183_SUBMISSION_CONFIRMED job_id=%s provider=%s tx_hash=%s network=%s chain_id=97", job_id_int, _provider_address(), tx_hash or "unknown", config["network"])
+    except Exception as exc:
+        _runtime["last_execution_failed"] = int(time.time())
+        _runtime["last_error"] = str(exc)
+        logger.exception("ERC8183_AGENT_EXECUTION_FAILED job_id=%s provider=%s network=%s chain_id=97", job_id_int, _provider_address(), config["network"])
         raise
 
 
@@ -232,11 +160,7 @@ async def _proxy_execution(request: Request, endpoint: str) -> Response:
     except httpx.HTTPError as exc:
         logger.exception("Grid execution upstream unavailable")
         raise HTTPException(status_code=503, detail="Grid execution service unavailable") from exc
-    return Response(
-        content=upstream.content,
-        status_code=upstream.status_code,
-        headers={"content-type": upstream.headers.get("content-type", "application/json"), "cache-control": "no-store"},
-    )
+    return Response(content=upstream.content, status_code=upstream.status_code, headers={"content-type": upstream.headers.get("content-type", "application/json"), "cache-control": "no-store"})
 
 
 _watcher_task: asyncio.Task | None = None
@@ -245,14 +169,8 @@ _watcher_task: asyncio.Task | None = None
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     global _watcher_task
-    logger.info(
-        "ERC8183_WATCHER_STARTING provider=%s network=%s chain_id=97 poll_interval=%s capital_window_seconds=%s altana_authorization_poll_seconds=%s",
-        _provider_address(),
-        config["network"],
-        config["poll_interval"],
-        _EXECUTION_CAPITAL_WINDOW_SECONDS,
-        _AUTHORIZATION_POLL_SECONDS,
-    )
+    _runtime["watcher_started_at"] = int(time.time())
+    logger.info("ERC8183_WATCHER_STARTING provider=%s network=%s chain_id=97 poll_interval=%s capital_window_seconds=%s altana_authorization_poll_seconds=%s", _provider_address(), config["network"], config["poll_interval"], _EXECUTION_CAPITAL_WINDOW_SECONDS, _AUTHORIZATION_POLL_SECONDS)
     _watcher_task = asyncio.create_task(funded_job_watcher(_ops, _on_funded, interval=config["poll_interval"]))
     try:
         yield
@@ -263,11 +181,7 @@ async def lifespan(_: FastAPI):
         logger.info("ERC8183_WATCHER_STOPPED provider=%s network=%s chain_id=97", _provider_address(), config["network"])
 
 
-app = FastAPI(
-    title="Grid Agent",
-    description="BNB Agent Studio first-party Grid Agent on BSC Testnet with ERC-8183 and Altana-scoped execution",
-    lifespan=lifespan,
-)
+app = FastAPI(title="Grid Agent", description="BNB Agent Studio first-party Grid Agent on BSC Testnet with ERC-8183 and Altana-scoped execution", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -277,23 +191,7 @@ async def health() -> dict[str, str]:
 
 @app.get("/erc8183")
 async def erc8183_root() -> dict[str, Any]:
-    return {
-        "status": "ok",
-        "service": "Grid Agent ERC-8183 provider",
-        "network": "bsc-testnet",
-        "chain_id": 97,
-        "agent_address": _provider_address(),
-        "endpoints": {
-            "health": "/erc8183/health",
-            "status": "/erc8183/status",
-            "negotiate": "/erc8183/negotiate",
-            "execution_capabilities": "/erc8183/execution-capabilities",
-            "execution_health": "/erc8183/execution-health",
-            "preflight_pancake": "/erc8183/preflight/pancake",
-            "execute": "/erc8183/execute",
-            "receipt": "/erc8183/receipt/{transaction_hash}",
-        },
-    }
+    return {"status": "ok", "service": "Grid Agent ERC-8183 provider", "network": "bsc-testnet", "chain_id": 97, "agent_address": _provider_address(), "endpoints": {"health": "/erc8183/health", "status": "/erc8183/status", "runtime_status": "/erc8183/runtime-status", "negotiate": "/erc8183/negotiate", "execution_capabilities": "/erc8183/execution-capabilities", "execution_health": "/erc8183/execution-health", "preflight_pancake": "/erc8183/preflight/pancake", "execute": "/erc8183/execute", "receipt": "/erc8183/receipt/{transaction_hash}"}}
 
 
 @app.get("/erc8183/health")
@@ -303,19 +201,24 @@ async def erc8183_health() -> dict[str, Any]:
 
 @app.get("/erc8183/status")
 async def erc8183_status() -> dict[str, Any]:
+    return {"status": "ok", "network": "bsc-testnet", "chain_id": 97, "agent_address": _provider_address(), "commerce_address": str(_ops.erc8183_client.commerce.address), "router_address": str(_ops.erc8183_client.router.address), "policy_address": str(_ops.erc8183_client.policy.address), "service_price": config["service_price"], "payment_token": _payment_token(), "poll_interval": config["poll_interval"], "execution_capital_window_seconds": _EXECUTION_CAPITAL_WINDOW_SECONDS, "altana_authorization_poll_seconds": _AUTHORIZATION_POLL_SECONDS}
+
+
+@app.get("/erc8183/runtime-status")
+async def erc8183_runtime_status() -> dict[str, Any]:
+    readiness = await _read_local_execution_readiness()
     return {
         "status": "ok",
         "network": "bsc-testnet",
         "chain_id": 97,
-        "agent_address": _provider_address(),
+        "provider": _provider_address(),
         "commerce_address": str(_ops.erc8183_client.commerce.address),
-        "router_address": str(_ops.erc8183_client.router.address),
-        "policy_address": str(_ops.erc8183_client.policy.address),
-        "service_price": config["service_price"],
-        "payment_token": _payment_token(),
-        "poll_interval": config["poll_interval"],
-        "execution_capital_window_seconds": _EXECUTION_CAPITAL_WINDOW_SECONDS,
-        "altana_authorization_poll_seconds": _AUTHORIZATION_POLL_SECONDS,
+        "watcher": {"started": _watcher_task is not None and not _watcher_task.done(), "started_at": _runtime["watcher_started_at"], "poll_interval_seconds": config["poll_interval"]},
+        "last_job": {"funded_job_observed_at": _runtime["last_funded_job_observed"], "job_id": _runtime["last_job_id"], "execution_started_at": _runtime["last_execution_started"], "execution_completed_at": _runtime["last_execution_completed"], "execution_failed_at": _runtime["last_execution_failed"]},
+        "last_submission": _runtime["last_submission"],
+        "last_error": _runtime["last_error"],
+        "execution_readiness": readiness,
+        "configuration": {"auto_execute_testnet": (os.getenv("GRID_AUTO_EXECUTE_TESTNET", "true") or "true").strip().lower() not in {"0", "false", "no", "off"}, "testnet_execution_amount_raw": os.getenv("GRID_TESTNET_EXECUTION_AMOUNT_RAW", "1000000000000000000"), "pancake_pool_fee": int(os.getenv("PANCAKE_TESTNET_POOL_FEE", "2500")), "pancake_router": os.getenv("PANCAKE_TESTNET_ROUTER"), "token_in": os.getenv("GRID_DEFAULT_TOKEN_IN"), "token_out": os.getenv("GRID_DEFAULT_TOKEN_OUT")},
     }
 
 
@@ -327,19 +230,7 @@ async def negotiate(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Invalid JSON") from exc
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="Request body must be an object")
-    return {
-        "accepted": True,
-        "quote_id": f"grid-{int(time.time())}",
-        "price": str(config["service_price"]),
-        "currency": _payment_token() or "testnet-settlement-token",
-        "quote_expires_at": int(time.time()) + 300,
-        "chain_id": 97,
-        "network": "bsc-testnet",
-        "environment": "testnet",
-        "provider_address": _provider_address(),
-        "task_description": body.get("task_description") or "",
-        "terms": body.get("terms") if isinstance(body.get("terms"), dict) else {},
-    }
+    return {"accepted": True, "quote_id": f"grid-{int(time.time())}", "price": str(config["service_price"]), "currency": _payment_token() or "testnet-settlement-token", "quote_expires_at": int(time.time()) + 300, "chain_id": 97, "network": "bsc-testnet", "environment": "testnet", "provider_address": _provider_address(), "task_description": body.get("task_description") or "", "terms": body.get("terms") if isinstance(body.get("terms"), dict) else {}}
 
 
 @app.get("/erc8183/execution-capabilities")
