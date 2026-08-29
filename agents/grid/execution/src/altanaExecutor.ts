@@ -18,6 +18,17 @@ function normalizePrivateKey(value: string): `0x${string}` {
   return `0x${raw}`;
 }
 
+function configuredList(name: string): Address[] {
+  return (process.env[name] || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => {
+      if (!isAddress(value)) throw new Error(`${name} contains an invalid address: ${value}`);
+      return value as Address;
+    });
+}
+
 export function reconstructSession(
   descriptor: GridSessionDescriptor,
   sessionPrivateKey: string,
@@ -55,6 +66,37 @@ export function reconstructSession(
   };
 }
 
+export function configuredSessionDescriptor(env: NodeJS.ProcessEnv = process.env): GridSessionDescriptor {
+  const privateKey = normalizePrivateKey(env.ALTANA_SESSION_PRIVATE_KEY || "");
+  const account = privateKeyToAccount(privateKey);
+  const publicKey = account.publicKey as Hex;
+  const walletAddress = env.ALTANA_WALLET_ADDRESS?.trim() || "";
+  if (!isAddress(walletAddress)) throw new Error("ALTANA_WALLET_ADDRESS must be the user Altana wallet address that granted this session");
+
+  const allowedCalls = configuredList("GRID_ALLOWED_TARGETS");
+  if (allowedCalls.length === 0) throw new Error("GRID_ALLOWED_TARGETS must contain at least one contract target");
+
+  const spendTokenRaw = (env.ALTANA_SESSION_SPEND_TOKEN || env.GRID_DEFAULT_TOKEN_IN || "").trim();
+  if (!isAddress(spendTokenRaw)) throw new Error("ALTANA_SESSION_SPEND_TOKEN must be a valid token address");
+
+  const spendLimitRaw = (env.ALTANA_SESSION_SPEND_LIMIT || "1000000000000000000").trim();
+  if (!/^\d+$/.test(spendLimitRaw) || BigInt(spendLimitRaw) <= 0n) throw new Error("ALTANA_SESSION_SPEND_LIMIT must be a positive raw token amount");
+
+  const expiryRaw = (env.ALTANA_SESSION_EXPIRY || "").trim();
+  if (!/^\d+$/.test(expiryRaw)) throw new Error("ALTANA_SESSION_EXPIRY must match the expiry of the already-granted Altana session");
+
+  return {
+    walletAddress: walletAddress as Address,
+    agentSessionAddress: account.address,
+    agentSessionPublicKey: publicKey,
+    allowedCalls,
+    allowedSelectors: configuredList("GRID_ALLOWED_SELECTORS").map(String),
+    spendLimit: BigInt(spendLimitRaw),
+    spendToken: spendTokenRaw as Address,
+    expiry: Number(expiryRaw),
+  };
+}
+
 export async function executeGridAction(
   descriptor: GridSessionDescriptor,
   calls: readonly GridCall[],
@@ -80,4 +122,12 @@ export async function executeGridAction(
     transactionHash: result.transactionHash ?? null,
     status: result.status,
   };
+}
+
+export async function executeConfiguredGridAction(
+  calls: readonly GridCall[],
+): Promise<GridExecutionResult> {
+  const sessionPrivateKey = normalizePrivateKey(process.env.ALTANA_SESSION_PRIVATE_KEY || "");
+  const descriptor = configuredSessionDescriptor();
+  return executeGridAction(descriptor, calls, sessionPrivateKey);
 }
