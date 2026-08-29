@@ -17,7 +17,7 @@ DEFAULT_AMOUNT_OUT_MINIMUM_RAW = "0"
 DEFAULT_ROUTER = "0x9a489505a00cE272eAa5e07Dba6491314CaE3796"
 DEFAULT_TOKEN_IN = "0x8d008B313C1d6C7fE2982F62d32Da7507cF43551"
 DEFAULT_TOKEN_OUT = "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd"
-DEFAULT_FEE = 2500
+DEFAULT_FEE = 500
 
 
 def _env(name: str, default: str | None = None) -> str | None:
@@ -62,7 +62,7 @@ def _job_execution_parameters(job: dict[str, Any]) -> dict[str, Any]:
 
 
 async def execute_grid_trade(job: dict[str, Any]) -> dict[str, Any]:
-    """Run Grid's own Testnet execution path using its existing Altana session."""
+    """Run Grid's own BSC Testnet execution path using its existing Altana session."""
     params = _job_execution_parameters(job)
     market = params.get("execution_market") if isinstance(params.get("execution_market"), dict) else params
 
@@ -73,9 +73,12 @@ async def execute_grid_trade(job: dict[str, Any]) -> dict[str, Any]:
     recipient = _required_address("ALTANA_WALLET_ADDRESS")
     fee = int(market.get("fee") or market.get("pool_fee") or _env("PANCAKE_TESTNET_POOL_FEE", str(DEFAULT_FEE)) or DEFAULT_FEE)
 
-    canonical_cake2 = DEFAULT_TOKEN_IN.lower()
-    if token_in.lower() != canonical_cake2:
+    if token_in.lower() != DEFAULT_TOKEN_IN.lower():
         raise RuntimeError(f"Grid Testnet execution requires canonical CAKE2 {DEFAULT_TOKEN_IN}; requested token is {token_in}")
+    if token_out.lower() != DEFAULT_TOKEN_OUT.lower():
+        raise RuntimeError(f"Grid Testnet execution requires canonical WBNB {DEFAULT_TOKEN_OUT}; requested token is {token_out}")
+    if fee != DEFAULT_FEE:
+        raise RuntimeError(f"Grid Testnet execution requires PancakeSwap fee tier {DEFAULT_FEE}; requested fee is {fee}")
 
     amount = str(params.get("execution_amount_raw") or params.get("amount_in_raw") or _env("GRID_TESTNET_EXECUTION_AMOUNT_RAW", DEFAULT_AMOUNT_RAW) or DEFAULT_AMOUNT_RAW)
     amount_out_minimum = str(params.get("amount_out_minimum_raw") or _env("GRID_TESTNET_AMOUNT_OUT_MINIMUM_RAW", DEFAULT_AMOUNT_OUT_MINIMUM_RAW) or DEFAULT_AMOUNT_OUT_MINIMUM_RAW)
@@ -100,10 +103,13 @@ async def execute_grid_trade(job: dict[str, Any]) -> dict[str, Any]:
 
         result = preflight_body.get("result") or {}
         checked_token = str(result.get("tokenIn") or result.get("token_in") or token_in)
+        checked_fee = int(result.get("fee") or fee)
         if checked_token.lower() != token_in.lower():
-            raise RuntimeError(f"Grid preflight checked token {checked_token}, but the requested token is {token_in}")
-        if checked_token.lower() != canonical_cake2:
+            raise RuntimeError(f"Grid preflight checked token {checked_token}, but requested token is {token_in}")
+        if checked_token.lower() != DEFAULT_TOKEN_IN.lower():
             raise RuntimeError(f"Grid preflight did not use canonical CAKE2 {DEFAULT_TOKEN_IN}")
+        if checked_fee != DEFAULT_FEE:
+            raise RuntimeError(f"Grid preflight used fee tier {checked_fee}, but Grid requires {DEFAULT_FEE}")
 
         call = result.get("call")
         if not isinstance(call, dict) or not call.get("to") or not call.get("data"):
