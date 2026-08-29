@@ -3,7 +3,7 @@ import { createPublicClient, http, parseUnits, type Address, type Hex } from "vi
 import { bscTestnet } from "viem/chains";
 import type { ExecutionCapitalRequest } from "./lib/executionCapital";
 import { getExecutionCapability, TESTNET_U_TOKEN_ADDRESS } from "./lib/executionCapital";
-import ExecutionCapitalCard from "./ExecutionCapitalCard";
+import ExecutionCapitalCard, { type OnchainExecutionSummary } from "./ExecutionCapitalCard";
 import ExecutionCapitalRequestGate from "./ExecutionCapitalRequestGate";
 import AltanaWalletGate from "./AltanaWalletGate";
 import AltanaSessionGrantGate from "./AltanaSessionGrantGate";
@@ -105,6 +105,8 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
   const capitalAmount = parseCapitalAmount(request?.capital_requested || null);
   const [requirement, setRequirement] = useState<ExecutionRequirement | null>(null);
   const [requirementError, setRequirementError] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+  const [onchainExecution, setOnchainExecution] = useState<OnchainExecutionSummary | null>(null);
   const [liveFunded, setLiveFunded] = useState(false);
   const [requestCreated, setRequestCreated] = useState(false);
   const [liveStateError, setLiveStateError] = useState("");
@@ -117,17 +119,60 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
     const jobId = request?.job_id || new URLSearchParams(window.location.search).get("job")?.trim() || "";
     if (!jobId) return;
     let active = true;
-    void (async () => {
+    let timer: number | undefined;
+    const refresh = async () => {
       try {
-        const response = await fetch(`/api/testnet?route=execution-capital-requirement&job=${encodeURIComponent(jobId)}`, { credentials: "include", cache: "no-store" });
-        const body = await response.json().catch(() => null) as { ok?: boolean; error?: string } & ExecutionRequirement;
-        if (!response.ok) throw new Error(body?.error || "Unable to resolve the agent's execution-token requirement");
-        if (active) { setRequirement(body); setRequirementError(""); }
+        const statusResponse = await fetch(`/api/jobs?id=${encodeURIComponent(jobId)}`, { credentials: "include", cache: "no-store" });
+        const statusBody = await statusResponse.json().catch(() => null) as Record<string, any> | null;
+        if (!statusResponse.ok) throw new Error(statusBody?.error || "Unable to read the live job state");
+        const chainStatus = String(statusBody?.chain?.chain_status || "").toLowerCase();
+        const workflowStatus = String(statusBody?.job?.status || "").toLowerCase();
+        const isSubmitted = chainStatus === "submitted" || workflowStatus === "submitted";
+        if (active) setSubmitted(isSubmitted);
+        if (isSubmitted) {
+          if (active) { setRequirement(null); setRequirementError(""); }
+        } else {
+          try {
+            const response = await fetch(`/api/testnet?route=execution-capital-requirement&job=${encodeURIComponent(jobId)}`, { credentials: "include", cache: "no-store" });
+            const body = await response.json().catch(() => null) as { ok?: boolean; error?: string } & ExecutionRequirement;
+            if (!response.ok) throw new Error(body?.error || "Unable to resolve the agent's execution-token requirement");
+            if (active) { setRequirement(body); setRequirementError(""); }
+          } catch (cause) {
+            if (active) setRequirementError(cause instanceof Error ? cause.message : "Unable to resolve execution-token requirement");
+          }
+        }
+        if (active && (chainStatus === "funded" || workflowStatus === "funded" || chainStatus === "open" || workflowStatus === "open")) {
+          setLiveFunded(chainStatus === "funded" || workflowStatus === "funded");
+        }
+        if (active && !isSubmitted && (chainStatus === "funded" || workflowStatus === "funded" || chainStatus === "open" || workflowStatus === "open")) timer = window.setTimeout(() => void refresh(), 1500);
       } catch (cause) {
-        if (active) setRequirementError(cause instanceof Error ? cause.message : "Unable to resolve execution-token requirement");
+        if (!active) return;
+        if (!submitted) setLiveStateError(cause instanceof Error ? cause.message : "Unable to read the live job state");
+        timer = window.setTimeout(() => void refresh(), 4000);
       }
-    })();
-    return () => { active = false; };
+    };
+    void refresh();
+    return () => { active = false; if (timer) window.clearTimeout(timer); };
+  }, [request?.job_id]);
+
+  useEffect(() => {
+    const jobId = request?.job_id || new URLSearchParams(window.location.search).get("job")?.trim() || "";
+    if (!jobId) return;
+    let active = true;
+    const refresh = async () => {
+      try {
+        const response = await fetch(`/api/testnet?route=execution-evidence&job=${encodeURIComponent(jobId)}`, { credentials: "include", cache: "no-store" });
+        const body = await response.json().catch(() => null) as OnchainExecutionSummary & { error?: string };
+        if (!active) return;
+        if (!response.ok) throw new Error(body?.error || "Unable to verify execution directly from BSC Testnet");
+        setOnchainExecution(body);
+      } catch {
+        if (active) setOnchainExecution(null);
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 10_000);
+    return () => { active = false; window.clearInterval(timer); };
   }, [request?.job_id]);
 
   useEffect(() => {
@@ -159,7 +204,7 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
   }, [request, requestCreated]);
 
   const capitalToken = normalizedCapitalToken(request, requirement);
-  const capitalSymbol = requirement?.execution_capital?.symbol || requirement?.execution_market?.token_in_symbol || (request ? "execution token" : "execution token");
+  const capitalSymbol = requirement?.execution_capital?.symbol || requirement?.execution_market?.token_in_symbol || (request ? "CAKE2" : "execution token");
   const capitalDecimals = requirement?.execution_capital?.decimals ?? 18;
   const capitalDisplayAmount = requirement?.execution_capital?.required_amount || request?.capital_requested || "1";
   const capabilityWithMarket = capability;
@@ -171,7 +216,7 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
   const approvalSpender = approvalSpenders.length === 1 ? approvalSpenders[0] : undefined;
 
   useEffect(() => {
-    if (!request || (request.status !== "authorized" && request.status !== "active") || !request.user_execution_wallet) {
+    if (!request || submitted || (request.status !== "authorized" && request.status !== "active") || !request.user_execution_wallet) {
       setAssetState(null);
       return;
     }
@@ -199,7 +244,7 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
     };
     void refresh();
     return () => { active = false; if (timer) window.clearTimeout(timer); };
-  }, [request?.id, request?.status, request?.user_execution_wallet, capitalToken, approvalSpender]);
+  }, [request?.id, request?.status, request?.user_execution_wallet, submitted, capitalToken, approvalSpender]);
 
   const requiredAmountDisplay = requirement?.execution_capital?.required_amount || request?.capital_requested || "";
   const requiredRawDisplay = requirement?.execution_capital?.required_amount_raw || request?.spend_cap || "";
@@ -234,9 +279,9 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
 
   return (
     <div className="mb-6 space-y-4">
-      <ExecutionCapitalCard request={request} jobBudget={jobBudget} jobCurrency={jobCurrency} />
+      <ExecutionCapitalCard request={request} jobBudget={jobBudget} jobCurrency={jobCurrency} onchainExecution={onchainExecution} />
 
-      {request && (request.status === "authorized" || request.status === "active") && request.user_execution_wallet && (needsFunding || needsAllowance) && (
+      {!submitted && request && (request.status === "authorized" || request.status === "active") && request.user_execution_wallet && (needsFunding || needsAllowance) && (
         <section className="border border-[#cfad9f] bg-rustsoft text-rust rounded-[16px_8px_18px_9px] p-5">
           <small className="block font-mono text-[8.5px] uppercase tracking-widest mb-1.5">Execution capital readiness</small>
           <h3 className="font-display text-[17px] font-bold m-0">Authorized, but not execution-ready</h3>
@@ -257,7 +302,7 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
 
       {!request && !liveFunded && liveStateError && <section className="border border-[#cfad9f] bg-rustsoft text-rust rounded-[16px_8px_18px_9px] p-4 text-[10.5px]">Unable to confirm the live Funded state right now. The execution-capital request remains unavailable until the chain state can be verified.</section>}
 
-      {requirementError && <section className="border border-[#cfad9f] bg-rustsoft text-rust rounded-[16px_8px_18px_9px] p-4 text-[10.5px]">Unable to resolve the agent's execution-token requirement yet: {requirementError}</section>}
+      {requirementError && !submitted && <section className="border border-[#cfad9f] bg-rustsoft text-rust rounded-[16px_8px_18px_9px] p-4 text-[10.5px]">Unable to resolve the agent's execution-token requirement yet: {requirementError}</section>}
 
       {request && request.status === "requested" && !capability && <section className="border border-line rounded-[16px_8px_18px_9px] bg-paper p-5"><small className="block font-mono text-[8.5px] uppercase tracking-widest text-brass mb-1.5">Execution Capital · Provider Capability</small><h3 className="font-display text-[17px] font-bold m-0">Waiting for a valid execution scope</h3><p className="text-[10.5px] text-inksoft mt-1.5 max-w-[680px]">AgentMarket has not received a valid BSC Testnet Altana capability descriptor for this request. No session grant is shown until the provider publishes a public session key, target allowlist, and selector allowlist.</p></section>}
 
