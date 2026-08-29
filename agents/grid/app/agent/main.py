@@ -18,7 +18,7 @@ from app.agent.execution import execute_grid_trade
 
 TESTNET_CAKE2 = "0x8d008B313C1d6C7fE2982F62d32Da7507cF43551"
 TESTNET_WBNB = "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd"
-TESTNET_PANCAKE_FEE = 500
+TESTNET_PANCAKE_FEE = 2500
 
 
 @dataclass(frozen=True)
