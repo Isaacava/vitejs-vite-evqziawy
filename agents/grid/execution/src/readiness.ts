@@ -3,16 +3,11 @@ import { bscTestnet } from "viem/chains";
 
 const publicClient = createPublicClient({
   chain: bscTestnet,
-  transport: http(
-    process.env.BSC_TESTNET_RPC_URL || "https://bsc-testnet-rpc.publicnode.com",
-  ),
+  transport: http(process.env.BSC_TESTNET_RPC_URL || "https://bsc-testnet-rpc.publicnode.com"),
 });
 
 function configuredList(name: string) {
-  return (process.env[name] || "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
+  return (process.env[name] || "").split(",").map((item) => item.trim()).filter(Boolean);
 }
 
 export async function getExecutionReadiness() {
@@ -20,7 +15,8 @@ export async function getExecutionReadiness() {
     chain_id: false,
     rpc: false,
     session_private_key: Boolean(process.env.ALTANA_SESSION_PRIVATE_KEY),
-    shared_secret: Boolean(process.env.GRID_EXECUTION_SHARED_SECRET),
+    altana_wallet_address: Boolean(process.env.ALTANA_WALLET_ADDRESS),
+    altana_session_expiry: Boolean(process.env.ALTANA_SESSION_EXPIRY),
     allowed_targets: configuredList("GRID_ALLOWED_TARGETS").length > 0,
     allowed_selectors: configuredList("GRID_ALLOWED_SELECTORS").length > 0,
     pancake_router: false,
@@ -47,7 +43,8 @@ export async function getExecutionReadiness() {
   }
 
   if (!checks.session_private_key) reasons.push("ALTANA_SESSION_PRIVATE_KEY is not configured");
-  if (!checks.shared_secret) reasons.push("GRID_EXECUTION_SHARED_SECRET is not configured");
+  if (!checks.altana_wallet_address) reasons.push("ALTANA_WALLET_ADDRESS is not configured");
+  if (!checks.altana_session_expiry) reasons.push("ALTANA_SESSION_EXPIRY is not configured");
   if (!checks.allowed_targets) reasons.push("GRID_ALLOWED_TARGETS is not configured");
   if (!checks.allowed_selectors) reasons.push("GRID_ALLOWED_SELECTORS is not configured");
 
