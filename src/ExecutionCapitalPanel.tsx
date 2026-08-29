@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import type { Address, Hex } from "viem";
+import { createPublicClient, http, parseUnits, type Address, type Hex } from "viem";
+import { bscTestnet } from "viem/chains";
 import type { ExecutionCapitalRequest } from "./lib/executionCapital";
 import { getExecutionCapability, TESTNET_U_TOKEN_ADDRESS } from "./lib/executionCapital";
 import ExecutionCapitalCard from "./ExecutionCapitalCard";
@@ -7,6 +8,7 @@ import ExecutionCapitalRequestGate from "./ExecutionCapitalRequestGate";
 import AltanaWalletGate from "./AltanaWalletGate";
 import AltanaSessionGrantGate from "./AltanaSessionGrantGate";
 import ExecutionCapitalLivePanel from "./ExecutionCapitalLivePanel";
+import { ensureAltanaTradingCapital } from "./lib/executionCapitalFunding";
 
 type Props = {
   request: ExecutionCapitalRequest | null;
@@ -32,6 +34,44 @@ type ExecutionRequirement = {
   source_url?: string;
 };
 
+type AssetState = {
+  balance: bigint;
+  allowance: bigint;
+  decimals: number;
+};
+
+const publicClient = createPublicClient({
+  chain: bscTestnet,
+  transport: http("https://bsc-testnet-rpc.publicnode.com"),
+});
+
+const ERC20_STATE_ABI = [
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "balance", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "allowance",
+    stateMutability: "view",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "spender", type: "address" },
+    ],
+    outputs: [{ name: "remaining", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "decimals",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint8" }],
+  },
+] as const;
+
 function parseCapitalAmount(value: string | null) {
   if (!value || !/^\d+$/.test(value)) return null;
   try { const amount = BigInt(value); return amount > 0n ? amount : null; } catch { return null; }
@@ -43,6 +83,23 @@ function normalizedCapitalToken(request: ExecutionCapitalRequest | null, require
   return token;
 }
 
+function humanAmount(value: bigint, decimals: number) {
+  const base = 10n ** BigInt(decimals);
+  const whole = value / base;
+  const fraction = (value % base).toString().padStart(decimals, "0").replace(/0+$/, "");
+  return fraction ? `${whole}.${fraction}` : whole.toString();
+}
+
+function requestedRawAmount(value: string | null, decimals: number) {
+  if (!value) return null;
+  try {
+    const parsed = parseUnits(value, decimals);
+    return parsed > 0n ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency }: Props) {
   const capability = getExecutionCapability(request);
   const capitalAmount = parseCapitalAmount(request?.capital_requested || null);
@@ -51,6 +108,10 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
   const [liveFunded, setLiveFunded] = useState(false);
   const [requestCreated, setRequestCreated] = useState(false);
   const [liveStateError, setLiveStateError] = useState("");
+  const [assetState, setAssetState] = useState<AssetState | null>(null);
+  const [fundingBusy, setFundingBusy] = useState(false);
+  const [fundingError, setFundingError] = useState("");
+  const [fundingTx, setFundingTx] = useState<string>("");
 
   useEffect(() => {
     const jobId = request?.job_id || new URLSearchParams(window.location.search).get("job")?.trim() || "";
@@ -106,9 +167,77 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
     ? `/testnet/swap?token=${encodeURIComponent(capitalSymbol)}&address=${encodeURIComponent(requirement.execution_capital.token)}`
     : "/testnet/swap";
 
+  useEffect(() => {
+    if (!request || (request.status !== "authorized" && request.status !== "active") || !request.user_execution_wallet) {
+      setAssetState(null);
+      return;
+    }
+    const token = capitalToken as Address;
+    const spender = (capability?.allowed_targets?.[0] || "") as string;
+    if (!/^0x[a-fA-F0-9]{40}$/.test(token) || !/^0x[a-fA-F0-9]{40}$/.test(request.user_execution_wallet)) {
+      setAssetState(null);
+      return;
+    }
+    let active = true;
+    let timer: number | undefined;
+    const refresh = async () => {
+      try {
+        const decimals = Number(await publicClient.readContract({ address: token, abi: ERC20_STATE_ABI, functionName: "decimals" }));
+        const balance = await publicClient.readContract({ address: token, abi: ERC20_STATE_ABI, functionName: "balanceOf", args: [request.user_execution_wallet as Address] });
+        const allowance = spender && /^0x[a-fA-F0-9]{40}$/.test(spender)
+          ? await publicClient.readContract({ address: token, abi: ERC20_STATE_ABI, functionName: "allowance", args: [request.user_execution_wallet as Address, spender as Address] })
+          : 0n;
+        if (!active) return;
+        setAssetState({ balance, allowance, decimals });
+        timer = window.setTimeout(() => void refresh(), 10_000);
+      } catch {
+        if (active) timer = window.setTimeout(() => void refresh(), 15_000);
+      }
+    };
+    void refresh();
+    return () => { active = false; if (timer) window.clearTimeout(timer); };
+  }, [request?.id, request?.status, request?.user_execution_wallet, capitalToken, capability?.allowed_targets]);
+
+  const requiredRaw = assetState ? requestedRawAmount(request?.capital_requested || null, assetState.decimals) : null;
+  const needsFunding = Boolean(assetState && requiredRaw !== null && assetState.balance < requiredRaw);
+  const needsAllowance = Boolean(assetState && requiredRaw !== null && capability?.allowed_targets?.[0] && assetState.allowance < requiredRaw);
+
+  async function repairFunding() {
+    if (!request?.user_execution_wallet || requiredRaw === null) return;
+    setFundingBusy(true);
+    setFundingError("");
+    try {
+      const result = await ensureAltanaTradingCapital(
+        request.user_execution_wallet as Address,
+        capitalToken as Address,
+        requiredRaw,
+        capability?.allowed_targets?.[0] as Address | undefined,
+        requiredRaw,
+      );
+      setFundingTx(result.transactionHash || "");
+      setAssetState((current) => current ? { ...current, balance: requiredRaw > current.balance ? requiredRaw : current.balance, allowance: capability?.allowed_targets?.[0] ? requiredRaw : current.allowance } : current);
+    } catch (cause) {
+      setFundingError(cause instanceof Error ? cause.message : "Execution-capital funding failed");
+    } finally {
+      setFundingBusy(false);
+    }
+  }
+
   return (
     <div className="mb-6 space-y-4">
       <ExecutionCapitalCard request={request} jobBudget={jobBudget} jobCurrency={jobCurrency} />
+
+      {request && (request.status === "authorized" || request.status === "active") && request.user_execution_wallet && (needsFunding || needsAllowance) && (
+        <section className="border border-[#cfad9f] bg-rustsoft text-rust rounded-[16px_8px_18px_9px] p-5">
+          <small className="block font-mono text-[8.5px] uppercase tracking-widest mb-1.5">Execution capital readiness</small>
+          <h3 className="font-display text-[17px] font-bold m-0">Authorized, but not execution-ready</h3>
+          <p className="text-[10.5px] mt-1.5 max-w-[700px]">The Altana session is authorized, but the same execution wallet does not currently hold enough of the authorized token for the agent to perform the job. AgentMarket will not substitute another wallet.</p>
+          {assetState && requiredRaw !== null && <div className="mt-3 font-mono text-[9.5px]">Balance {humanAmount(assetState.balance, assetState.decimals)} {capitalSymbol} · Required {humanAmount(requiredRaw, assetState.decimals)} {capitalSymbol}{capability?.allowed_targets?.[0] && ` · Allowance ${humanAmount(assetState.allowance, assetState.decimals)} ${capitalSymbol}`}</div>}
+          {fundingError && <div className="mt-3 border border-[#cfad9f] bg-paper px-3 py-2 rounded-lg text-[10.5px]">{fundingError}</div>}
+          {fundingTx && <a className="mt-3 inline-block font-mono text-[9px] text-brass break-all" href={`https://testnet.bscscan.com/tx/${fundingTx}`} target="_blank" rel="noreferrer">Funding transaction ↗</a>}
+          <button type="button" onClick={() => void repairFunding()} disabled={fundingBusy} className="mt-4 font-display font-bold text-[11px] px-4 py-2.5 bg-ink text-paperhi btn-asym">{fundingBusy ? "Funding execution wallet…" : `Fund ${capitalDisplayAmount} ${capitalSymbol} for the authorized session →`}</button>
+        </section>
+      )}
 
       {!request && liveFunded && !requestCreated && (() => {
         const jobId = new URLSearchParams(window.location.search).get("job")?.trim() || "";
@@ -140,13 +269,13 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
               capabilitySource={capabilityWithMarket.source_url}
             />
           ) : (
-            <section className="border border-[#cfad9f] bg-rustsoft text-rust rounded-[16px_8px_18px_9px] p-5 text-[11px]">Execution capital was requested with a non-integer amount that the current Altana spend-permission adapter cannot safely encode. The request remains un-authorized.</section>
+            <section className="border border-[#cfad9f] bg-rustsoft text-rust rounded-[16px_8px_18px_9px] bg-rustsoft p-5 text-[11px]">Execution capital was requested with a non-integer amount that the current Altana spend-permission adapter cannot safely encode. The request remains un-authorized.</section>
           )}
           <div className="text-[10px] text-inksoft">Agent execution token: <strong>{capitalDisplayAmount} {capitalSymbol}</strong> · <a className="text-brass" href={fundingLink}>Get {capitalSymbol} on PancakeSwap Testnet →</a></div>
         </>
       )}
 
-      {request && capability && (request.status === "authorized" || request.status === "active") && <ExecutionCapitalLivePanel request={request} />}
+      {request && capability && (request.status === "authorized" || request.status === "active") && !needsFunding && !needsAllowance && <ExecutionCapitalLivePanel request={request} />}
     </div>
   );
 }
