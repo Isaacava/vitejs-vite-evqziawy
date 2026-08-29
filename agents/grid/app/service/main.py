@@ -26,10 +26,6 @@ config = validate_runtime_config()
 
 _STORAGE_DIR = Path(os.getenv("STORAGE_LOCAL_PATH") or ".agent-data")
 _EXECUTION_INTERNAL_URL = (os.getenv("GRID_EXECUTION_INTERNAL_URL") or "http://127.0.0.1:8788").rstrip("/")
-
-# Grid is an autonomous Testnet agent. There is no user-facing execution
-# button or marketplace-side capital countdown. The agent acts when its
-# funded ERC-8183 job arrives and its own scoped Altana session is ready.
 _EXECUTION_CAPITAL_WINDOW_SECONDS = max(
     0,
     int(float(os.getenv("ERC8183_EXECUTION_CAPITAL_WINDOW_SECONDS") or "0")),
@@ -106,11 +102,10 @@ async def _on_funded(job: dict[str, Any]) -> None:
             metadata.get("execution_status", "unknown"),
         )
 
-        submission = await _ops.submit_result(
-            job_id_int,
-            deliverable,
-            metadata=metadata,
-        )
+        # Keep the deliverable self-contained for compatibility with the
+        # installed BNB Agent SDK provider API. Execution evidence is already
+        # embedded in the JSON returned by fulfill_grid_job_with_execution().
+        submission = await _ops.submit_result(job_id_int, deliverable)
 
         tx_hash = None
         if isinstance(submission, str):
