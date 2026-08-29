@@ -8,18 +8,9 @@ export const TESTNET_U_TOKEN: Address = "0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5
 const TESTNET_TOKEN_DECIMALS = 18n;
 const DEFAULT_NATIVE_GAS_ALLOWANCE_WEI = 20_000_000_000_000_000n;
 const ALTANA_KEYSTORE_CONTROLLER: Address = "0xb530D1971f5453F3359518343F05D0AedFfF7e12";
-const KEYSTORE_CONTROLLER_ABI = [{
-  type: "function",
-  name: "getRegistrationFeeInWei",
-  stateMutability: "view",
-  inputs: [],
-  outputs: [{ type: "uint256" }],
-}] as const;
+const KEYSTORE_CONTROLLER_ABI = [{ type: "function", name: "getRegistrationFeeInWei", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] }] as const;
 
-const publicClient = createPublicClient({
-  chain: bscTestnet,
-  transport: http(BNB_TESTNET.publicRpcUrl),
-});
+const publicClient = createPublicClient({ chain: bscTestnet, transport: http(BNB_TESTNET.publicRpcUrl) });
 
 type GrantFeeReadiness = {
   walletAddress: Address;
@@ -36,18 +27,15 @@ export type AltanaSessionGrantInput = {
   agentSessionAddress: Address;
   agentSessionPublicKey: Hex;
   allowedCalls: readonly Address[];
-  capitalToken?: Address;
-  /** Human-readable U amount. The controlled proof is exactly 1 U. */
+  /** Exact ERC-20 token address the agent capability requested. Required. */
+  capitalToken: Address;
+  /** Human-readable execution amount. The controlled proof is exactly 1 token unit. */
   capitalAmount: bigint;
   purpose: string;
   expiry: number;
 };
 
-type AltanaSpendPermission = {
-  limit: bigint;
-  period: "day";
-  token?: Address;
-};
+type AltanaSpendPermission = { limit: bigint; period: "day"; token?: Address };
 
 export type AltanaSessionGrantResult = {
   walletAddress: Address;
@@ -55,41 +43,20 @@ export type AltanaSessionGrantResult = {
   agentSessionAddress: Address;
   sessionKeyId: Hex;
   expiry: number;
-  permissions: {
-    calls: readonly { to: Address }[];
-    spend: readonly AltanaSpendPermission[];
-  };
+  permissions: { calls: readonly { to: Address }[]; spend: readonly AltanaSpendPermission[] };
   transactionHash?: Hex;
 };
 
-function isAddress(value: string): value is Address {
-  return /^0x[a-fA-F0-9]{40}$/.test(value);
-}
+function isAddress(value: string): value is Address { return /^0x[a-fA-F0-9]{40}$/.test(value); }
+function isHex(value: string): value is Hex { return /^0x[a-fA-F0-9]*$/.test(value); }
 
-function isHex(value: string): value is Hex {
-  return /^0x[a-fA-F0-9]*$/.test(value);
-}
-
-/**
- * Read the native BNB requirement for the first Altana session grant.
- *
- * A first grant can need two KeyStore payments: the wallet's initial admin
- * registration and the additional session-key registration. Trading capital
- * itself remains the ERC-20 U token and is not transferred by this check.
- */
 export async function getAltanaGrantFeeReadiness(): Promise<GrantFeeReadiness> {
   const resolved = ensureAltanaWallet();
   const [nativeBalance, registrationFee] = await Promise.all([
     publicClient.getBalance({ address: resolved.walletAddress }),
-    publicClient.readContract({
-      address: ALTANA_KEYSTORE_CONTROLLER,
-      abi: KEYSTORE_CONTROLLER_ABI,
-      functionName: "getRegistrationFeeInWei",
-    }),
+    publicClient.readContract({ address: ALTANA_KEYSTORE_CONTROLLER, abi: KEYSTORE_CONTROLLER_ABI, functionName: "getRegistrationFeeInWei" }),
   ]);
-
   const minimumRegistrationValue = registrationFee * 2n;
-
   return {
     walletAddress: resolved.walletAddress,
     nativeBalance,
@@ -102,115 +69,59 @@ export async function getAltanaGrantFeeReadiness(): Promise<GrantFeeReadiness> {
   };
 }
 
-/**
- * Grant a real Altana session to an agent's already-existing session key.
- *
- * The grant deliberately skips KeyStore registration in the initial grant
- * transaction. Registration is performed as a second, idempotent SDK call.
- * This avoids bundling grant + session-key registration into one operation,
- * which is the path that was producing InvalidNonce when the browser retried
- * an already-partially-registered session. Altana's registerSessionKey() checks
- * the registry first and submits nothing when the key is already registered.
- *
- * The session includes both the user-authorized U-token spend cap and a small
- * native BNB allowance because Altana relay execution consumes native spend
- * permission for gas recovery. Omitting the native entry causes execute()
- * to revert with NoSpendPermissions even when the token cap is present.
- */
-export async function grantAltanaExecutionSession(
-  input: AltanaSessionGrantInput,
-): Promise<AltanaSessionGrantResult> {
+/** Grant a real Altana session for the exact execution token declared by the selected agent. */
+export async function grantAltanaExecutionSession(input: AltanaSessionGrantInput): Promise<AltanaSessionGrantResult> {
   if (!isAddress(input.agentSessionAddress)) throw new Error("Agent session address is invalid.");
-  if (!isHex(input.agentSessionPublicKey) || input.agentSessionPublicKey.length < 100) {
-    throw new Error("Agent session public key is invalid.");
-  }
-  if (input.allowedCalls.length === 0) {
-    throw new Error("At least one allowed contract call target is required; an omitted allowlist would broaden the session scope.");
-  }
-  if (input.capitalAmount !== 1n) {
-    throw new Error("Controlled BSC Testnet execution capital is fixed at exactly 1 U.");
-  }
-  if (!Number.isInteger(input.expiry) || input.expiry <= Math.floor(Date.now() / 1000)) {
-    throw new Error("Execution session expiry must be in the future.");
-  }
+  if (!isHex(input.agentSessionPublicKey) || input.agentSessionPublicKey.length < 100) throw new Error("Agent session public key is invalid.");
+  if (input.allowedCalls.length === 0) throw new Error("At least one allowed contract call target is required; an omitted allowlist would broaden the session scope.");
+  if (!isAddress(input.capitalToken)) throw new Error("Execution-capital token address is required and must be a valid EVM address.");
+  if (input.capitalAmount !== 1n) throw new Error("Controlled BSC Testnet execution capital is fixed at exactly 1 token unit.");
+  if (!Number.isInteger(input.expiry) || input.expiry <= Math.floor(Date.now() / 1000)) throw new Error("Execution session expiry must be in the future.");
 
   const derivedAddress = publicKeyToAddress(input.agentSessionPublicKey);
-  if (derivedAddress.toLowerCase() !== input.agentSessionAddress.toLowerCase()) {
-    throw new Error("Agent session address does not match its public key.");
-  }
+  if (derivedAddress.toLowerCase() !== input.agentSessionAddress.toLowerCase()) throw new Error("Agent session address does not match its public key.");
 
   const allowedCalls = input.allowedCalls.filter(isAddress);
-  if (allowedCalls.length !== input.allowedCalls.length) {
-    throw new Error("One or more allowed contract addresses are invalid.");
-  }
+  if (allowedCalls.length !== input.allowedCalls.length) throw new Error("One or more allowed contract addresses are invalid.");
 
   let feeReadiness = await getAltanaGrantFeeReadiness();
   if (!feeReadiness.sufficientForRegistration) {
     await fundAltanaWalletFromAgentMarketWallet(feeReadiness.walletAddress);
     feeReadiness = await getAltanaGrantFeeReadiness();
-
     if (!feeReadiness.sufficientForRegistration) {
-      throw new Error(
-        `Altana wallet ${feeReadiness.walletAddress} still has ${feeReadiness.nativeBalanceFormatted} tBNB after the automatic setup funding step; at least ${feeReadiness.minimumRegistrationValueFormatted} tBNB is required for the KeyStore registration fees.`,
-      );
+      throw new Error(`Altana wallet ${feeReadiness.walletAddress} still has ${feeReadiness.nativeBalanceFormatted} tBNB after the automatic setup funding step; at least ${feeReadiness.minimumRegistrationValueFormatted} tBNB is required for KeyStore registration fees.`);
     }
   }
 
   const resolved = ensureAltanaWallet();
   const client = createClient({ chains: [BNB_TESTNET] });
-  const token = input.capitalToken || TESTNET_U_TOKEN;
+  const token = input.capitalToken;
   const rawCapitalAmount = input.capitalAmount * 10n ** TESTNET_TOKEN_DECIMALS;
 
   const sessionSigner = {
     type: "privateKey" as const,
     address: input.agentSessionAddress,
     publicKey: input.agentSessionPublicKey,
-    async signDigest(): Promise<Hex> {
-      throw new Error("Agent session signer is intentionally public-only in the browser.");
-    },
+    async signDigest(): Promise<Hex> { throw new Error("Agent session signer is intentionally public-only in the browser."); },
   };
 
-  const tokenSpendPermission: AltanaSpendPermission = {
-    limit: rawCapitalAmount,
-    period: "day",
-    token,
-  };
-  const nativeSpendPermission: AltanaSpendPermission = {
-    limit: DEFAULT_NATIVE_GAS_ALLOWANCE_WEI,
-    period: "day",
-  };
+  const tokenSpendPermission: AltanaSpendPermission = { limit: rawCapitalAmount, period: "day", token };
+  const nativeSpendPermission: AltanaSpendPermission = { limit: DEFAULT_NATIVE_GAS_ALLOWANCE_WEI, period: "day" };
   const spendPermissions = [tokenSpendPermission, nativeSpendPermission] as const;
   const calls = allowedCalls.map((to) => ({ to }));
 
-  // Phase 1: authorize the session on the Altana account without registering
-  // its KeyStore entry in the same relay intent. The official SDK documents
-  // register:false specifically for ephemeral/lazy-registration sessions.
   const result = await client.grantSession({
     wallet: resolved.wallet,
     signer: resolved.signer,
     sessionSigner,
-    permissions: {
-      calls,
-      spend: spendPermissions,
-    },
+    permissions: { calls, spend: spendPermissions },
     expiry: input.expiry,
     chainId: 97,
     register: false,
   });
 
-  // Phase 2: register the exact same session key in KeyStore. This call is
-  // idempotent: if a previous attempt already registered this key, the SDK
-  // returns alreadyRegistered=true without submitting another transaction.
-  const registration = await client.registerSessionKey({
-    wallet: resolved.wallet,
-    signer: resolved.signer,
-    session: result,
-    chainId: 97,
-  });
-
-  const transactionHash = registration.alreadyRegistered
-    ? result.transactionHash
-    : registration.transactionHash ?? result.transactionHash;
+  const registration = await client.registerSessionKey({ wallet: resolved.wallet, signer: resolved.signer, session: result, chainId: 97 });
+  const transactionHash = registration.alreadyRegistered ? result.transactionHash : registration.transactionHash ?? result.transactionHash;
 
   return {
     walletAddress: resolved.walletAddress,
@@ -218,10 +129,7 @@ export async function grantAltanaExecutionSession(
     agentSessionAddress: input.agentSessionAddress,
     sessionKeyId: keccak256(input.agentSessionPublicKey),
     expiry: input.expiry,
-    permissions: {
-      calls,
-      spend: spendPermissions,
-    },
+    permissions: { calls, spend: spendPermissions },
     ...(transactionHash ? { transactionHash } : {}),
   };
 }
