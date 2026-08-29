@@ -66,7 +66,7 @@ function executionConfigState() {
   };
 }
 
-function publicExecutionCapabilities() {
+async function publicExecutionCapabilities() {
   const configured = executionConfigState();
   const market = buildPancakeTestnetConfig();
   const base = {
@@ -85,24 +85,33 @@ function publicExecutionCapabilities() {
     private_key_exposed: false,
     configuration: configured,
   };
-  if (!configured.session_private_key_configured) return { ...base, execution_ready: false };
+
+  if (!SESSION_PRIVATE_KEY) return { ...base, execution_ready: false };
+
   const account = privateKeyToAccount((SESSION_PRIVATE_KEY.startsWith("0x") ? SESSION_PRIVATE_KEY : `0x${SESSION_PRIVATE_KEY}`) as `0x${string}`);
+  const readiness = await getExecutionReadiness();
   return {
     ...base,
-    execution_ready: configured.session_private_key_configured && configured.altana_wallet_address_configured && configured.altana_session_expiry_configured && configured.allowed_targets_configured && configured.allowed_selectors_configured && configured.pancake_router_configured,
+    execution_ready: readiness.ready,
     session_key_address: account.address,
     session_key_public_key: account.publicKey,
+    authorization_check: {
+      wallet_address: readiness.walletAddress,
+      session_key_id: readiness.sessionKeyId,
+      keystore_authorized: readiness.checks.keystore_authorization,
+    },
   };
 }
 
 const server = createServer(async (req, res) => {
   try {
-    if (req.method === "GET" && req.url === "/health") return json(res, 200, { ...publicExecutionCapabilities(), service: "Grid Agent Altana Execution" });
-    if (req.method === "GET" && req.url === "/execution-capabilities") return json(res, 200, publicExecutionCapabilities());
+    if (req.method === "GET" && req.url === "/health") return json(res, 200, { ...(await publicExecutionCapabilities()), service: "Grid Agent Altana Execution" });
+    if (req.method === "GET" && req.url === "/execution-capabilities") return json(res, 200, await publicExecutionCapabilities());
     if (req.method === "GET" && req.url === "/execution-readiness") return json(res, 200, await getExecutionReadiness());
 
     if (req.method === "POST" && req.url === "/preflight/pancake") {
-      if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "Grid execution service is not configured" });
+      const readiness = await getExecutionReadiness();
+      if (!readiness.ready) return json(res, 409, { ok: false, error: "Grid execution is waiting for the user's Altana session authorization", readiness });
       return json(res, 200, { ok: true, result: await pancakeSwapPreflight(await body(req) as Record<string, unknown>) });
     }
 
@@ -115,6 +124,8 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && req.url === "/execute-configured") {
       if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "ALTANA_SESSION_PRIVATE_KEY is not configured" });
+      const readiness = await getExecutionReadiness();
+      if (!readiness.ready) return json(res, 409, { ok: false, error: "Grid execution is waiting for the user's Altana session authorization", readiness });
       const request = await body(req) as Record<string, unknown>;
       return json(res, 200, { ok: true, result: await executeConfiguredGridAction(calls(request.calls)) });
     }
@@ -122,7 +133,7 @@ const server = createServer(async (req, res) => {
     if (req.method !== "POST" || req.url !== "/execute") return json(res, 404, { error: "Not found" });
     if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "ALTANA_SESSION_PRIVATE_KEY is not configured" });
     const readiness = await getExecutionReadiness();
-    if (!readiness.ready) return json(res, 503, { error: "Grid execution service is not execution-ready", readiness });
+    if (!readiness.ready) return json(res, 409, { ok: false, error: "Grid execution service is waiting for the user's Altana session authorization", readiness });
     const request = await body(req) as Record<string, unknown>;
     return json(res, 200, { ok: true, result: await executeGridAction(descriptor(request.session), calls(request.calls), SESSION_PRIVATE_KEY) });
   } catch (error) {
