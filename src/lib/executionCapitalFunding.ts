@@ -1,5 +1,5 @@
 import type { Address } from "viem";
-import { fundAltanaTradingCapital } from "./altanaWallet";
+import { fundAltanaTradingCapital, ensureAltanaWallet, recoverAltanaWallet } from "./altanaWallet";
 import { ensureAltanaTokenAllowance } from "./altanaAllowance";
 
 export async function ensureAltanaTradingCapital(
@@ -12,13 +12,22 @@ export async function ensureAltanaTradingCapital(
   const funding = await fundAltanaTradingCapital(walletAddress, tokenAddress, rawAmount);
 
   let allowanceTxHash: `0x${string}` | undefined;
+  let allowance = 0n;
+
   if (approvalSpender && allowanceAmount && allowanceAmount > 0n) {
-    const allowance = await ensureAltanaTokenAllowance(tokenAddress, approvalSpender, allowanceAmount);
-    allowanceTxHash = allowance.transactionHash;
+    try {
+      ensureAltanaWallet();
+    } catch {
+      await recoverAltanaWallet();
+    }
+    const approval = await ensureAltanaTokenAllowance(tokenAddress, approvalSpender, allowanceAmount);
+    allowanceTxHash = approval.transactionHash;
+    allowance = approval.allowance;
   }
 
   return {
     ...funding,
+    allowance,
     allowanceTxHash,
   };
 }
