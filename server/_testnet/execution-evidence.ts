@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { createPublicClient, decodeEventLog, http, type Address, type Hex } from "viem";
+import { createPublicClient, decodeEventLog, http, keccak256, type Address, type Hex } from "viem";
 import { bscTestnet } from "viem/chains";
 import { getAuthenticatedUser, serverClient } from "../_auth.js";
 
@@ -7,6 +7,7 @@ const COMMERCE = "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address;
 const CAKE2 = "0x8d008B313C1d6C7fE2982F62d32Da7507cF43551" as Address;
 const WBNB = "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd" as Address;
 const PANCAKE_V3_FACTORY = "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865" as Address;
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as Address;
 const POOL_FEES = [100, 500, 2500, 10000] as const;
 
 const publicClient = createPublicClient({
@@ -15,7 +16,6 @@ const publicClient = createPublicClient({
 });
 
 const ERC20_ABI = [
-  { type: "function", name: "symbol", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
   { type: "function", name: "decimals", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] },
 ] as const;
 
@@ -50,7 +50,7 @@ function isHash(value: unknown): value is Hex {
   return typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value);
 }
 
-function object(value: unknown) {
+function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? value as Record<string, unknown> : {};
 }
 
@@ -59,6 +59,36 @@ function formatUnits(value: bigint, decimals: number) {
   const whole = value / base;
   const fraction = (value % base).toString().padStart(decimals, "0").replace(/0+$/, "");
   return fraction ? `${whole}.${fraction}` : whole.toString();
+}
+
+function decodeBase64(value: string): Uint8Array {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function parseArchivedContent(bytes: Uint8Array): unknown {
+  const text = new TextDecoder().decode(bytes);
+  try { return JSON.parse(text); } catch { return text; }
+}
+
+function findTransactionHash(value: unknown): Hex | null {
+  if (isHash(value)) return value;
+  if (typeof value === "string") {
+    try { return findTransactionHash(JSON.parse(value)); } catch { return null; }
+  }
+  if (!value || typeof value !== "object") return null;
+  const record = object(value);
+  for (const key of ["transaction_hash", "transactionHash", "tx_hash", "txHash"]) {
+    if (isHash(record[key])) return record[key];
+  }
+  for (const key of ["execution_result", "receipt", "response", "content", "result"]) {
+    const nested = record[key];
+    const found = findTransactionHash(nested);
+    if (found) return found;
+  }
+  return null;
 }
 
 async function loadOwnedJob(jobId: string, authUserId: string, wallet: string) {
@@ -91,7 +121,7 @@ async function loadOwnedJob(jobId: string, authUserId: string, wallet: string) {
 
   const { data: executionEvidence, error: evidenceError } = await supabase
     .from("execution_capital_execution_evidence")
-    .select("transaction_hash,receipt_verified,created_at")
+    .select("id,transaction_hash,receipt_verified,created_at")
     .eq("job_id", job.id)
     .not("transaction_hash", "is", null)
     .order("created_at", { ascending: false })
@@ -101,28 +131,39 @@ async function loadOwnedJob(jobId: string, authUserId: string, wallet: string) {
 
   const { data: request, error: requestError } = await supabase
     .from("execution_capital_requests")
-    .select("user_execution_wallet,agent_session_key,status,evidence")
+    .select("id,user_execution_wallet,agent_session_key,status,evidence")
     .eq("job_id", job.id)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
   if (requestError) throw new Error(requestError.message);
 
-  return { supabase, job, executionEvidence, request };
+  const { data: archived, error: archiveError } = await supabase
+    .from("erc8183_deliverable_archives")
+    .select("chain_id,commerce_address,job_id,onchain_deliverable_hash,content_base64,verified,verification_error,captured_at,capture_source,provider_endpoint")
+    .eq("chain_id", 97)
+    .ilike("commerce_address", COMMERCE)
+    .eq("job_id", Number(job.chain_job_id))
+    .order("captured_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (archiveError) throw new Error(archiveError.message);
+
+  return { supabase, job, executionEvidence, request, archived };
 }
 
-async function verifyOnchain(
-  txHash: Hex,
-  executionWallet: Address | null,
-  sessionKey: Address | null,
-) {
+async function verifyOnchain(txHash: Hex, executionWallet: Address | null, sessionKey: Address | null) {
   const [transaction, receipt] = await Promise.all([
     publicClient.getTransaction({ hash: txHash }),
     publicClient.getTransactionReceipt({ hash: txHash }),
   ]);
   if (receipt.status !== "success") throw new Error("Execution transaction is not successful on BSC Testnet");
 
-  const block = await publicClient.getBlock({ blockNumber: receipt.blockNumber });
+  const [block, latestBlock] = await Promise.all([
+    publicClient.getBlock({ blockNumber: receipt.blockNumber }),
+    publicClient.getBlockNumber(),
+  ]);
+
   const transferEvents: Array<{ token: Address; from: Address; to: Address; value: bigint }> = [];
   for (const log of receipt.logs) {
     try {
@@ -132,47 +173,35 @@ async function verifyOnchain(
       if (isAddress(log.address) && isAddress(args.from) && isAddress(args.to) && typeof args.value === "bigint") {
         transferEvents.push({ token: log.address as Address, from: args.from, to: args.to, value: args.value });
       }
-    } catch {
-      // Ignore non-ERC20 transfer logs.
-    }
+    } catch {}
   }
 
-  const inputWallet = executionWallet?.toLowerCase();
-  const outputWallet = executionWallet?.toLowerCase();
-  const tokenInTransfers = transferEvents.filter((event) => event.token.toLowerCase() === CAKE2.toLowerCase() && inputWallet && event.from.toLowerCase() === inputWallet && event.value > 0n);
-  const tokenOutTransfers = transferEvents.filter((event) => event.token.toLowerCase() === WBNB.toLowerCase() && outputWallet && event.to.toLowerCase() === outputWallet && event.value > 0n);
-
-  const tokenInRaw = tokenInTransfers.reduce((sum, event) => sum + event.value, 0n);
-  const tokenOutRaw = tokenOutTransfers.reduce((sum, event) => sum + event.value, 0n);
+  const wallet = executionWallet?.toLowerCase();
+  const tokenInRaw = transferEvents
+    .filter((event) => event.token.toLowerCase() === CAKE2.toLowerCase() && wallet && event.from.toLowerCase() === wallet && event.value > 0n)
+    .reduce((sum, event) => sum + event.value, 0n);
+  const tokenOutRaw = transferEvents
+    .filter((event) => event.token.toLowerCase() === WBNB.toLowerCase() && wallet && event.to.toLowerCase() === wallet && event.value > 0n)
+    .reduce((sum, event) => sum + event.value, 0n);
 
   const poolMatches: Array<{ fee: number; pool: Address }> = [];
   for (const fee of POOL_FEES) {
     try {
-      const pool = await publicClient.readContract({
-        address: PANCAKE_V3_FACTORY,
-        abi: FACTORY_ABI,
-        functionName: "getPool",
-        args: [CAKE2, WBNB, fee],
-      });
-      if (isAddress(pool) && pool !== "0x0000000000000000000000000000000000000000" && receipt.logs.some((log) => log.address.toLowerCase() === pool.toLowerCase())) {
+      const pool = await publicClient.readContract({ address: PANCAKE_V3_FACTORY, abi: FACTORY_ABI, functionName: "getPool", args: [CAKE2, WBNB, fee] });
+      if (isAddress(pool) && pool.toLowerCase() !== ZERO_ADDRESS.toLowerCase() && receipt.logs.some((log) => log.address.toLowerCase() === pool.toLowerCase())) {
         poolMatches.push({ fee, pool });
       }
-    } catch {
-      // Ignore unsupported/missing fee tiers.
-    }
+    } catch {}
   }
 
-  let tokenInSymbol = "CAKE2";
-  let tokenOutSymbol = "WBNB";
   let tokenInDecimals = 18;
   let tokenOutDecimals = 18;
   try { tokenInDecimals = Number(await publicClient.readContract({ address: CAKE2, abi: ERC20_ABI, functionName: "decimals" })); } catch {}
   try { tokenOutDecimals = Number(await publicClient.readContract({ address: WBNB, abi: ERC20_ABI, functionName: "decimals" })); } catch {}
-  try { await publicClient.readContract({ address: CAKE2, abi: ERC20_ABI, functionName: "symbol" }); } catch {}
-  try { await publicClient.readContract({ address: WBNB, abi: ERC20_ABI, functionName: "symbol" }); } catch {}
 
   const matchedPool = poolMatches.length === 1 ? poolMatches[0] : null;
   const verifiedMarket = Boolean(matchedPool && tokenInRaw > 0n && tokenOutRaw > 0n);
+  const confirmations = latestBlock >= receipt.blockNumber ? (latestBlock - receipt.blockNumber).toString() : "0";
 
   return {
     verified: true,
@@ -184,7 +213,7 @@ async function verifyOnchain(
       block_number: receipt.blockNumber.toString(),
       block_hash: receipt.blockHash,
       block_timestamp: Number(block.timestamp),
-      confirmations: "0",
+      confirmations,
       gas_used: receipt.gasUsed.toString(),
       effective_gas_price: receipt.effectiveGasPrice.toString(),
       from: transaction.from,
@@ -195,12 +224,12 @@ async function verifyOnchain(
     market: {
       verified_onchain: verifiedMarket,
       token_in: CAKE2,
-      token_in_symbol: tokenInSymbol,
+      token_in_symbol: "CAKE2",
       token_in_decimals: tokenInDecimals,
       token_in_amount_raw: tokenInRaw.toString(),
       token_in_amount: formatUnits(tokenInRaw, tokenInDecimals),
       token_out: WBNB,
-      token_out_symbol: tokenOutSymbol,
+      token_out_symbol: "WBNB",
       token_out_decimals: tokenOutDecimals,
       token_out_amount_raw: tokenOutRaw.toString(),
       token_out_amount: formatUnits(tokenOutRaw, tokenOutDecimals),
@@ -209,14 +238,38 @@ async function verifyOnchain(
     },
     accounting: {
       capital_deployed: formatUnits(tokenInRaw, tokenInDecimals),
-      capital_deployed_token: tokenInSymbol,
+      capital_deployed_token: "CAKE2",
       realized_pnl: null,
       realized_pnl_token: null,
       realized_pnl_status: "not_determinable_from_single_swap",
-      realized_pnl_basis: "A single spot swap receipt proves the executed asset amounts, but it does not establish a realized P&L without an onchain accounting period, closing trade, or valuation basis.",
+      realized_pnl_basis: "A single spot swap receipt proves the executed asset amounts, but it does not establish realized P&L without an onchain accounting period, closing trade, or valuation basis.",
     },
     source: "agentmarket_independent_bsc_rpc_verification",
   };
+}
+
+async function persistCandidatePointer(
+  supabase: ReturnType<typeof serverClient>,
+  requestId: string | null,
+  jobId: number,
+  transactionHash: Hex,
+  source: string,
+) {
+  if (!requestId) return;
+  const { error } = await supabase.from("execution_capital_execution_evidence").upsert({
+    execution_capital_request_id: requestId,
+    job_id: jobId,
+    chain_id: 97,
+    execution_id: `deliverable-pointer-${jobId}`,
+    calls_id: null,
+    executor_status: "candidate_from_verified_deliverable",
+    transaction_hash: transactionHash,
+    receipt: null,
+    receipt_verified: false,
+    calls: [],
+    source,
+  }, { onConflict: "execution_capital_request_id,execution_id" });
+  if (error) throw new Error(error.message);
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -227,12 +280,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!jobId) return res.status(400).json({ error: "job is required" });
 
   try {
-    const { executionEvidence, request } = await loadOwnedJob(jobId, auth.user.id, auth.user.wallet_address);
+    const { supabase, job, executionEvidence, request, archived } = await loadOwnedJob(jobId, auth.user.id, auth.user.wallet_address);
     const requestEvidence = object(request?.evidence);
     const lastExecution = object(requestEvidence.last_execution);
-    const transactionCandidate = String(executionEvidence?.transaction_hash || lastExecution.transaction_hash || "").trim();
+
+    let transactionCandidate = String(executionEvidence?.transaction_hash || lastExecution.transaction_hash || "").trim();
+    let candidateSource = executionEvidence?.transaction_hash ? "execution_capital_execution_evidence" : lastExecution.transaction_hash ? "execution_capital_request" : "";
+
+    if (!transactionCandidate && archived?.verified && archived.content_base64) {
+      const bytes = decodeBase64(archived.content_base64);
+      const computedHash = keccak256(bytes) as Hex;
+      if (String(archived.onchain_deliverable_hash || "").toLowerCase() === computedHash.toLowerCase()) {
+        const content = parseArchivedContent(bytes);
+        const archivedCandidate = findTransactionHash(content);
+        if (archivedCandidate) {
+          transactionCandidate = archivedCandidate;
+          candidateSource = "verified_erc8183_deliverable_archive";
+        }
+      }
+    }
+
     const txHash = isHash(transactionCandidate) ? transactionCandidate : null;
-    if (!txHash) return res.status(200).json({ ok: true, observed: false, network: "bsc-testnet", chain_id: 97, source: "agentmarket_independent_bsc_rpc_verification", message: "No execution transaction has been independently linked to this job yet." });
+    if (!txHash) {
+      return res.status(200).json({
+        ok: true,
+        observed: false,
+        job_id: Number(job.chain_job_id),
+        network: "bsc-testnet",
+        chain_id: 97,
+        source: "agentmarket_independent_bsc_rpc_verification",
+        message: "No execution transaction could be located from verified AgentMarket evidence yet.",
+      });
+    }
+
+    await persistCandidatePointer(supabase, request?.id ?? null, Number(job.id), txHash, candidateSource || "execution_evidence_locator");
 
     const executionWallet = isAddress(request?.user_execution_wallet) ? request.user_execution_wallet as Address : null;
     const sessionKey = isAddress(request?.agent_session_key) ? request.agent_session_key as Address : null;
