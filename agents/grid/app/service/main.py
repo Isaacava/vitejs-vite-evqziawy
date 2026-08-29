@@ -61,7 +61,7 @@ _funded_first_seen: dict[int, float] = {}
 
 
 async def _read_local_execution_readiness() -> dict[str, Any]:
-    """Read the isolated Node execution service's live Altana authorization state."""
+    """Read the isolated Node execution service's live Altana and token readiness state."""
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.get(f"{_EXECUTION_INTERNAL_URL}/execution-readiness")
@@ -83,11 +83,11 @@ async def _read_local_execution_readiness() -> dict[str, Any]:
 
 
 async def _wait_for_altana_authorization(job: dict[str, Any]) -> dict[str, Any]:
-    """Hold a funded job until the configured Altana session is live on KeyStore.
+    """Hold a funded job until exact execution authorization and capital readiness exist.
 
-    A merely-funded ERC-8183 job is not enough to authorize execution. Grid keeps
-    the job pending until the execution service reports a live authorized session.
-    No marketplace API or cached boolean is treated as sufficient.
+    The KeyStore authorization, exact CAKE2 token, required amount, balance, and
+    router allowance are all prerequisites. A merely-funded ERC-8183 job never
+    becomes a submitted deliverable by itself.
     """
     expired_at_raw = job.get("expiredAt") or job.get("expired_at") or 0
     try:
@@ -99,9 +99,13 @@ async def _wait_for_altana_authorization(job: dict[str, Any]) -> dict[str, Any]:
         readiness = await _read_local_execution_readiness()
         if readiness.get("ready") is True:
             logger.info(
-                "ERC8183_ALTANA_AUTHORIZED job_id=%s wallet=%s session_key=%s session_key_id=%s",
+                "ERC8183_EXECUTION_READY job_id=%s wallet=%s token=%s amount_raw=%s balance_raw=%s allowance_raw=%s session_key=%s session_key_id=%s",
                 job.get("jobId"),
                 readiness.get("walletAddress"),
+                readiness.get("executionToken"),
+                readiness.get("requiredAmountRaw"),
+                readiness.get("tokenBalanceRaw"),
+                readiness.get("tokenAllowanceRaw"),
                 readiness.get("sessionKeyAddress"),
                 readiness.get("sessionKeyId"),
             )
@@ -109,14 +113,16 @@ async def _wait_for_altana_authorization(job: dict[str, Any]) -> dict[str, Any]:
 
         if expired_at and int(time.time()) >= expired_at:
             raise RuntimeError(
-                f"ERC-8183 job {job.get('jobId')} expired while waiting for the required Altana session authorization; no deliverable was submitted"
+                f"ERC-8183 job {job.get('jobId')} expired while waiting for Altana authorization and exact execution-capital readiness; no deliverable was submitted"
             )
 
         logger.info(
-            "ERC8183_ALTANA_AUTHORIZATION_WAIT job_id=%s wallet=%s reasons=%s",
+            "ERC8183_EXECUTION_WAIT job_id=%s wallet=%s token=%s amount_raw=%s reasons=%s",
             job.get("jobId"),
             readiness.get("walletAddress"),
-            " | ".join(readiness.get("reasons") or ["Altana session not yet authorized"]),
+            readiness.get("executionToken"),
+            readiness.get("requiredAmountRaw"),
+            " | ".join(readiness.get("reasons") or ["Execution not ready"]),
         )
         await asyncio.sleep(_AUTHORIZATION_POLL_SECONDS)
 
@@ -156,7 +162,7 @@ async def _on_funded(job: dict[str, Any]) -> None:
     )
 
     try:
-        await _wait_for_altana_authorization(job)
+        readiness = await _wait_for_altana_authorization(job)
 
         logger.info(
             "ERC8183_AGENT_EXECUTION_STARTED job_id=%s provider=%s network=%s chain_id=97",
@@ -165,11 +171,22 @@ async def _on_funded(job: dict[str, Any]) -> None:
             config["network"],
         )
         deliverable, metadata = await fulfill_grid_job_with_execution(job)
+        execution_status = str(metadata.get("execution_status") or "").lower()
+        transaction_hash = str(metadata.get("transaction_hash") or "")
+
+        if execution_status != "executed" or not transaction_hash:
+            raise RuntimeError(
+                f"Grid execution did not produce successful execution evidence for job {job_id_int}; execution_status={execution_status or 'unknown'}; no ERC-8183 deliverable was submitted"
+            )
+
         logger.info(
-            "ERC8183_AGENT_DELIVERABLE_GENERATED job_id=%s provider=%s execution_status=%s",
+            "ERC8183_AGENT_DELIVERABLE_GENERATED job_id=%s provider=%s execution_status=%s tx_hash=%s token=%s amount_raw=%s",
             job_id_int,
             _provider_address(),
-            metadata.get("execution_status", "unknown"),
+            execution_status,
+            transaction_hash,
+            readiness.get("executionToken"),
+            readiness.get("requiredAmountRaw"),
         )
 
         submission = await _ops.submit_result(job_id_int, deliverable)
@@ -187,6 +204,7 @@ async def _on_funded(job: dict[str, Any]) -> None:
             job_id_int,
             _provider_address(),
             tx_hash or "unknown",
+            config["network"],
             config["network"],
         )
     except Exception:
