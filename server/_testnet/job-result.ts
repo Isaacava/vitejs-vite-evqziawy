@@ -45,6 +45,76 @@ function parseContent(bytes: Uint8Array): unknown {
   }
 }
 
+function object(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? value as Record<string, unknown> : {};
+}
+
+function isHash(value: unknown): value is Hex {
+  return typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value);
+}
+
+function findTransactionHash(value: unknown): Hex | null {
+  if (isHash(value)) return value;
+  if (typeof value === "string") {
+    try {
+      return findTransactionHash(JSON.parse(value));
+    } catch {
+      return null;
+    }
+  }
+  if (!value || typeof value !== "object") return null;
+
+  const record = object(value);
+  const preferredKeys = ["transaction_hash", "transactionHash", "tx_hash", "txHash"];
+  for (const key of preferredKeys) {
+    if (isHash(record[key])) return record[key];
+  }
+
+  const executionResult = record.execution_result;
+  if (executionResult) {
+    const nested = findTransactionHash(executionResult);
+    if (nested) return nested;
+  }
+
+  const receipt = record.receipt;
+  if (receipt) {
+    const nested = findTransactionHash(receipt);
+    if (nested) return nested;
+  }
+
+  return null;
+}
+
+async function bridgeDeliverableTransactionPointer(supabase: ReturnType<typeof serverClient>, jobId: number, content: unknown) {
+  const transactionHash = findTransactionHash(content);
+  if (!transactionHash) return;
+
+  const { data: request, error: requestError } = await supabase
+    .from("execution_capital_requests")
+    .select("id")
+    .eq("job_id", jobId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (requestError) throw new Error(requestError.message);
+  if (!request?.id) return;
+
+  const { error: evidenceError } = await supabase.from("execution_capital_execution_evidence").upsert({
+    execution_capital_request_id: request.id,
+    job_id: jobId,
+    chain_id: 97,
+    execution_id: `deliverable-pointer-${jobId}`,
+    calls_id: null,
+    executor_status: "candidate_from_verified_deliverable",
+    transaction_hash: transactionHash,
+    receipt: null,
+    receipt_verified: false,
+    calls: [],
+    source: "verified_deliverable_pointer",
+  }, { onConflict: "execution_capital_request_id,execution_id" });
+  if (evidenceError) throw new Error(evidenceError.message);
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
   const auth = await getAuthenticatedUser(req);
@@ -96,6 +166,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const verified = String(chainJob.deliverable).toLowerCase() === computedHash.toLowerCase();
 
       if (verified) {
+        const content = parseContent(bytes);
+        await bridgeDeliverableTransactionPointer(supabase, Number(chainJob.id), content);
         return res.status(200).json({
           ok: true,
           chain_job_id: Number(chainJob.id),
@@ -110,7 +182,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           endpoint: archived.provider_endpoint,
           agent_id: agent?.agent_id ?? null,
           agent_name: agent?.name ?? null,
-          content: parseContent(bytes),
+          content,
           evidence_source: "agentmarket_archive",
           captured_at: archived.captured_at,
           capture_source: archived.capture_source,
@@ -209,6 +281,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const verified = String(chainJob.deliverable).toLowerCase() === computedHash.toLowerCase();
+    if (verified) await bridgeDeliverableTransactionPointer(supabase, Number(chainJob.id), content);
     return res.status(200).json({
       ok: true,
       chain_job_id: Number(chainJob.id),
