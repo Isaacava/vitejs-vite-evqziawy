@@ -10,22 +10,8 @@ import type { GridCall, GridSessionDescriptor } from "./types.js";
 const PORT = Number(process.env.GRID_EXECUTION_PORT || 8788);
 const SESSION_PRIVATE_KEY = process.env.ALTANA_SESSION_PRIVATE_KEY || "";
 
-function json(res: import("node:http").ServerResponse, status: number, value: unknown) {
-  res.statusCode = status;
-  res.setHeader("content-type", "application/json; charset=utf-8");
-  res.setHeader("cache-control", "no-store");
-  res.end(JSON.stringify(value, (_, item) => typeof item === "bigint" ? item.toString() : item));
-}
-
-async function body(req: IncomingMessage) {
-  let raw = "";
-  for await (const chunk of req) {
-    raw += chunk;
-    if (raw.length > 128 * 1024) throw new Error("Request body too large");
-  }
-  return JSON.parse(raw || "{}");
-}
-
+function json(res: import("node:http").ServerResponse, status: number, value: unknown) { res.statusCode = status; res.setHeader("content-type", "application/json; charset=utf-8"); res.setHeader("cache-control", "no-store"); res.end(JSON.stringify(value, (_, item) => typeof item === "bigint" ? item.toString() : item)); }
+async function body(req: IncomingMessage) { let raw = ""; for await (const chunk of req) { raw += chunk; if (raw.length > 128 * 1024) throw new Error("Request body too large"); } return JSON.parse(raw || "{}"); }
 function descriptor(value: unknown): GridSessionDescriptor {
   if (!value || typeof value !== "object") throw new Error("session descriptor is required");
   const input = value as Record<string, unknown>;
@@ -39,109 +25,44 @@ function descriptor(value: unknown): GridSessionDescriptor {
     allowedSelectors: Array.isArray(input.allowedSelectors) ? input.allowedSelectors.map(String) : undefined,
     spendLimit: BigInt(String(input.spendLimit)),
     spendToken: typeof input.spendToken === "string" ? input.spendToken as GridSessionDescriptor["spendToken"] : undefined,
+    nativeSpendLimit: input.nativeSpendLimit !== undefined ? BigInt(String(input.nativeSpendLimit)) : 20_000_000_000_000_000n,
     expiry: Number(input.expiry),
   };
 }
-
-function calls(value: unknown): GridCall[] {
-  if (!Array.isArray(value) || value.length === 0) throw new Error("calls must be a non-empty array");
-  return value.map((item) => {
-    if (!item || typeof item !== "object") throw new Error("Invalid call entry");
-    const call = item as Record<string, unknown>;
-    if (typeof call.to !== "string" || typeof call.data !== "string") throw new Error("Each call needs to and data");
-    return { to: call.to as GridCall["to"], data: call.data as GridCall["data"], value: call.value === undefined ? undefined : BigInt(String(call.value)) };
-  });
-}
-
+function calls(value: unknown): GridCall[] { if (!Array.isArray(value) || value.length === 0) throw new Error("calls must be a non-empty array"); return value.map((item) => { if (!item || typeof item !== "object") throw new Error("Invalid call entry"); const call = item as Record<string, unknown>; if (typeof call.to !== "string" || typeof call.data !== "string") throw new Error("Each call needs to and data"); return { to: call.to as GridCall["to"], data: call.data as GridCall["data"], value: call.value === undefined ? undefined : BigInt(String(call.value)) }; }); }
 function configuredList(value: string) { return value.split(",").map((item) => item.trim()).filter(Boolean); }
-
 function executionConfigState() {
   return {
     session_private_key_configured: Boolean(SESSION_PRIVATE_KEY),
     altana_wallet_address_configured: Boolean(process.env.ALTANA_WALLET_ADDRESS),
     altana_session_expiry_configured: Boolean(process.env.ALTANA_SESSION_EXPIRY),
+    altana_session_native_spend_limit_configured: /^\d+$/.test(process.env.ALTANA_SESSION_NATIVE_SPEND_LIMIT || "20000000000000000") && BigInt(process.env.ALTANA_SESSION_NATIVE_SPEND_LIMIT || "20000000000000000") > 0n,
     allowed_targets_configured: configuredList(process.env.GRID_ALLOWED_TARGETS || "").length > 0,
     allowed_selectors_configured: configuredList(process.env.GRID_ALLOWED_SELECTORS || "").length > 0,
     pancake_router_configured: Boolean(process.env.PANCAKE_TESTNET_ROUTER),
   };
 }
-
 async function publicExecutionCapabilities() {
   const configured = executionConfigState();
   const market = buildPancakeTestnetConfig();
-  const base = {
-    ok: true,
-    network: "bsc-testnet",
-    chainId: 97,
-    execution: "altana-scoped-session",
-    wallet_provider: "altana",
-    authorization_model: "scoped_session",
-    protocol: "pancake-v3-swap",
-    execution_market: { token_in: market.tokenIn, token_out: market.tokenOut, token_in_symbol: market.tokenInSymbol, token_out_symbol: market.tokenOutSymbol, fee: market.fee },
-    preflight_path: "/preflight/pancake",
-    allowed_targets: configuredList(process.env.GRID_ALLOWED_TARGETS || ""),
-    allowed_selectors: configuredList(process.env.GRID_ALLOWED_SELECTORS || ""),
-    selectors_required: true,
-    private_key_exposed: false,
-    configuration: configured,
-  };
-
+  const base = { ok: true, network: "bsc-testnet", chainId: 97, execution: "altana-scoped-session", wallet_provider: "altana", authorization_model: "scoped_session", protocol: "pancake-v3-swap", execution_market: { token_in: market.tokenIn, token_out: market.tokenOut, token_in_symbol: market.tokenInSymbol, token_out_symbol: market.tokenOutSymbol, fee: market.fee }, preflight_path: "/preflight/pancake", allowed_targets: configuredList(process.env.GRID_ALLOWED_TARGETS || ""), allowed_selectors: configuredList(process.env.GRID_ALLOWED_SELECTORS || ""), selectors_required: true, private_key_exposed: false, configuration: configured };
   if (!SESSION_PRIVATE_KEY) return { ...base, execution_ready: false };
-
   const account = privateKeyToAccount((SESSION_PRIVATE_KEY.startsWith("0x") ? SESSION_PRIVATE_KEY : `0x${SESSION_PRIVATE_KEY}`) as `0x${string}`);
   const readiness = await getExecutionReadiness();
-  return {
-    ...base,
-    execution_ready: readiness.ready,
-    session_key_address: account.address,
-    session_key_public_key: account.publicKey,
-    authorization_check: {
-      wallet_address: readiness.walletAddress,
-      session_key_id: readiness.sessionKeyId,
-      keystore_authorized: readiness.checks.keystore_authorization,
-    },
-  };
+  return { ...base, execution_ready: readiness.ready, session_key_address: account.address, session_key_public_key: account.publicKey, authorization_check: { wallet_address: readiness.walletAddress, session_key_id: readiness.sessionKeyId, keystore_authorized: readiness.checks.keystore_authorization } };
 }
-
 const server = createServer(async (req, res) => {
   try {
     if (req.method === "GET" && req.url === "/health") return json(res, 200, { ...(await publicExecutionCapabilities()), service: "Grid Agent Altana Execution" });
     if (req.method === "GET" && req.url === "/execution-capabilities") return json(res, 200, await publicExecutionCapabilities());
     if (req.method === "GET" && req.url === "/execution-readiness") return json(res, 200, await getExecutionReadiness());
-
-    if (req.method === "POST" && req.url === "/preflight/pancake") {
-      const readiness = await getExecutionReadiness();
-      if (!readiness.ready) return json(res, 409, { ok: false, error: "Grid execution is waiting for the user's Altana session authorization", readiness });
-      return json(res, 200, { ok: true, result: await pancakeSwapPreflight(await body(req) as Record<string, unknown>) });
-    }
-
-    if (req.method === "GET" && req.url?.startsWith("/receipt/")) {
-      if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "Grid execution service is not configured" });
-      const hash = decodeURIComponent(req.url.slice("/receipt/".length)).split("?", 1)[0];
-      if (!hash) return json(res, 400, { error: "transaction hash is required" });
-      return json(res, 200, { ok: true, result: await observeTestnetReceipt(hash) });
-    }
-
-    if (req.method === "POST" && req.url === "/execute-configured") {
-      if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "ALTANA_SESSION_PRIVATE_KEY is not configured" });
-      const readiness = await getExecutionReadiness();
-      if (!readiness.ready) return json(res, 409, { ok: false, error: "Grid execution is waiting for the user's Altana session authorization", readiness });
-      const request = await body(req) as Record<string, unknown>;
-      return json(res, 200, { ok: true, result: await executeConfiguredGridAction(calls(request.calls)) });
-    }
-
+    if (req.method === "POST" && req.url === "/preflight/pancake") { const readiness = await getExecutionReadiness(); if (!readiness.ready) return json(res, 409, { ok: false, error: "Grid execution is waiting for the user's Altana session authorization", readiness }); return json(res, 200, { ok: true, result: await pancakeSwapPreflight(await body(req) as Record<string, unknown>) }); }
+    if (req.method === "GET" && req.url?.startsWith("/receipt/")) { if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "Grid execution service is not configured" }); const hash = decodeURIComponent(req.url.slice("/receipt/".length)).split("?", 1)[0]; if (!hash) return json(res, 400, { error: "transaction hash is required" }); return json(res, 200, { ok: true, result: await observeTestnetReceipt(hash) }); }
+    if (req.method === "POST" && req.url === "/execute-configured") { if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "ALTANA_SESSION_PRIVATE_KEY is not configured" }); const readiness = await getExecutionReadiness(); if (!readiness.ready) return json(res, 409, { ok: false, error: "Grid execution is waiting for the user's Altana session authorization", readiness }); const request = await body(req) as Record<string, unknown>; return json(res, 200, { ok: true, result: await executeConfiguredGridAction(calls(request.calls)) }); }
     if (req.method !== "POST" || req.url !== "/execute") return json(res, 404, { error: "Not found" });
     if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "ALTANA_SESSION_PRIVATE_KEY is not configured" });
-    const readiness = await getExecutionReadiness();
-    if (!readiness.ready) return json(res, 409, { ok: false, error: "Grid execution service is waiting for the user's Altana session authorization", readiness });
-    const request = await body(req) as Record<string, unknown>;
-    return json(res, 200, { ok: true, result: await executeGridAction(descriptor(request.session), calls(request.calls), SESSION_PRIVATE_KEY) });
-  } catch (error) {
-    console.error("Grid Altana execution request failed", error);
-    return json(res, 400, { ok: false, error: error instanceof Error ? error.message : "Execution request failed" });
-  }
+    const readiness = await getExecutionReadiness(); if (!readiness.ready) return json(res, 409, { ok: false, error: "Grid execution is waiting for the user's Altana session authorization", readiness });
+    const request = await body(req) as Record<string, unknown>; return json(res, 200, { ok: true, result: await executeGridAction(descriptor(request.session), calls(request.calls), SESSION_PRIVATE_KEY) });
+  } catch (error) { console.error("Grid Altana execution request failed", error); return json(res, 400, { ok: false, error: error instanceof Error ? error.message : "Execution request failed" }); }
 });
-
-server.listen(PORT, "127.0.0.1", () => {
-  console.log(`Grid Altana execution service listening on ${PORT} (localhost / BSC Testnet / chain 97)`);
-});
+server.listen(PORT, "127.0.0.1", () => console.log(`Grid Altana execution service listening on ${PORT} (localhost / BSC Testnet / chain 97)`));
