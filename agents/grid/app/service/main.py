@@ -65,7 +65,6 @@ async def _read_local_execution_readiness() -> dict[str, Any]:
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.get(f"{_EXECUTION_INTERNAL_URL}/execution-readiness")
-            raw = await response.text()
             try:
                 body = response.json()
             except ValueError:
@@ -74,8 +73,6 @@ async def _read_local_execution_readiness() -> dict[str, Any]:
                 raise RuntimeError(body.get("error") if isinstance(body, dict) and body.get("error") else f"execution readiness returned HTTP {response.status_code}")
             if not isinstance(body, dict):
                 raise RuntimeError("execution readiness response was not an object")
-            if not response.is_success and not body.get("ready"):
-                return body
             return body
     except (httpx.HTTPError, RuntimeError) as exc:
         return {
@@ -86,11 +83,11 @@ async def _read_local_execution_readiness() -> dict[str, Any]:
 
 
 async def _wait_for_altana_authorization(job: dict[str, Any]) -> dict[str, Any]:
-    """Hold a funded job until the exact configured Altana session is live on KeyStore.
+    """Hold a funded job until the configured Altana session is live on KeyStore.
 
-    The provider must not turn a merely-funded ERC-8183 job into a submission before
-    the user has granted the scoped Altana session. The KeyStore is the authority for
-    this gate; no marketplace API or cached boolean is treated as sufficient.
+    A merely-funded ERC-8183 job is not enough to authorize execution. Grid keeps
+    the job pending until the execution service reports a live authorized session.
+    No marketplace API or cached boolean is treated as sufficient.
     """
     expired_at_raw = job.get("expiredAt") or job.get("expired_at") or 0
     try:
@@ -175,9 +172,6 @@ async def _on_funded(job: dict[str, Any]) -> None:
             metadata.get("execution_status", "unknown"),
         )
 
-        # Keep the deliverable self-contained for compatibility with the
-        # installed BNB Agent SDK provider API. Execution evidence is already
-        # embedded in the JSON returned by fulfill_grid_job_with_execution().
         submission = await _ops.submit_result(job_id_int, deliverable)
 
         tx_hash = None
