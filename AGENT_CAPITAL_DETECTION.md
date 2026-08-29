@@ -1,104 +1,115 @@
-# AgentMarket — Agent-Agnostic Execution Capital Detection
+# AgentMarket — Protocol-Native Execution Capital Authorization
 
 ## Purpose
 
-AgentMarket must independently detect and validate execution capital requested by an agent when the agent needs funds to perform a user-authorized on-chain task.
+AgentMarket must work with agents whose internal code and implementation are unknown to the marketplace.
 
-Grid remains the first-party BNB Agent Studio / ERC-8183 test agent. ERC-8183 is not removed or replaced. Grid is used to prove the generic marketplace flow; the marketplace must not hardcode Grid-specific token or amount assumptions.
+Grid is our first-party BNB Agent Studio / ERC-8183 test agent, but Grid's source code is not the compatibility contract for AgentMarket.
 
-## Detection sources
+ERC-8183 remains part of the design. It is the job, commerce and escrow layer. Execution-capital authorization is a separate security boundary.
 
-AgentMarket resolves a capital request from these sources:
+## What is standardized
 
-1. An existing execution-capital request stored for the job.
-2. A public agent-declared execution-capital request endpoint.
-3. An execution-capital request embedded in the agent's published capability document.
+The current BNB/Altana integration gives us two distinct primitives:
 
-The detector also recognizes common metadata declarations such as `execution_capital_request_url`, `execution_capital_requirements_url`, and nested equivalents.
+1. **ERC-8183** — job creation, negotiation/terms, budget, funding, provider work, submission, evaluation and settlement.
+2. **Altana scoped sessions** — on-chain execution authorization containing call permissions, spend permissions and expiry, associated with a session key and verifiable through the Altana KeyStore.
 
-The detector probes conventional public paths when an agent exposes an endpoint but does not explicitly name a capital-request URL:
+There is no verified universal BNB/Altana HTTP endpoint named something like `/execution-capital-request` that every agent must implement.
 
-- `/execution-capital-request`
-- `/execution-capital`
-- `/capital-request`
+Therefore AgentMarket must not invent one and must not infer compatibility from Grid-specific request JSON.
 
-No AgentMarket-private secret is required for this discovery step.
+## Authorization-first model
 
-## What AgentMarket extracts
+The correct marketplace flow is:
 
-For a detected request, AgentMarket resolves and normalizes:
+```text
+ERC-8183 job is funded
+        -> provider is identified
+        -> AgentMarket resolves supported execution capability
+        -> Altana session authorization is verified
+        -> allowed targets/selectors and expiry are checked
+        -> actual execution intent/call is validated when available
+        -> token + exact amount are derived from the actual call or chain evidence
+        -> execution is allowed only within the granted scope
+        -> AgentMarket independently observes the transaction receipt and effects
+```
 
-- network and chain ID;
-- capital token address;
-- requested amount in human units and raw units;
-- on-chain token decimals and symbol;
-- token out, when supplied;
-- protocol and preflight path, when supplied;
-- target/router address, when supplied;
-- function selector, when supplied;
-- execution recipient/wallet, when supplied;
-- pool fee, when supplied;
-- original request payload for evidence.
+The Altana session answers **what the agent is allowed to do**. It does not by itself define the exact amount of every individual trade.
+
+## Exact capital amount
+
+AgentMarket must never display an invented amount.
+
+An exact per-trade token amount can be established from an execution intent/call or from observed blockchain transaction data. For example, a protocol adapter can decode a DEX call's token and `amountIn`, while a receipt observer can independently verify actual ERC-20 transfers after execution.
+
+Until such evidence exists, the marketplace should report the exact trade amount as **Not yet observed** rather than zero or a guessed value.
 
 ## Independent verification
 
-The marketplace does not blindly trust the agent's token symbol or decimals. Token metadata is read directly from BSC Testnet.
+AgentMarket independently verifies:
 
-The marketplace rejects a request that is not for BSC Testnet, has a non-positive amount, or exceeds the Testnet safety cap of one whole unit of the requested token.
+- chain/network;
+- ERC-8183 job ownership and live status;
+- provider execution capability;
+- session public-key consistency;
+- Altana KeyStore authorization when the exact session key identifier is available;
+- authorization expiry;
+- allowed contract targets;
+- allowed function selectors;
+- protocol-specific preflight requirements;
+- actual BSC Testnet transaction receipts;
+- actual asset movement/effects where observable.
 
-When the agent capability declares a concrete `execution_market.token_in`, the detected capital token must match it. This prevents an agent from advertising one execution asset and requesting a different capital token.
+The marketplace never trusts an agent's statement alone that funds were used or that a transaction succeeded.
 
-## Grid test case
+## Grid test agent
 
-Grid continues to use the BNB Agent SDK and ERC-8183 funded-job flow. Its Pancake V3 / CAKE2 execution capability is a concrete provider implementation, not a marketplace-wide constant.
+Grid continues to be our first-party BNB Agent Studio / BNB Agent SDK test agent and retains ERC-8183.
 
-For a Grid request, AgentMarket should be able to independently display facts such as:
+Grid may advertise a concrete BSC Testnet execution capability such as CAKE2 -> WBNB through Pancake V3. That is a provider capability used to exercise the marketplace; it is not a marketplace-wide constant.
+
+A different agent may use a different protocol, wallet provider, token, execution strategy or internal implementation without requiring AgentMarket to understand that agent's source code.
+
+## No AgentMarket-specific secret requirement
+
+Third-party agents must not be required to configure an AgentMarket-only shared secret merely to become compatible.
+
+Secrets used for infrastructure controlled by AgentMarket may exist internally, but they are not part of the external agent interoperability contract.
+
+## Current implementation boundary
+
+`server/_testnet/execution-capital-requirement.ts` resolves the funded ERC-8183 job, provider capability and Altana authorization record for the Testnet console.
+
+The previous custom `server/_testnet/execution-capital-detection.ts` implementation was intentionally removed because it defined a nonstandard capital-request protocol around Grid-like JSON fields.
+
+The next execution-intent work should be implemented as protocol/adaptor logic that consumes concrete calls or on-chain evidence, not as a Grid-specific request convention.
+
+## Test case: job #732
+
+For the current Grid test job, AgentMarket should be able to show:
 
 ```text
-Token requested: CAKE2
-Amount requested: 1 CAKE2
-Token out: WBNB
-Protocol: Pancake V3
-Target: declared router
-Selector: declared swap selector
+ERC-8183 job: #732
 Chain: BSC Testnet (97)
+Execution authorization: Altana scoped session
+Execution asset: CAKE2 -> WBNB
+Target: Pancake V3 router
+Allowed selector: exact swap selector
+Session: independently verifiable when key identifier is available
+Exact trade amount: only reported when supplied by concrete execution intent or independently observed chain evidence
 ```
 
-The same detection layer must work for a future agent requesting another token, protocol, amount, or execution target without adding a Grid-specific branch to the marketplace core.
-
-## Authorization boundary
-
-Detection is separate from authorization.
-
-The flow is:
-
-```text
-Agent requests capital
-        -> AgentMarket detects request
-        -> AgentMarket independently normalizes token/amount/chain/target/call
-        -> AgentMarket validates against agent capability
-        -> AgentMarket validates user/job authorization
-        -> AgentMarket performs protocol-specific preflight
-        -> scoped execution authorization is checked
-        -> agent executes
-        -> AgentMarket observes the chain independently
-        -> receipt and execution evidence are persisted
-```
-
-AgentMarket should never treat detection alone as permission to move funds.
-
-## Current implementation
-
-- `server/_testnet/execution-capital-detection.ts` — generic detection and normalization engine.
-- `server/_testnet/execution-capital-requirement.ts` — job ownership, live Testnet checks, capability resolution, and safety enforcement around the detector.
-- `server/_testnet/execution-capital-preflight.ts` — downstream execution validation; protocol-specific checks remain scoped to the declared protocol.
+The test case must not cause the AgentMarket core to gain a special `if agent == Grid` branch.
 
 ## Non-goals
 
-This feature does not remove ERC-8183 from Grid.
+This design does not remove ERC-8183 from Grid.
 
-This feature does not make AgentMarket depend on Grid.
+This design does not replace BNB Agent Studio or the BNB Agent SDK.
 
-This feature does not trust an agent's statement that a transaction succeeded; chain observation remains independent.
+This design does not require every external agent to expose AgentMarket-specific HTTP routes.
 
-This feature does not expose agent private keys or require third-party agents to know an AgentMarket-only secret.
+This design does not assume AgentMarket knows how an agent is implemented internally.
+
+This design does not treat authorization as proof that a trade actually happened; execution remains independently observed.
