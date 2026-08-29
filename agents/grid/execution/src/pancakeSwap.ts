@@ -33,6 +33,7 @@ const ERC20_ABI = [{
 
 export const PANCAKE_TESTNET_WBNB: Address = "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd";
 export const PANCAKE_TESTNET_CAKE2: Address = "0x8d008B313C1d6C7fE2982F62d32Da7507cF43551";
+export const PANCAKE_TESTNET_FEE = 500;
 
 function address(value: string, field: string): Address {
   if (!/^0x[a-fA-F0-9]{40}$/.test(value)) throw new Error(`${field} must be a valid EVM address`);
@@ -70,6 +71,9 @@ export function buildPancakeApproval(token: string, router: string, amount: stri
 
 export function buildPancakeExactInputSingle(params: PancakeExactInputSingleParams): GridCall {
   if (!Number.isInteger(params.fee) || params.fee < 0 || params.fee > 1_000_000) throw new Error("PancakeSwap fee must be an integer between 0 and 1000000");
+  if (params.tokenIn.toLowerCase() !== PANCAKE_TESTNET_CAKE2.toLowerCase()) throw new Error(`Grid Testnet execution is locked to CAKE2 ${PANCAKE_TESTNET_CAKE2}`);
+  if (params.tokenOut.toLowerCase() !== PANCAKE_TESTNET_WBNB.toLowerCase()) throw new Error(`Grid Testnet execution is locked to WBNB ${PANCAKE_TESTNET_WBNB}`);
+  if (params.fee !== PANCAKE_TESTNET_FEE) throw new Error(`Grid Testnet execution is locked to PancakeSwap fee tier ${PANCAKE_TESTNET_FEE}`);
   if (params.amountIn <= 0n) throw new Error("amountIn must be greater than zero");
   if (params.amountOutMinimum < 0n) throw new Error("amountOutMinimum cannot be negative");
   if (params.sqrtPriceLimitX96 !== undefined && (params.sqrtPriceLimitX96 < 0n || params.sqrtPriceLimitX96 >= 2n ** 160n)) throw new Error("sqrtPriceLimitX96 must fit uint160");
@@ -92,19 +96,16 @@ export function buildPancakeExactInputSingle(params: PancakeExactInputSinglePara
 export function buildPancakeTestnetConfig(env: NodeJS.ProcessEnv = process.env) {
   const rawRouter = env.PANCAKE_TESTNET_ROUTER?.trim() || "0x9a489505a00cE272eAa5e07Dba6491314CaE3796";
   const router = address(rawRouter, "PANCAKE_TESTNET_ROUTER");
-  const fee = Number(env.PANCAKE_TESTNET_POOL_FEE || "2500");
+  const fee = Number(env.PANCAKE_TESTNET_POOL_FEE || String(PANCAKE_TESTNET_FEE));
   if (!Number.isInteger(fee) || fee < 0 || fee > 1_000_000) throw new Error("PANCAKE_TESTNET_POOL_FEE is invalid");
+  if (fee !== PANCAKE_TESTNET_FEE) throw new Error(`Grid Testnet execution is locked to PancakeSwap fee tier ${PANCAKE_TESTNET_FEE}`);
 
   const rawTokenIn = env.GRID_DEFAULT_TOKEN_IN?.trim() || PANCAKE_TESTNET_CAKE2;
   const rawTokenOut = env.GRID_DEFAULT_TOKEN_OUT?.trim() || PANCAKE_TESTNET_WBNB;
   const tokenIn = address(rawTokenIn, "GRID_DEFAULT_TOKEN_IN");
   const tokenOut = address(rawTokenOut, "GRID_DEFAULT_TOKEN_OUT");
-  if (tokenIn.toLowerCase() !== PANCAKE_TESTNET_CAKE2.toLowerCase()) {
-    throw new Error(`Grid Testnet execution is locked to CAKE2 ${PANCAKE_TESTNET_CAKE2}; GRID_DEFAULT_TOKEN_IN points to ${tokenIn}`);
-  }
-  if (tokenOut.toLowerCase() !== PANCAKE_TESTNET_WBNB.toLowerCase()) {
-    throw new Error(`Grid Testnet execution is locked to WBNB ${PANCAKE_TESTNET_WBNB}; GRID_DEFAULT_TOKEN_OUT points to ${tokenOut}`);
-  }
+  if (tokenIn.toLowerCase() !== PANCAKE_TESTNET_CAKE2.toLowerCase()) throw new Error(`Grid Testnet execution is locked to CAKE2 ${PANCAKE_TESTNET_CAKE2}; GRID_DEFAULT_TOKEN_IN points to ${tokenIn}`);
+  if (tokenOut.toLowerCase() !== PANCAKE_TESTNET_WBNB.toLowerCase()) throw new Error(`Grid Testnet execution is locked to WBNB ${PANCAKE_TESTNET_WBNB}; GRID_DEFAULT_TOKEN_OUT points to ${tokenOut}`);
 
   return {
     chainId: 97 as const,
@@ -114,7 +115,7 @@ export function buildPancakeTestnetConfig(env: NodeJS.ProcessEnv = process.env) 
     tokenOut,
     tokenInSymbol: "CAKE2",
     tokenOutSymbol: "WBNB",
-    note: "BSC Testnet only. Grid's first-party proof is locked to the canonical CAKE2/WBNB test market; execution cannot silently switch to another token address.",
+    note: "BSC Testnet only. Grid's first-party proof is locked to the canonical CAKE2/WBNB execution market and fee tier; execution cannot silently switch to another token or pool tier.",
   };
 }
 
