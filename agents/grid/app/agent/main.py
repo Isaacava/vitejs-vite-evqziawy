@@ -1,17 +1,19 @@
 """Grid Agent test runtime.
 
-The first-party Grid Agent produces a strategy deliverable and declares the
-execution market it expects. It does not custody or execute user trading
-funds directly. The BNB Agent SDK service layer watches for FUNDED ERC-8183
-jobs, calls ``fulfill_grid_job()``, stores the result, and submits the
- deliverable on-chain.
+Grid is the first-party BNB Agent Studio test agent for AgentMarket. It accepts
+ERC-8183 jobs, builds a grid strategy, and—when its own execution configuration
+and an already-authorized Altana session are present—performs the declared BSC
+Testnet execution itself before the ERC-8183 deliverable is submitted.
 """
 
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from typing import Any
+
+from app.agent.execution import execute_grid_trade
 
 
 TESTNET_CAKE2 = "0x8d008B313C1d6C7fE2982F62d32Da7507cF43551"
@@ -30,7 +32,6 @@ class GridPlan:
 
 
 def _parse_json_object(value: Any) -> dict[str, Any]:
-    """Decode an optional JSON object from an SDK job field."""
     if isinstance(value, dict):
         return value
     if not isinstance(value, str) or not value.strip():
@@ -43,13 +44,6 @@ def _parse_json_object(value: Any) -> dict[str, Any]:
 
 
 def _job_parameters(job: dict[str, Any]) -> dict[str, Any]:
-    """Extract grid parameters from both legacy metadata and ERC-8183 description.
-
-    The BNB Agent SDK's ERC-8183 ``on_job`` callback exposes the anchored task
-    description. Older local tests used a ``metadata`` object, so both forms
-    remain supported. ``params`` is accepted as a convenience wrapper for
-    marketplace-generated descriptions.
-    """
     metadata = _parse_json_object(job.get("metadata"))
     description = _parse_json_object(job.get("description"))
 
@@ -58,18 +52,17 @@ def _job_parameters(job: dict[str, Any]) -> dict[str, Any]:
         description = {**description, **params}
 
     merged = {**metadata, **description}
+    execution = merged.get("execution")
+    if isinstance(execution, dict):
+        merged = {**merged, **execution}
+    execution_market = merged.get("execution_market")
+    if isinstance(execution_market, dict):
+        merged = {**merged, **execution_market}
     return merged
 
 
 def build_grid_plan(job: dict[str, Any]) -> GridPlan:
-    """Build a deterministic grid strategy from a funded ERC-8183 job.
-
-    Missing values fail closed instead of silently producing a strategy.
-    This agent remains strategy-first: execution is separately controlled by
-    the scoped execution service and declared capability.
-    """
     parameters = _job_parameters(job)
-
     lower = float(parameters.get("lower_price", 0))
     upper = float(parameters.get("upper_price", 0))
     levels = int(parameters.get("grid_levels", 0))
@@ -87,35 +80,18 @@ def build_grid_plan(job: dict[str, Any]) -> GridPlan:
 
     interval_pct = ((upper / lower) ** (1 / (levels - 1)) - 1) * 100
     risk = "conservative" if max_slippage_bps <= 50 else "standard"
-
-    return GridPlan(
-        lower_price=lower,
-        upper_price=upper,
-        grid_levels=levels,
-        interval_pct=round(interval_pct, 6),
-        total_notional=notional,
-        risk=risk,
-    )
+    return GridPlan(lower, upper, levels, round(interval_pct, 6), notional, risk)
 
 
-def fulfill_grid_job(job: dict[str, Any]) -> str:
-    """Produce the deliverable for one funded ERC-8183 Grid job."""
-    plan = build_grid_plan(job)
-    payload = {
+def _strategy_payload(job: dict[str, Any], plan: GridPlan) -> dict[str, Any]:
+    return {
         "agent": "agentmarket-grid-test",
         "job_id": str(job.get("jobId", job.get("id", ""))),
-        "execution": "strategy_only",
         "execution_market": {
             "network": "bsc-testnet",
             "protocol": "pancake-v3",
-            "token_in": {
-                "symbol": "CAKE2",
-                "address": TESTNET_CAKE2,
-            },
-            "token_out": {
-                "symbol": "WBNB",
-                "address": TESTNET_WBNB,
-            },
+            "token_in": {"symbol": "CAKE2", "address": TESTNET_CAKE2},
+            "token_out": {"symbol": "WBNB", "address": TESTNET_WBNB},
             "fee": TESTNET_PANCAKE_FEE,
         },
         "plan": {
@@ -126,25 +102,51 @@ def fulfill_grid_job(job: dict[str, Any]) -> str:
             "total_notional": plan.total_notional,
             "risk": plan.risk,
         },
-        "note": "No user funds were traded; this deliverable declares the Testnet execution market and provides a strategy plan pending Risk Guardian approval and scoped wallet execution.",
     }
+
+
+def fulfill_grid_job(job: dict[str, Any]) -> str:
+    """Synchronous strategy-only helper retained for local tests."""
+    plan = build_grid_plan(job)
+    payload = _strategy_payload(job, plan)
+    payload["execution"] = "strategy_only"
+    payload["note"] = "Strategy-only helper. The live ERC-8183 service invokes the agent-owned execution path when Grid's authorized Altana session is configured."
     return json.dumps(payload, separators=(",", ":"))
+
+
+async def fulfill_grid_job_with_execution(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Execute the funded job through Grid's own scoped Altana session."""
+    plan = build_grid_plan(job)
+    payload = _strategy_payload(job, plan)
+    execution_enabled = (os.getenv("GRID_AUTO_EXECUTE_TESTNET", "true") or "true").strip().lower() not in {"0", "false", "no", "off"}
+
+    if not execution_enabled:
+        payload["execution"] = "strategy_only"
+        payload["note"] = "Grid Testnet execution is disabled by GRID_AUTO_EXECUTE_TESTNET."
+        return json.dumps(payload, separators=(",", ":")), {"execution_status": "disabled"}
+
+    try:
+        result = await execute_grid_trade(job)
+        transaction_hash = result["transaction_hash"]
+        payload["execution"] = "agent_owned_testnet"
+        payload["execution_result"] = {
+            "status": result.get("status"),
+            "calls_id": result.get("calls_id"),
+            "transaction_hash": transaction_hash,
+            "receipt": result.get("receipt"),
+        }
+        payload["note"] = "Grid autonomously ran the authorized Testnet execution through its own Altana session and observed the receipt before submitting this ERC-8183 deliverable."
+        return json.dumps(payload, separators=(",", ":")), {"execution_status": "executed", "transaction_hash": transaction_hash, "calls_id": result.get("calls_id")}
+    except Exception as exc:
+        payload["execution"] = "agent_owned_testnet"
+        payload["execution_result"] = {"status": "failed", "error": str(exc)}
+        payload["note"] = "Grid could not complete its authorized Testnet execution; the deliverable is marked failed rather than pretending the trade occurred."
+        return json.dumps(payload, separators=(",", ":")), {"execution_status": "failed", "error": str(exc)}
 
 
 if __name__ == "__main__":
     sample = {
         "jobId": "test-grid-1",
-        "description": json.dumps(
-            {
-                "marketplace": "AgentMarket",
-                "params": {
-                    "lower_price": 600.0,
-                    "upper_price": 700.0,
-                    "grid_levels": 12,
-                    "notional": 100.0,
-                    "max_slippage_bps": 50,
-                },
-            }
-        ),
+        "description": json.dumps({"params": {"lower_price": 600.0, "upper_price": 700.0, "grid_levels": 12, "notional": 100.0, "max_slippage_bps": 50}}),
     }
     print(fulfill_grid_job(sample))
