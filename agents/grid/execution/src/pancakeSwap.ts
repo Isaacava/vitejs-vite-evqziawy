@@ -6,37 +6,30 @@ const SMART_ROUTER_V3_ABI = [
     type: "function",
     name: "exactInputSingle",
     stateMutability: "payable",
-    inputs: [
-      {
-        name: "params",
-        type: "tuple",
-        components: [
-          { name: "tokenIn", type: "address" },
-          { name: "tokenOut", type: "address" },
-          { name: "fee", type: "uint24" },
-          { name: "recipient", type: "address" },
-          { name: "amountIn", type: "uint256" },
-          { name: "amountOutMinimum", type: "uint256" },
-          { name: "sqrtPriceLimitX96", type: "uint160" },
-        ],
-      },
-    ],
+    inputs: [{
+      name: "params",
+      type: "tuple",
+      components: [
+        { name: "tokenIn", type: "address" },
+        { name: "tokenOut", type: "address" },
+        { name: "fee", type: "uint24" },
+        { name: "recipient", type: "address" },
+        { name: "amountIn", type: "uint256" },
+        { name: "amountOutMinimum", type: "uint256" },
+        { name: "sqrtPriceLimitX96", type: "uint160" },
+      ],
+    }],
     outputs: [{ name: "amountOut", type: "uint256" }],
   },
 ] as const;
 
-const ERC20_ABI = [
-  {
-    type: "function",
-    name: "approve",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "spender", type: "address" },
-      { name: "amount", type: "uint256" },
-    ],
-    outputs: [{ name: "", type: "bool" }],
-  },
-] as const;
+const ERC20_ABI = [{
+  type: "function",
+  name: "approve",
+  stateMutability: "nonpayable",
+  inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }],
+  outputs: [{ name: "", type: "bool" }],
+}] as const;
 
 export const PANCAKE_TESTNET_WBNB: Address = "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd";
 export const PANCAKE_TESTNET_CAKE2: Address = "0x8d008B313C1d6C7fE2982F62d32Da7507cF43551";
@@ -71,23 +64,15 @@ export function buildPancakeApproval(token: string, router: string, amount: stri
   const rawAmount = positive(amount, "amount");
   return {
     to: tokenAddress,
-    data: encodeFunctionData({
-      abi: ERC20_ABI,
-      functionName: "approve",
-      args: [routerAddress, rawAmount],
-    }),
+    data: encodeFunctionData({ abi: ERC20_ABI, functionName: "approve", args: [routerAddress, rawAmount] }),
   };
 }
 
 export function buildPancakeExactInputSingle(params: PancakeExactInputSingleParams): GridCall {
-  if (!Number.isInteger(params.fee) || params.fee < 0 || params.fee > 1_000_000) {
-    throw new Error("PancakeSwap fee must be an integer between 0 and 1000000");
-  }
+  if (!Number.isInteger(params.fee) || params.fee < 0 || params.fee > 1_000_000) throw new Error("PancakeSwap fee must be an integer between 0 and 1000000");
   if (params.amountIn <= 0n) throw new Error("amountIn must be greater than zero");
   if (params.amountOutMinimum < 0n) throw new Error("amountOutMinimum cannot be negative");
-  if (params.sqrtPriceLimitX96 !== undefined && (params.sqrtPriceLimitX96 < 0n || params.sqrtPriceLimitX96 >= 2n ** 160n)) {
-    throw new Error("sqrtPriceLimitX96 must fit uint160");
-  }
+  if (params.sqrtPriceLimitX96 !== undefined && (params.sqrtPriceLimitX96 < 0n || params.sqrtPriceLimitX96 >= 2n ** 160n)) throw new Error("sqrtPriceLimitX96 must fit uint160");
   if (params.nativeValue !== undefined && params.nativeValue < 0n) throw new Error("nativeValue cannot be negative");
 
   const router = address(params.router, "router");
@@ -98,22 +83,10 @@ export function buildPancakeExactInputSingle(params: PancakeExactInputSinglePara
   const data = encodeFunctionData({
     abi: SMART_ROUTER_V3_ABI,
     functionName: "exactInputSingle",
-    args: [{
-      tokenIn,
-      tokenOut,
-      fee: params.fee,
-      recipient,
-      amountIn: params.amountIn,
-      amountOutMinimum: params.amountOutMinimum,
-      sqrtPriceLimitX96: params.sqrtPriceLimitX96 ?? 0n,
-    }],
+    args: [{ tokenIn, tokenOut, fee: params.fee, recipient, amountIn: params.amountIn, amountOutMinimum: params.amountOutMinimum, sqrtPriceLimitX96: params.sqrtPriceLimitX96 ?? 0n }],
   });
 
-  return {
-    to: router,
-    data,
-    ...(params.nativeValue === undefined ? {} : { value: params.nativeValue }),
-  };
+  return { to: router, data, ...(params.nativeValue === undefined ? {} : { value: params.nativeValue }) };
 }
 
 export function buildPancakeTestnetConfig(env: NodeJS.ProcessEnv = process.env) {
@@ -126,6 +99,12 @@ export function buildPancakeTestnetConfig(env: NodeJS.ProcessEnv = process.env) 
   const rawTokenOut = env.GRID_DEFAULT_TOKEN_OUT?.trim() || PANCAKE_TESTNET_WBNB;
   const tokenIn = address(rawTokenIn, "GRID_DEFAULT_TOKEN_IN");
   const tokenOut = address(rawTokenOut, "GRID_DEFAULT_TOKEN_OUT");
+  if (tokenIn.toLowerCase() !== PANCAKE_TESTNET_CAKE2.toLowerCase()) {
+    throw new Error(`Grid Testnet execution is locked to CAKE2 ${PANCAKE_TESTNET_CAKE2}; GRID_DEFAULT_TOKEN_IN points to ${tokenIn}`);
+  }
+  if (tokenOut.toLowerCase() !== PANCAKE_TESTNET_WBNB.toLowerCase()) {
+    throw new Error(`Grid Testnet execution is locked to WBNB ${PANCAKE_TESTNET_WBNB}; GRID_DEFAULT_TOKEN_OUT points to ${tokenOut}`);
+  }
 
   return {
     chainId: 97 as const,
@@ -133,9 +112,9 @@ export function buildPancakeTestnetConfig(env: NodeJS.ProcessEnv = process.env) 
     fee,
     tokenIn,
     tokenOut,
-    tokenInSymbol: env.GRID_DEFAULT_TOKEN_IN_SYMBOL?.trim() || "CAKE2",
-    tokenOutSymbol: env.GRID_DEFAULT_TOKEN_OUT_SYMBOL?.trim() || "WBNB",
-    note: "BSC Testnet only. The Grid Agent defaults to the existing PancakeSwap CAKE2/WBNB execution market; token addresses and amounts remain configurable per provider scope.",
+    tokenInSymbol: "CAKE2",
+    tokenOutSymbol: "WBNB",
+    note: "BSC Testnet only. Grid's first-party proof is locked to the canonical CAKE2/WBNB test market; execution cannot silently switch to another token address.",
   };
 }
 
