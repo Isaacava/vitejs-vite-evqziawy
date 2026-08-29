@@ -167,13 +167,16 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
     ? `/testnet/swap?token=${encodeURIComponent(capitalSymbol)}&address=${encodeURIComponent(requirement.execution_capital.token)}`
     : "/testnet/swap";
 
+  const approvalSpenders = (capability?.allowed_targets || []).filter((target) => target.toLowerCase() !== capitalToken.toLowerCase());
+  const approvalSpender = approvalSpenders.length === 1 ? approvalSpenders[0] : undefined;
+
   useEffect(() => {
     if (!request || (request.status !== "authorized" && request.status !== "active") || !request.user_execution_wallet) {
       setAssetState(null);
       return;
     }
     const token = capitalToken as Address;
-    const spender = (capability?.allowed_targets?.[0] || "") as string;
+    const spender = approvalSpender;
     if (!/^0x[a-fA-F0-9]{40}$/.test(token) || !/^0x[a-fA-F0-9]{40}$/.test(request.user_execution_wallet)) {
       setAssetState(null);
       return;
@@ -196,14 +199,20 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
     };
     void refresh();
     return () => { active = false; if (timer) window.clearTimeout(timer); };
-  }, [request?.id, request?.status, request?.user_execution_wallet, capitalToken, capability?.allowed_targets]);
+  }, [request?.id, request?.status, request?.user_execution_wallet, capitalToken, approvalSpender]);
 
-  const requiredRaw = assetState ? requestedRawAmount(request?.capital_requested || null, assetState.decimals) : null;
+  const requiredAmountDisplay = requirement?.execution_capital?.required_amount || request?.capital_requested || "";
+  const requiredRawDisplay = requirement?.execution_capital?.required_amount_raw || request?.spend_cap || "";
+  const requiredRaw = assetState
+    ? (requiredRawDisplay && /^\d+$/.test(requiredRawDisplay)
+      ? BigInt(requiredRawDisplay)
+      : requestedRawAmount(requiredAmountDisplay || null, assetState.decimals))
+    : null;
   const needsFunding = Boolean(assetState && requiredRaw !== null && assetState.balance < requiredRaw);
-  const needsAllowance = Boolean(assetState && requiredRaw !== null && capability?.allowed_targets?.[0] && assetState.allowance < requiredRaw);
+  const needsAllowance = Boolean(assetState && requiredRaw !== null && approvalSpender && assetState.allowance < requiredRaw);
 
   async function repairFunding() {
-    if (!request?.user_execution_wallet || requiredRaw === null) return;
+    if (!request?.user_execution_wallet || requiredRaw === null || !approvalSpender) return;
     setFundingBusy(true);
     setFundingError("");
     try {
@@ -211,11 +220,11 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
         request.user_execution_wallet as Address,
         capitalToken as Address,
         requiredRaw,
-        capability?.allowed_targets?.[0] as Address | undefined,
+        approvalSpender as Address,
         requiredRaw,
       );
       setFundingTx(result.transactionHash || "");
-      setAssetState((current) => current ? { ...current, balance: requiredRaw > current.balance ? requiredRaw : current.balance, allowance: capability?.allowed_targets?.[0] ? requiredRaw : current.allowance } : current);
+      setAssetState((current) => current ? { ...current, balance: requiredRaw > current.balance ? requiredRaw : current.balance, allowance: requiredRaw } : current);
     } catch (cause) {
       setFundingError(cause instanceof Error ? cause.message : "Execution-capital funding failed");
     } finally {
@@ -231,11 +240,13 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
         <section className="border border-[#cfad9f] bg-rustsoft text-rust rounded-[16px_8px_18px_9px] p-5">
           <small className="block font-mono text-[8.5px] uppercase tracking-widest mb-1.5">Execution capital readiness</small>
           <h3 className="font-display text-[17px] font-bold m-0">Authorized, but not execution-ready</h3>
-          <p className="text-[10.5px] mt-1.5 max-w-[700px]">The Altana session is authorized, but the same execution wallet does not currently hold enough of the authorized token for the agent to perform the job. AgentMarket will not substitute another wallet.</p>
-          {assetState && requiredRaw !== null && <div className="mt-3 font-mono text-[9.5px]">Balance {humanAmount(assetState.balance, assetState.decimals)} {capitalSymbol} · Required {humanAmount(requiredRaw, assetState.decimals)} {capitalSymbol}{capability?.allowed_targets?.[0] && ` · Allowance ${humanAmount(assetState.allowance, assetState.decimals)} ${capitalSymbol}`}</div>}
+          <p className="text-[10.5px] mt-1.5 max-w-[700px]">The Altana session is authorized, but the same execution wallet does not currently hold enough of the authorized token or allowance for the agent to perform the job. AgentMarket will not substitute another wallet.</p>
+          {assetState && requiredRaw !== null && <div className="mt-3 font-mono text-[9.5px]">Balance {humanAmount(assetState.balance, assetState.decimals)} {capitalSymbol} · Required {humanAmount(requiredRaw, assetState.decimals)} {capitalSymbol}{approvalSpender && ` · Allowance ${humanAmount(assetState.allowance, assetState.decimals)} ${capitalSymbol}`}</div>}
+          {approvalSpender && <div className="mt-2 text-[9.5px] break-all">Approval spender: <span className="font-mono">{approvalSpender}</span></div>}
+          {!approvalSpender && capability?.allowed_targets && capability.allowed_targets.length > 1 && <div className="mt-2 text-[9.5px]">AgentMarket could not select a unique ERC-20 approval spender from the declared execution scope, so no allowance transaction is offered.</div>}
           {fundingError && <div className="mt-3 border border-[#cfad9f] bg-paper px-3 py-2 rounded-lg text-[10.5px]">{fundingError}</div>}
-          {fundingTx && <a className="mt-3 inline-block font-mono text-[9px] text-brass break-all" href={`https://testnet.bscscan.com/tx/${fundingTx}`} target="_blank" rel="noreferrer">Funding transaction ↗</a>}
-          <button type="button" onClick={() => void repairFunding()} disabled={fundingBusy} className="mt-4 font-display font-bold text-[11px] px-4 py-2.5 bg-ink text-paperhi btn-asym">{fundingBusy ? "Funding execution wallet…" : `Fund ${capitalDisplayAmount} ${capitalSymbol} for the authorized session →`}</button>
+          {fundingTx && <a className="mt-3 inline-block font-mono text-[9px] text-brass break-all" href={`https://testnet.bscscan.com/tx/${fundingTx}`} target="_blank" rel="noreferrer">Execution readiness transaction ↗</a>}
+          <button type="button" onClick={() => void repairFunding()} disabled={fundingBusy || !approvalSpender || requiredRaw === null} className="mt-4 font-display font-bold text-[11px] px-4 py-2.5 bg-ink text-paperhi btn-asym">{fundingBusy ? "Repairing execution readiness…" : needsAllowance ? `Approve ${capitalDisplayAmount} ${capitalSymbol} for the authorized session →` : `Repair execution readiness for the authorized session →`}</button>
         </section>
       )}
 
