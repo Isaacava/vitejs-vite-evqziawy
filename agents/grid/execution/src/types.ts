@@ -14,6 +14,8 @@ export type GridSessionDescriptor = {
   allowedSelectors?: readonly string[];
   spendLimit: bigint;
   spendToken?: Address;
+  /** Native BNB gas-recovery spend permission registered with the Altana session. */
+  nativeSpendLimit: bigint;
   expiry: number;
 };
 
