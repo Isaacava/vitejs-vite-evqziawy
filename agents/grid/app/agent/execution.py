@@ -73,6 +73,10 @@ async def execute_grid_trade(job: dict[str, Any]) -> dict[str, Any]:
     recipient = _required_address("ALTANA_WALLET_ADDRESS")
     fee = int(market.get("fee") or market.get("pool_fee") or _env("PANCAKE_TESTNET_POOL_FEE", str(DEFAULT_FEE)) or DEFAULT_FEE)
 
+    canonical_cake2 = DEFAULT_TOKEN_IN.lower()
+    if token_in.lower() != canonical_cake2:
+        raise RuntimeError(f"Grid Testnet execution requires canonical CAKE2 {DEFAULT_TOKEN_IN}; requested token is {token_in}")
+
     amount = str(params.get("execution_amount_raw") or params.get("amount_in_raw") or _env("GRID_TESTNET_EXECUTION_AMOUNT_RAW", DEFAULT_AMOUNT_RAW) or DEFAULT_AMOUNT_RAW)
     amount_out_minimum = str(params.get("amount_out_minimum_raw") or _env("GRID_TESTNET_AMOUNT_OUT_MINIMUM_RAW", DEFAULT_AMOUNT_OUT_MINIMUM_RAW) or DEFAULT_AMOUNT_OUT_MINIMUM_RAW)
 
@@ -95,6 +99,12 @@ async def execute_grid_trade(job: dict[str, Any]) -> dict[str, Any]:
             raise RuntimeError(preflight_body.get("error") or "Grid execution preflight failed")
 
         result = preflight_body.get("result") or {}
+        checked_token = str(result.get("tokenIn") or result.get("token_in") or token_in)
+        if checked_token.lower() != token_in.lower():
+            raise RuntimeError(f"Grid preflight checked token {checked_token}, but the requested token is {token_in}")
+        if checked_token.lower() != canonical_cake2:
+            raise RuntimeError(f"Grid preflight did not use canonical CAKE2 {DEFAULT_TOKEN_IN}")
+
         call = result.get("call")
         if not isinstance(call, dict) or not call.get("to") or not call.get("data"):
             raise RuntimeError("Grid execution preflight did not return executable calldata")
