@@ -20,7 +20,6 @@ from bnbagent.storage import LocalStorageProvider
 
 from app.agent.main import fulfill_grid_job_with_execution
 from app.service.config import validate_runtime_config
-from app.execution.readiness import getExecutionReadiness
 
 logger = logging.getLogger("grid_agent")
 config = validate_runtime_config()
@@ -61,6 +60,31 @@ def _payment_token() -> str | None:
 _funded_first_seen: dict[int, float] = {}
 
 
+async def _read_local_execution_readiness() -> dict[str, Any]:
+    """Read the isolated Node execution service's live Altana authorization state."""
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(f"{_EXECUTION_INTERNAL_URL}/execution-readiness")
+            raw = await response.text()
+            try:
+                body = response.json()
+            except ValueError:
+                body = {}
+            if response.status_code >= 500:
+                raise RuntimeError(body.get("error") if isinstance(body, dict) and body.get("error") else f"execution readiness returned HTTP {response.status_code}")
+            if not isinstance(body, dict):
+                raise RuntimeError("execution readiness response was not an object")
+            if not response.is_success and not body.get("ready"):
+                return body
+            return body
+    except (httpx.HTTPError, RuntimeError) as exc:
+        return {
+            "ready": False,
+            "walletAddress": os.getenv("ALTANA_WALLET_ADDRESS"),
+            "reasons": [f"Grid local execution readiness unavailable: {exc}"],
+        }
+
+
 async def _wait_for_altana_authorization(job: dict[str, Any]) -> dict[str, Any]:
     """Hold a funded job until the exact configured Altana session is live on KeyStore.
 
@@ -75,8 +99,8 @@ async def _wait_for_altana_authorization(job: dict[str, Any]) -> dict[str, Any]:
         expired_at = 0
 
     while True:
-        readiness = await getExecutionReadiness()
-        if readiness["ready"]:
+        readiness = await _read_local_execution_readiness()
+        if readiness.get("ready") is True:
             logger.info(
                 "ERC8183_ALTANA_AUTHORIZED job_id=%s wallet=%s session_key=%s session_key_id=%s",
                 job.get("jobId"),
