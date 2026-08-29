@@ -33,7 +33,7 @@ const ERC20_ABI = [{
 
 export const PANCAKE_TESTNET_WBNB: Address = "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd";
 export const PANCAKE_TESTNET_CAKE2: Address = "0x8d008B313C1d6C7fE2982F62d32Da7507cF43551";
-export const PANCAKE_TESTNET_FEE = 500;
+export const PANCAKE_TESTNET_FEE = 2500;
 
 function address(value: string, field: string): Address {
   if (!/^0x[a-fA-F0-9]{40}$/.test(value)) throw new Error(`${field} must be a valid EVM address`);
