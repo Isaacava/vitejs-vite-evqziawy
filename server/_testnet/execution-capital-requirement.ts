@@ -14,7 +14,7 @@ const MAX_CAPABILITY_BYTES = 64 * 1024;
 function address(value: unknown): value is Address { return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value); }
 function hex(value: unknown): value is Hex { return typeof value === "string" && /^0x[a-fA-F0-9]*$/.test(value); }
 function selector(value: unknown): value is Hex { return typeof value === "string" && /^0x[a-fA-F0-9]{8}$/.test(value); }
-function executionObject(value: unknown) { return value && typeof value === "object" ? value as Record<string, unknown> : {}; }
+function object(value: unknown) { return value && typeof value === "object" ? value as Record<string, unknown> : {}; }
 
 export type PublicExecutionCapability = {
   network: "bsc-testnet";
@@ -40,8 +40,7 @@ export type PublicExecutionCapability = {
 };
 
 function validateCapability(body: unknown): PublicExecutionCapability {
-  if (!body || typeof body !== "object") throw new Error("Provider execution capability response is not an object");
-  const value = body as Record<string, unknown>;
+  const value = object(body);
   if (value.network !== "bsc-testnet" || Number(value.chainId) !== 97) throw new Error("Provider execution capability is not for BSC Testnet");
   if (value.execution !== "altana-scoped-session") throw new Error("Provider does not advertise Altana scoped-session execution");
   if (value.wallet_provider !== "altana" || value.authorization_model !== "scoped_session") throw new Error("Provider did not advertise the required Altana scoped-session model");
@@ -49,11 +48,10 @@ function validateCapability(body: unknown): PublicExecutionCapability {
   if (value.selectors_required !== true) throw new Error("Execution capability must require an explicit selector allowlist");
   if (!address(value.session_key_address)) throw new Error("Execution capability has an invalid session key address");
   if (!hex(value.session_key_public_key) || value.session_key_public_key.length < 100) throw new Error("Execution capability has an invalid session public key");
-  const derivedAddress = publicKeyToAddress(value.session_key_public_key);
-  if (derivedAddress.toLowerCase() !== value.session_key_address.toLowerCase()) throw new Error("Execution session address does not match its public key");
+  if (publicKeyToAddress(value.session_key_public_key).toLowerCase() !== value.session_key_address.toLowerCase()) throw new Error("Execution session address does not match its public key");
   if (!Array.isArray(value.allowed_targets) || value.allowed_targets.length === 0 || !value.allowed_targets.every(address)) throw new Error("Execution capability has no valid contract target allowlist");
   if (!Array.isArray(value.allowed_selectors) || value.allowed_selectors.length === 0 || !value.allowed_selectors.every(selector)) throw new Error("Execution capability has no valid function selector allowlist");
-  const market = executionObject(value.execution_market);
+  const market = object(value.execution_market);
   return {
     network: "bsc-testnet",
     chainId: 97,
@@ -78,64 +76,58 @@ function validateCapability(body: unknown): PublicExecutionCapability {
   };
 }
 
-async function fetchExecutionCapability(capabilityUrl: string) {
+async function fetchCapability(url: string) {
   let parsed: URL;
-  try { parsed = new URL(capabilityUrl); } catch { throw new Error("Provider capability URL is invalid"); }
+  try { parsed = new URL(url); } catch { throw new Error("Provider capability URL is invalid"); }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new Error("Provider execution endpoint must use HTTP(S)");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), CAPABILITY_TIMEOUT_MS);
   try {
-    const response = await fetch(parsed.toString(), { method: "GET", headers: { Accept: "application/json" }, signal: controller.signal });
+    const response = await fetch(parsed.toString(), { headers: { Accept: "application/json" }, signal: controller.signal });
     if (!response.ok) throw new Error(`Execution capability endpoint returned HTTP ${response.status}`);
-    const contentLength = Number(response.headers.get("content-length") || 0);
-    if (Number.isFinite(contentLength) && contentLength > MAX_CAPABILITY_BYTES) throw new Error("Execution capability response is too large");
+    const length = Number(response.headers.get("content-length") || 0);
+    if (Number.isFinite(length) && length > MAX_CAPABILITY_BYTES) throw new Error("Execution capability response is too large");
     const raw = await response.text();
     if (new TextEncoder().encode(raw).byteLength > MAX_CAPABILITY_BYTES) throw new Error("Execution capability response is too large");
     return validateCapability(raw ? JSON.parse(raw) : null);
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") throw new Error("Execution capability endpoint timed out");
     throw error instanceof Error ? error : new Error("Execution capability endpoint failed");
-  } finally {
-    clearTimeout(timeout);
-  }
+  } finally { clearTimeout(timeout); }
 }
 
 function metadataCapabilityUrls(agent: Record<string, unknown>) {
-  const metadata = executionObject(agent.metadata);
-  const execution = executionObject(metadata.execution);
+  const metadata = object(agent.metadata);
+  const execution = object(metadata.execution);
   return [metadata.execution_capabilities_url, metadata.execution_capability_url, execution.execution_capabilities_url, execution.execution_capability_url, execution.capabilities_url, execution.capability_url]
-    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-    .map((value) => value.trim());
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => value.trim());
 }
 
-async function loadExecutionCapability(supabase: ReturnType<typeof serverClient>, agent: Record<string, unknown>) {
-  const agentId = String(agent.id || "");
-  const { data: endpoints, error } = await supabase.from("agent_endpoints").select("endpoint_url,metadata").eq("agent_id", agentId).limit(20);
+async function loadCapability(supabase: ReturnType<typeof serverClient>, agent: Record<string, unknown>) {
+  const { data: endpoints, error } = await supabase.from("agent_endpoints").select("endpoint_url,metadata").eq("agent_id", String(agent.id || "")).limit(20);
   if (error) throw new Error(error.message);
   const candidates = [
     ...metadataCapabilityUrls(agent),
-    ...(endpoints ?? []).map((endpoint) => `${String(endpoint.endpoint_url).replace(/\/+$/, "")}/execution-capabilities`),
+    ...(endpoints || []).map((endpoint) => `${String(endpoint.endpoint_url).replace(/\/+$/, "")}/execution-capabilities`),
   ];
-  const uniqueCandidates = [...new Set(candidates)];
-  if (uniqueCandidates.length === 0) throw new Error("Provider has no registered or declared execution capability endpoint");
   const failures: string[] = [];
-  for (const candidate of uniqueCandidates) {
-    try { return { capability: await fetchExecutionCapability(candidate), endpointUrl: candidate }; }
+  for (const candidate of [...new Set(candidates)]) {
+    try { return { capability: await fetchCapability(candidate), endpointUrl: candidate }; }
     catch (error) { failures.push(`${candidate}: ${error instanceof Error ? error.message : "capability fetch failed"}`); }
   }
   throw new Error(`Provider execution capability could not be independently verified. ${failures.join(" | ")}`);
 }
 
-async function loadOwnedFundedJob(supabase: ReturnType<typeof serverClient>, jobId: string, userId: string, userWallet: string | null) {
+async function loadOwnedFundedJob(supabase: ReturnType<typeof serverClient>, jobId: string, userId: string, wallet: string | null) {
   const { data: job, error: jobError } = await supabase.from("jobs").select("id,mission_task_id,client_wallet,chain_job_id,budget").eq("id", jobId).maybeSingle();
   if (jobError) throw new Error(jobError.message);
   if (!job) throw new Error("Job not found");
   if (!job.mission_task_id) throw new Error("Job is not attached to a mission task");
-  if (!userWallet || String(job.client_wallet || "").toLowerCase() !== userWallet.toLowerCase()) throw new Error("The authenticated wallet does not own this job");
+  if (!wallet || String(job.client_wallet || "").toLowerCase() !== wallet.toLowerCase()) throw new Error("The authenticated wallet does not own this job");
   const { data: task, error: taskError } = await supabase.from("mission_tasks").select("id,mission_id,agent_id").eq("id", job.mission_task_id).maybeSingle();
   if (taskError) throw new Error(taskError.message);
   if (!task?.mission_id || !task.agent_id) throw new Error("Job does not identify a provider agent");
-  const { data: mission, error: missionError } = await supabase.from("missions").select("id,user_id,client_wallet").eq("id", task.mission_id).maybeSingle();
+  const { data: mission, error: missionError } = await supabase.from("missions").select("id,user_id").eq("id", task.mission_id).maybeSingle();
   if (missionError) throw new Error(missionError.message);
   if (!mission || mission.user_id !== userId) throw new Error("You do not own this mission");
   const { data: agent, error: agentError } = await supabase.from("agents").select("id,agent_id,owner,metadata").eq("id", task.agent_id).maybeSingle();
@@ -144,8 +136,21 @@ async function loadOwnedFundedJob(supabase: ReturnType<typeof serverClient>, job
   if (!job.chain_job_id) throw new Error("The ERC-8183 chain job has not been created yet");
   const chainJob = await publicClient.readContract({ address: COMMERCE, abi: COMMERCE_ABI, functionName: "getJob", args: [BigInt(job.chain_job_id)] });
   if (Number(chainJob.status) !== 1) throw new Error(`Execution authorization requires a funded job; live status is ${Number(chainJob.status)}`);
-  if (String(chainJob.client).toLowerCase() !== userWallet.toLowerCase()) throw new Error("The live ERC-8183 client is not the authenticated wallet");
+  if (String(chainJob.client).toLowerCase() !== wallet.toLowerCase()) throw new Error("The live ERC-8183 client is not the authenticated wallet");
   return { job, task, mission, agent, chainJob };
+}
+
+async function loadAuthorizationRecord(supabase: ReturnType<typeof serverClient>, jobId: string) {
+  const { data, error } = await supabase.from("execution_capital_requests").select("*").eq("job_id", jobId).order("created_at", { ascending: false }).limit(1);
+  if (error) {
+    return { request: null, warning: "No AgentMarket execution-capital authorization record could be loaded." };
+  }
+  return { request: data?.[0] || null, warning: null };
+}
+
+function getString(record: Record<string, unknown>, ...keys: string[]) {
+  for (const key of keys) if (typeof record[key] === "string" && String(record[key]).trim()) return String(record[key]).trim();
+  return null;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -157,35 +162,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!jobId) return res.status(400).json({ error: "job is required" });
 
     const supabase = serverClient();
-    const { job, task, agent, chainJob } = await loadOwnedFundedJob(supabase, jobId, auth.user.id, auth.user.wallet_address);
-    const { capability, endpointUrl } = await loadExecutionCapability(supabase, agent as Record<string, unknown>);
-    const keyStoreAddress = process.env.ALTANA_KEYSTORE_ADDRESS;
-    if (!address(keyStoreAddress)) throw new Error("ALTANA_KEYSTORE_ADDRESS is not configured; on-chain session verification is unavailable");
+    const { job, agent, chainJob } = await loadOwnedFundedJob(supabase, jobId, auth.user.id, auth.user.wallet_address);
+    const { capability, endpointUrl } = await loadCapability(supabase, agent as Record<string, unknown>);
+    const { request, warning } = await loadAuthorizationRecord(supabase, jobId);
 
-    const sessionKey = capability.session_key_address;
-    const sessionPublicKeyAddress = publicKeyToAddress(capability.session_key_public_key);
-    if (sessionPublicKeyAddress.toLowerCase() !== sessionKey.toLowerCase()) throw new Error("Provider session public key does not match its session key address");
-
-    const sessionValid = await publicClient.readContract({
-      address: keyStoreAddress,
-      abi: KEYSTORE_ABI,
-      functionName: "isValidKey",
-      args: [sessionKey, `0x${sessionKey.slice(2).padStart(64, "0")}` as Hex],
-    }).catch(() => false);
+    let sessionVerified = false;
+    let sessionKeyId: Hex | null = null;
+    let sessionExpiry: number | null = null;
+    let executionWallet: Address | null = null;
+    if (request) {
+      const requestRecord = request as Record<string, unknown>;
+      const key = getString(requestRecord, "session_key_id", "sessionKeyId");
+      executionWallet = address(requestRecord.user_execution_wallet) ? requestRecord.user_execution_wallet as Address : null;
+      sessionExpiry = Number(requestRecord.session_expiry || requestRecord.sessionExpiry);
+      if (key && /^0x[a-fA-F0-9]{64}$/.test(key) && executionWallet) {
+        sessionKeyId = key as Hex;
+        const now = Math.floor(Date.now() / 1000);
+        sessionVerified = Boolean(sessionExpiry && sessionExpiry > now) && await publicClient.readContract({ address: process.env.ALTANA_KEYSTORE_ADDRESS as Address, abi: KEYSTORE_ABI, functionName: "isValidKey", args: [executionWallet, sessionKeyId] }).catch(() => false);
+      }
+    }
 
     const market = capability.execution_market || {};
-    const capabilityAuthorization = {
-      source: "altana_keystore",
-      verified: Boolean(sessionValid),
-      session_key_address: sessionKey,
-      session_key_public_key: capability.session_key_public_key,
-      allowed_targets: capability.allowed_targets,
-      allowed_selectors: capability.allowed_selectors,
-      selectors_required: capability.selectors_required,
-      expiry: "not exposed by current provider capability",
-      spend_limits: "not exposed by current provider capability",
-      note: "Altana authorization defines what the session may spend/call. An exact per-trade capital amount is not invented here; it must come from an execution intent/call or observed on-chain transaction data.",
-    };
+    const storedAmount = request ? getString(request as Record<string, unknown>, "requested_amount", "required_amount", "amount") : null;
+    const storedAmountRaw = request ? getString(request as Record<string, unknown>, "requested_amount_raw", "required_amount_raw", "amount_raw") : null;
+    const storedToken = request && address((request as Record<string, unknown>).capital_token) ? (request as Record<string, unknown>).capital_token as Address : address(market.token_in) ? market.token_in : null;
 
     return res.status(200).json({
       ok: true,
@@ -193,16 +193,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       chain_id: 97,
       provider_agent_id: agent.agent_id,
       capability_source_url: endpointUrl,
-      erc8183: {
-        job_id: job.chain_job_id,
-        status: Number(chainJob.status),
-        client: chainJob.client,
-        provider: chainJob.provider,
-      },
+      erc8183: { job_id: job.chain_job_id, status: Number(chainJob.status), client: chainJob.client, provider: chainJob.provider },
       execution: capability.execution,
       wallet_provider: capability.wallet_provider,
       authorization_model: capability.authorization_model,
-      authorization: capabilityAuthorization,
+      authorization: {
+        source: "altana_keystore_session",
+        verified: sessionVerified,
+        session_key_id: sessionKeyId,
+        session_key_address: capability.session_key_address,
+        session_key_public_key: capability.session_key_public_key,
+        execution_wallet: executionWallet,
+        expiry: sessionExpiry,
+        allowed_targets: capability.allowed_targets,
+        allowed_selectors: capability.allowed_selectors,
+        selectors_required: capability.selectors_required,
+        spend_limit: request ? (request as Record<string, unknown>).spend_limit ?? (request as Record<string, unknown>).capital_limit ?? null : null,
+        note: "AgentMarket verifies Altana session authorization independently. ERC-8183 is the job/commerce layer. No Grid-specific capital-request format is required.",
+      },
       execution_market: {
         token_in: address(market.token_in) ? market.token_in : null,
         token_out: address(market.token_out) ? market.token_out : null,
@@ -212,14 +220,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         protocol: capability.protocol || null,
       },
       execution_capital: {
-        status: sessionValid ? "authorization_verified" : "authorization_unverified",
-        requested_amount: null,
-        requested_amount_raw: null,
-        token: address(market.token_in) ? market.token_in : null,
+        status: sessionVerified ? "authorization_verified" : request ? "authorization_record_present" : "authorization_not_observed",
+        requested_amount: storedAmount,
+        requested_amount_raw: storedAmountRaw,
+        token: storedToken,
         symbol: market.token_in_symbol || null,
-        decimals: null,
         detection_source: "altana_session_authorization",
-        note: "No per-trade capital amount is reported until an execution intent/call or on-chain transaction evidence supplies the exact amount.",
+        exact_trade_amount: storedAmount ? "marketplace_recorded" : "not_observed",
+        warning,
+        note: "Altana authorizes permitted spend/calls. A per-trade amount is reported only when present in an AgentMarket authorization record or later execution evidence; it is never inferred from Grid source code.",
       },
     });
   } catch (error) {
