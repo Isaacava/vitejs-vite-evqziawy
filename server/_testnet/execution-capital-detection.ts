@@ -1,4 +1,4 @@
-import { parseUnits, type Address } from "viem";
+import { formatUnits, parseUnits, type Address } from "viem";
 
 export type DetectedCapitalRequest = {
   source: "stored_request" | "agent_request_endpoint" | "agent_capability";
@@ -73,23 +73,6 @@ function candidateRequestObjects(document: unknown): Record<string, unknown>[] {
     .map((value) => object(value));
 }
 
-function findRequest(document: unknown, inheritedParent?: Record<string, unknown>) {
-  const root = object(document);
-  for (const request of candidateRequestObjects(root)) {
-    const token = requestedToken(request, root);
-    const amount = requestedAmount(request, root);
-    if (token && amount) return { request, parent: root };
-  }
-  if (inheritedParent) {
-    for (const request of candidateRequestObjects(inheritedParent)) {
-      const token = requestedToken(request, inheritedParent);
-      const amount = requestedAmount(request, inheritedParent);
-      if (token && amount) return { request, parent: inheritedParent };
-    }
-  }
-  return null;
-}
-
 function requestedToken(request: Record<string, unknown>, parent: Record<string, unknown>) {
   const value = firstValue(
     request.token,
@@ -128,6 +111,16 @@ function requestedAmount(request: Record<string, unknown>, parent: Record<string
     parent.quantity,
   ));
   return decimal ? { amount: decimal, amount_raw: null } : null;
+}
+
+function findRequest(document: unknown) {
+  const root = object(document);
+  for (const request of candidateRequestObjects(root)) {
+    const token = requestedToken(request, root);
+    const amount = requestedAmount(request, root);
+    if (token && amount) return { request, parent: root };
+  }
+  return null;
 }
 
 function urlsFromAgent(agent: Record<string, unknown>, endpoints: Array<Record<string, unknown>>) {
@@ -262,37 +255,28 @@ export async function detectAgentCapitalRequest(options: {
 
   const metadata = object(agent.metadata);
   const tokenMeta = await readToken(token);
-  const decimalAmount = amountInfo.amount ?? undefined;
+  const decimalAmount = amountInfo.amount ?? null;
   const rawAmount = amountInfo.amount_raw ?? (decimalAmount ? parseUnits(decimalAmount, tokenMeta.decimals).toString() : null);
   if (!rawAmount || BigInt(rawAmount) <= 0n) throw new Error("Agent capital request amount is invalid");
-
-  const request = selected.request;
-  const tokenOut = firstValue(request.token_out, selected.parent.token_out);
-  const target = firstValue(request.target, request.router, request.to, selected.parent.target, selected.parent.router, selected.parent.to);
-  const selector = firstValue(request.selector, request.function_selector, selected.parent.selector, selected.parent.function_selector);
-  const recipient = firstValue(request.recipient, request.execution_wallet, selected.parent.recipient, selected.parent.execution_wallet);
-  const feeValue = firstValue(request.fee, request.pool_fee, selected.parent.fee, selected.parent.pool_fee);
-  const protocolValue = firstValue(request.protocol, selected.parent.protocol, capability.protocol, object(metadata.execution).protocol);
-  const preflightValue = firstValue(request.preflight_path, selected.parent.preflight_path, capability.preflight_path);
 
   return {
     source: selected.source,
     request_url: selected.requestUrl,
-    network: typeof firstValue(request.network, selected.parent.network, capability.network) === "string" ? String(firstValue(request.network, selected.parent.network, capability.network)) : null,
-    chain_id: Number(firstValue(request.chain_id, request.chainId, selected.parent.chain_id, selected.parent.chainId, capability.chainId)) || null,
+    network: typeof firstValue(selected.request.network, selected.parent.network, capability.network) === "string" ? String(firstValue(selected.request.network, selected.parent.network, capability.network)) : null,
+    chain_id: Number(firstValue(selected.request.chain_id, selected.request.chainId, selected.parent.chain_id, selected.parent.chainId, capability.chainId)) || null,
     token,
-    amount: decimalAmount ?? "0",
+    amount: decimalAmount ?? formatUnits(BigInt(rawAmount), tokenMeta.decimals),
     amount_raw: rawAmount,
     symbol: tokenMeta.symbol,
     decimals: tokenMeta.decimals,
-    token_out: address(tokenOut) ? tokenOut : null,
-    token_out_symbol: typeof firstValue(request.token_out_symbol, selected.parent.token_out_symbol) === "string" ? String(firstValue(request.token_out_symbol, selected.parent.token_out_symbol)) : null,
-    fee: Number.isInteger(Number(feeValue)) ? Number(feeValue) : null,
-    target: address(target) ? target : null,
-    selector: typeof selector === "string" && /^0x[a-fA-F0-9]{8}$/.test(selector) ? selector : null,
-    recipient: address(recipient) ? recipient : null,
-    protocol: typeof protocolValue === "string" && protocolValue.trim() ? protocolValue.trim().toLowerCase() : null,
-    preflight_path: typeof preflightValue === "string" && preflightValue.trim().startsWith("/") ? preflightValue.trim() : null,
+    token_out: address(firstValue(selected.request.token_out, selected.parent.token_out)) ? firstValue(selected.request.token_out, selected.parent.token_out) as Address : null,
+    token_out_symbol: typeof firstValue(selected.request.token_out_symbol, selected.parent.token_out_symbol) === "string" ? String(firstValue(selected.request.token_out_symbol, selected.parent.token_out_symbol)) : null,
+    fee: Number.isInteger(Number(firstValue(selected.request.fee, selected.request.pool_fee, selected.parent.fee, selected.parent.pool_fee))) ? Number(firstValue(selected.request.fee, selected.request.pool_fee, selected.parent.fee, selected.parent.pool_fee)) : null,
+    target: address(firstValue(selected.request.target, selected.request.router, selected.request.to, selected.parent.target, selected.parent.router, selected.parent.to)) ? firstValue(selected.request.target, selected.request.router, selected.request.to, selected.parent.target, selected.parent.router, selected.parent.to) as Address : null,
+    selector: typeof firstValue(selected.request.selector, selected.request.function_selector, selected.parent.selector, selected.parent.function_selector) === "string" && /^0x[a-fA-F0-9]{8}$/.test(String(firstValue(selected.request.selector, selected.request.function_selector, selected.parent.selector, selected.parent.function_selector))) ? String(firstValue(selected.request.selector, selected.request.function_selector, selected.parent.selector, selected.parent.function_selector)) : null,
+    recipient: address(firstValue(selected.request.recipient, selected.request.execution_wallet, selected.parent.recipient, selected.parent.execution_wallet)) ? firstValue(selected.request.recipient, selected.request.execution_wallet, selected.parent.recipient, selected.parent.execution_wallet) as Address : null,
+    protocol: typeof firstValue(selected.request.protocol, selected.parent.protocol, capability.protocol, object(metadata.execution).protocol) === "string" && String(firstValue(selected.request.protocol, selected.parent.protocol, capability.protocol, object(metadata.execution).protocol)).trim() ? String(firstValue(selected.request.protocol, selected.parent.protocol, capability.protocol, object(metadata.execution).protocol)).trim().toLowerCase() : null,
+    preflight_path: typeof firstValue(selected.request.preflight_path, selected.parent.preflight_path, capability.preflight_path) === "string" && String(firstValue(selected.request.preflight_path, selected.parent.preflight_path, capability.preflight_path)).trim().startsWith("/") ? String(firstValue(selected.request.preflight_path, selected.parent.preflight_path, capability.preflight_path)).trim() : null,
     raw: selected.request,
   };
 }
