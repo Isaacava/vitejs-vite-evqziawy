@@ -39,6 +39,7 @@ export function reconstructSession(
   if (descriptor.agentSessionPublicKey.length < 100) throw new Error("Agent session public key is too short");
   if (!Number.isInteger(descriptor.expiry) || descriptor.expiry <= Math.floor(Date.now() / 1000)) throw new Error("Altana session is expired");
   if (descriptor.spendLimit <= 0n) throw new Error("Altana session spend cap must be positive");
+  if (descriptor.nativeSpendLimit <= 0n) throw new Error("Altana session descriptor has no native BNB gas-recovery spend permission");
 
   const privateKey = normalizePrivateKey(sessionPrivateKey);
   const account = privateKeyToAccount(privateKey);
@@ -52,15 +53,20 @@ export function reconstructSession(
   if (descriptor.allowedCalls.length === 0) throw new Error("Altana session descriptor has no call allowlist");
   if (descriptor.allowedCalls.some((target) => !isAddress(target))) throw new Error("Altana session contains an invalid call target");
 
+  const spendPermissions = descriptor.spendToken
+    ? [
+        { limit: descriptor.spendLimit, period: "day" as const, token: descriptor.spendToken },
+        { limit: descriptor.nativeSpendLimit, period: "day" as const },
+      ]
+    : [{ limit: descriptor.spendLimit, period: "day" as const }];
+
   return {
     walletAddress: descriptor.walletAddress,
     signer: signerFromPrivateKey(privateKey),
     publicKey: descriptor.agentSessionPublicKey,
     permissions: {
       calls: descriptor.allowedCalls.map((to) => ({ to })),
-      spend: descriptor.spendToken
-        ? [{ limit: descriptor.spendLimit, period: "day" as const, token: descriptor.spendToken }]
-        : [{ limit: descriptor.spendLimit, period: "day" as const }],
+      spend: spendPermissions,
     },
     expiry: descriptor.expiry,
   };
@@ -82,6 +88,9 @@ export function configuredSessionDescriptor(env: NodeJS.ProcessEnv = process.env
   const spendLimitRaw = (env.ALTANA_SESSION_SPEND_LIMIT || "1000000000000000000").trim();
   if (!/^\d+$/.test(spendLimitRaw) || BigInt(spendLimitRaw) <= 0n) throw new Error("ALTANA_SESSION_SPEND_LIMIT must be a positive raw token amount");
 
+  const nativeSpendLimitRaw = (env.ALTANA_SESSION_NATIVE_SPEND_LIMIT || "20000000000000000").trim();
+  if (!/^\d+$/.test(nativeSpendLimitRaw) || BigInt(nativeSpendLimitRaw) <= 0n) throw new Error("ALTANA_SESSION_NATIVE_SPEND_LIMIT must be a positive raw wei amount");
+
   const expiryRaw = (env.ALTANA_SESSION_EXPIRY || "").trim();
   if (!/^\d+$/.test(expiryRaw)) throw new Error("ALTANA_SESSION_EXPIRY must match the expiry of the already-granted Altana session");
 
@@ -93,6 +102,7 @@ export function configuredSessionDescriptor(env: NodeJS.ProcessEnv = process.env
     allowedSelectors: configuredList("GRID_ALLOWED_SELECTORS").map(String),
     spendLimit: BigInt(spendLimitRaw),
     spendToken: spendTokenRaw as Address,
+    nativeSpendLimit: BigInt(nativeSpendLimitRaw),
     expiry: Number(expiryRaw),
   };
 }
