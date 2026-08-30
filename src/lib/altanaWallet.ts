@@ -108,7 +108,19 @@ export async function getPersistentAltanaWallet(): Promise<PersistentAltanaWalle
   return body?.wallet || null;
 }
 
-export async function persistAltanaWalletResolution(resolution: AltanaWalletResolution): Promise<PersistentAltanaWalletRecord> {
+async function markPersistentWalletRecoveryRequired() {
+  const response = await fetch("/api/testnet?route=execution-wallet", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ operation: "mark-recovery-required" }),
+  });
+  const body = await response.json().catch(() => null) as { wallet?: PersistentAltanaWalletRecord; error?: string } | null;
+  if (!response.ok || !body?.wallet) throw new Error(body?.error || "Unable to mark the existing Altana wallet as recovery-required");
+  return body.wallet;
+}
+
+export async function persistAltanaWalletResolution(resolution: AltanaWalletResolution, options: { replaceExisting?: boolean } = {}): Promise<PersistentAltanaWalletRecord> {
   const response = await fetch("/api/testnet?route=execution-wallet", {
     method: "POST",
     credentials: "include",
@@ -117,6 +129,7 @@ export async function persistAltanaWalletResolution(resolution: AltanaWalletReso
       wallet_address: resolution.walletAddress,
       signer_address: resolution.signerAddress,
       rp_id: rpId(),
+      replace_existing: options.replaceExisting === true,
     }),
   });
   const body = await response.json().catch(() => null) as { wallet?: PersistentAltanaWalletRecord; error?: string } | null;
@@ -173,7 +186,6 @@ export async function fundAltanaWalletFromAgentMarketWallet(walletAddress: Addre
   return { walletAddress, senderAddress, fundingAmount, fundingAmountFormatted: formatEther(fundingAmount), registrationFee, registrationFeeFormatted: formatEther(registrationFee), transactionHash: hash };
 }
 
-/** Transfer only the missing amount of an arbitrary ERC-20 token into the user's own Altana wallet. */
 export async function fundAltanaTradingCapital(walletAddress: Address, tokenAddress: Address, rawAmount: bigint): Promise<AltanaTradingCapitalResult> {
   if (!/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) throw new Error("Altana execution wallet address is invalid.");
   if (!/^0x[a-fA-F0-9]{40}$/.test(tokenAddress)) throw new Error("Trading-capital token address is invalid.");
@@ -216,10 +228,13 @@ function formatTokenAmount(value: bigint, decimals: number) {
   return fraction ? `${whole}.${fraction}` : whole.toString();
 }
 
-export async function createAltanaWallet(): Promise<AltanaWalletResolution & { funding: AltanaFundingResult }> {
+export async function createAltanaWallet(options: { replaceAfterRecoveryFailure?: boolean } = {}): Promise<AltanaWalletResolution & { funding: AltanaFundingResult }> {
   const existing = await getPersistentAltanaWallet();
-  if (existing) {
-    throw new Error(`A persistent Altana execution wallet already exists for this account at ${existing.wallet_address}. Use Recover existing Altana wallet instead of creating another wallet.`);
+  if (existing && !options.replaceAfterRecoveryFailure) {
+    throw new Error(`A persistent Altana execution wallet already exists for this account at ${existing.wallet_address}. Recover that wallet first.`);
+  }
+  if (existing && options.replaceAfterRecoveryFailure && existing.status !== "recovery_required") {
+    throw new Error("A new Altana wallet can only replace an existing wallet after that wallet has been explicitly marked recovery-required.");
   }
 
   const readiness = await getAltanaPasskeyReadiness();
@@ -228,7 +243,7 @@ export async function createAltanaWallet(): Promise<AltanaWalletResolution & { f
   const result = await client.createPasskeyWallet({ name: RP_NAME, rpId: readiness.rpId });
   const resolved = normalizeResolution({ address: result.address, signer: result.signer });
   const funding = await fundAltanaWalletFromAgentMarketWallet(resolved.walletAddress);
-  await persistAltanaWalletResolution(resolved);
+  await persistAltanaWalletResolution(resolved, { replaceExisting: Boolean(existing) });
   cachedResolution = resolved;
   return { ...resolved, funding };
 }
@@ -246,6 +261,10 @@ export async function recoverAltanaWallet(): Promise<AltanaWalletResolution> {
   await persistAltanaWalletResolution(resolved);
   cachedResolution = resolved;
   return resolved;
+}
+
+export async function markAltanaRecoveryFailed() {
+  await markPersistentWalletRecoveryRequired();
 }
 
 export function ensureAltanaWallet(): AltanaWalletResolution {
