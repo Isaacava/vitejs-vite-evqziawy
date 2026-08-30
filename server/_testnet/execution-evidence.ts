@@ -251,16 +251,17 @@ async function verifyOnchain(txHash: Hex, executionWallet: Address | null, sessi
 async function persistCandidatePointer(
   supabase: ReturnType<typeof serverClient>,
   requestId: string | null,
-  jobId: number,
+  internalJobId: string,
+  chainJobId: number,
   transactionHash: Hex,
   source: string,
 ) {
   if (!requestId) return;
   const { error } = await supabase.from("execution_capital_execution_evidence").upsert({
     execution_capital_request_id: requestId,
-    job_id: jobId,
+    job_id: internalJobId,
     chain_id: 97,
-    execution_id: `deliverable-pointer-${jobId}`,
+    execution_id: `deliverable-pointer-${chainJobId}`,
     calls_id: null,
     executor_status: "candidate_from_verified_deliverable",
     transaction_hash: transactionHash,
@@ -313,7 +314,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    await persistCandidatePointer(supabase, request?.id ?? null, Number(job.id), txHash, candidateSource || "execution_evidence_locator");
+    await persistCandidatePointer(supabase, request?.id ?? null, String(job.id), Number(job.chain_job_id), txHash, candidateSource || "execution_evidence_locator");
 
     const executionWallet = isAddress(request?.user_execution_wallet) ? request.user_execution_wallet as Address : null;
     const sessionKey = isAddress(request?.agent_session_key) ? request.agent_session_key as Address : null;
