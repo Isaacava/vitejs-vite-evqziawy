@@ -60,8 +60,13 @@ function pnlLabel(value?: string | null, token = "CAKE2") {
 }
 
 export default function ExecutionCapitalCard({ request, onchainExecution }: ExecutionCapitalCardProps) {
-  const verified = request ? isVerifiedAuthorization(request) : false;
-  const status = request?.status ? request.status.toUpperCase() : "NOT REQUESTED";
+  const authorizationVerified = request ? isVerifiedAuthorization(request) : false;
+  const rawStatus = request?.status || "not_requested";
+  const status = request
+    ? rawStatus === "authorized" && !authorizationVerified
+      ? "PENDING VERIFICATION"
+      : rawStatus.toUpperCase()
+    : "NOT REQUESTED";
   const executionObserved = Boolean(onchainExecution?.observed && onchainExecution.market?.verified_onchain);
   const deployed = executionObserved
     ? `${onchainExecution?.accounting?.capital_deployed || onchainExecution?.market?.token_in_amount || "—"} ${onchainExecution?.accounting?.capital_deployed_token || onchainExecution?.market?.token_in_symbol || ""}`.trim()
@@ -91,7 +96,7 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
           <strong className="font-display text-[17px] font-bold">{request?.purpose || "Agent execution"}</strong>
           <span className="mt-0.5 block text-[11px] text-inksoft">This capital is separate from the ERC-8183 job payment.</span>
         </div>
-        <span className={`rounded-lg px-2.5 py-1 font-mono text-[9.5px] ${verified || status === "ACTIVE" || status === "AUTHORIZED" ? "status-green" : "status-brass"}`}>{status.toLowerCase()}</span>
+        <span className={`rounded-lg px-2.5 py-1 font-mono text-[9.5px] ${authorizationVerified || status === "ACTIVE" ? "status-green" : "status-brass"}`}>{status.toLowerCase()}</span>
       </div>
 
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
