@@ -1,5 +1,5 @@
 create table if not exists public.altana_execution_wallets (
-  user_id uuid primary key references auth.users(id) on delete cascade,
+  user_id uuid primary key references public.users(id) on delete cascade,
   wallet_address text not null,
   signer_address text,
   chain_id integer not null default 97 check (chain_id = 97),
