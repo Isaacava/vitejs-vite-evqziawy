@@ -12,7 +12,7 @@ const CAPABILITY_TIMEOUT_MS = 8_000;
 const MAX_CAPABILITY_BYTES = 64 * 1024;
 
 function address(value: unknown): value is Address { return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value); }
-function hex(value: unknown): value is Hex { return typeof value === "string" && /^0x[a-fA-F0-9]*$/.test(value); }
+function hex(value: unknown): value is Hex { return typeof value === "string" && /^0x[a-f-F0-9]*$/.test(value); }
 function selector(value: unknown): value is Hex { return typeof value === "string" && /^0x[a-fA-F0-9]{8}$/.test(value); }
 function object(value: unknown) { return value && typeof value === "object" ? value as Record<string, unknown> : {}; }
 
@@ -103,15 +103,20 @@ function metadataCapabilityUrls(agent: Record<string, unknown>) {
     .filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => value.trim());
 }
 
-async function loadCapability(supabase: ReturnType<typeof serverClient>, agent: Record<string, unknown>) {
+async function loadCapability(supabase: ReturnType<typeof serverClient>, agent: Record<string, unknown>, chainJobId: string) {
   const { data: endpoints, error } = await supabase.from("agent_endpoints").select("endpoint_url,metadata").eq("agent_id", String(agent.id || "")).limit(20);
   if (error) throw new Error(error.message);
-  const candidates = [
+  const bases = [
     ...metadataCapabilityUrls(agent),
     ...(endpoints || []).map((endpoint) => `${String(endpoint.endpoint_url).replace(/\/+$/, "")}/execution-capabilities`),
   ];
+  const candidates = [...new Set(bases)].map((base) => {
+    const url = new URL(base);
+    url.searchParams.set("job_id", chainJobId);
+    return url.toString();
+  });
   const failures: string[] = [];
-  for (const candidate of [...new Set(candidates)]) {
+  for (const candidate of candidates) {
     try { return { capability: await fetchCapability(candidate), endpointUrl: candidate }; }
     catch (error) { failures.push(`${candidate}: ${error instanceof Error ? error.message : "capability fetch failed"}`); }
   }
@@ -163,7 +168,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const supabase = serverClient();
     const { job, agent, chainJob } = await loadOwnedFundedJob(supabase, jobId, auth.user.id, auth.user.wallet_address);
-    const { capability, endpointUrl } = await loadCapability(supabase, agent as Record<string, unknown>);
+    const { capability, endpointUrl } = await loadCapability(supabase, agent as Record<string, unknown>, String(job.chain_job_id));
     const { request, warning } = await loadAuthorizationRecord(supabase, jobId);
 
     let sessionVerified = false;
