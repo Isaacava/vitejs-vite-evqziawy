@@ -26,19 +26,26 @@ jobs:
           s = p.read_text()
           old = '''async function persistCandidatePointer(\n  supabase: ReturnType<typeof serverClient>,\n  requestId: string | null,\n  jobId: number,\n  transactionHash: Hex,\n  source: string,\n) {\n  if (!requestId) return;\n  const { error } = await supabase.from("execution_capital_execution_evidence").upsert({\n    execution_capital_request_id: requestId,\n    job_id: jobId,\n    chain_id: 97,\n    execution_id: `deliverable-pointer-${jobId}`,\n'''
           new = '''async function persistCandidatePointer(\n  supabase: ReturnType<typeof serverClient>,\n  requestId: string | null,\n  internalJobId: string,\n  chainJobId: number,\n  transactionHash: Hex,\n  source: string,\n) {\n  if (!requestId) return;\n  const { error } = await supabase.from("execution_capital_execution_evidence").upsert({\n    execution_capital_request_id: requestId,\n    job_id: internalJobId,\n    chain_id: 97,\n    execution_id: `deliverable-pointer-${chainJobId}`,\n'''
-          if old not in s:
+          if old in s:
+            s = s.replace(old, new, 1)
+            old_call = 'await persistCandidatePointer(supabase, request?.id ?? null, Number(job.id), txHash, candidateSource || "execution_evidence_locator");'
+            new_call = 'await persistCandidatePointer(supabase, request?.id ?? null, String(job.id), Number(job.chain_job_id), txHash, candidateSource || "execution_evidence_locator");'
+            if old_call in s:
+              s = s.replace(old_call, new_call, 1)
+            else:
+              raise SystemExit('persistCandidatePointer call not found')
+            p.write_text(s)
+          elif 'internalJobId: string' in s and 'job_id: internalJobId' in s:
+            print('fix already applied')
+          else:
             raise SystemExit('persistCandidatePointer signature block not found')
-          s = s.replace(old, new, 1)
 
-          old = 'await persistCandidatePointer(supabase, request?.id ?? null, Number(job.id), txHash, candidateSource || "execution_evidence_locator");'
-          new = 'await persistCandidatePointer(supabase, request?.id ?? null, String(job.id), Number(job.chain_job_id), txHash, candidateSource || "execution_evidence_locator");'
-          if old not in s:
-            raise SystemExit('persistCandidatePointer call not found')
-          s = s.replace(old, new, 1)
-          p.write_text(s)
-
-          marker = Path('.github/workflows/fix-evidence-job-id.yml')
-          workflow = marker.read_text()
-          if 'git add server/_testnet/execution-evidence.ts .github/workflows/fix-evidence-job-id.yml' not in workflow:
-            workflow += '''\n      - name: Commit correction\n        shell: bash\n        run: |\n          git config user.name "github-actions[bot]"\n          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"\n          git add server/_testnet/execution-evidence.ts .github/workflows/fix-evidence-job-id.yml\n          git diff --cached --quiet && exit 0\n          git commit -m "fix(testnet): map execution evidence to internal job UUID"\n          git push origin marketplace-testnet\n'''
-            marker.write_text(workflow)
+      - name: Commit correction
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server/_testnet/execution-evidence.ts
+          git diff --cached --quiet && exit 0
+          git commit -m "fix(testnet): map execution evidence to internal job UUID"
+          git push origin marketplace-testnet
