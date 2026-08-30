@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import type { ExecutionCapitalRequest } from "./lib/executionCapital";
 import { displayObservedNumber, isVerifiedAuthorization } from "./lib/executionCapital";
 
@@ -28,46 +27,17 @@ export type OnchainExecutionSummary = {
     capital_deployed_token?: string | null;
     realized_pnl?: string | null;
     realized_pnl_token?: string | null;
-    realized_pnl_status?: string | null;
-    realized_pnl_basis?: string | null;
+    unrealized_pnl?: string | null;
+    unrealized_pnl_token?: string | null;
+    total_pnl?: string | null;
+    total_pnl_token?: string | null;
+    pnl_percentage?: string | null;
+    pnl_status?: string | null;
+    pnl_basis?: string | null;
   };
 };
 
-type ExecutionPnl = {
-  observed?: boolean;
-  mode?: "pending" | "unpriced" | "unrealized" | "realized";
-  error?: string;
-  pool?: string | null;
-  pool_fee?: number | null;
-  block_number?: string | null;
-  quote?: {
-    wbnb_per_cake2?: string | null;
-    cake2_per_wbnb?: string | null;
-  };
-  position?: {
-    remaining_wbnb?: string | null;
-    remaining_cost_basis_cake2?: string | null;
-    marked_value_cake2?: string | null;
-  };
-  realized?: {
-    pnl_cake2?: string | null;
-    available?: boolean;
-  };
-  unrealized?: {
-    pnl_cake2?: string | null;
-    percent?: string | null;
-  };
-  total?: {
-    pnl_cake2?: string | null;
-  };
-  gas?: {
-    execution_transaction_count?: number;
-    excluded_from_pnl?: boolean;
-    basis?: string;
-  };
-};
-
-export type ExecutionCapitalCardProps = {
+type ExecutionCapitalCardProps = {
   request: ExecutionCapitalRequest | null;
   jobBudget: string | number | null;
   jobCurrency?: string | null;
@@ -97,62 +67,21 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
     ? `${onchainExecution?.accounting?.capital_deployed || onchainExecution?.market?.token_in_amount || "—"} ${onchainExecution?.accounting?.capital_deployed_token || onchainExecution?.market?.token_in_symbol || ""}`.trim()
     : observed(request?.capital_deployed);
 
-  const [pnl, setPnl] = useState<ExecutionPnl | null>(null);
-  const [pnlLoading, setPnlLoading] = useState(false);
-  const [pnlError, setPnlError] = useState("");
-
-  useEffect(() => {
-    let active = true;
-    if (!request?.job_id) {
-      setPnl(null);
-      setPnlError("");
-      return undefined;
-    }
-
-    const refresh = async () => {
-      setPnlLoading(true);
-      try {
-        const response = await fetch(`/api/execution-pnl?job=${encodeURIComponent(request.job_id)}`, {
-          credentials: "include",
-          cache: "no-store",
-        });
-        const body = await response.json().catch(() => null) as ExecutionPnl | null;
-        if (!active) return;
-        if (!response.ok) throw new Error(body?.error || "Unable to calculate independent execution P&L");
-        setPnl(body);
-        setPnlError("");
-      } catch (cause) {
-        if (active) setPnlError(cause instanceof Error ? cause.message : "Unable to calculate independent execution P&L");
-      } finally {
-        if (active) setPnlLoading(false);
-      }
-    };
-
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 10_000);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [request?.job_id]);
-
-  const pnlToken = "CAKE2";
-  const pnlMode = pnl?.mode;
-  const pnlDisplay = pnlMode === "unrealized"
-    ? pnlLabel(pnl?.unrealized?.pnl_cake2, pnlToken)
-    : pnlMode === "realized"
-      ? pnlLabel(pnl?.realized?.pnl_cake2, pnlToken)
-      : "Calculating…";
+  const accounting = onchainExecution?.accounting;
+  const pnlStatus = accounting?.pnl_status || "";
+  const pnlMode = pnlStatus === "realized_from_verified_round_trip"
+    ? "realized"
+    : pnlStatus === "live_mark_to_market"
+      ? "unrealized"
+      : "pending";
+  const pnlToken = accounting?.unrealized_pnl_token || accounting?.realized_pnl_token || "CAKE2";
+  const pnlValue = pnlMode === "realized" ? accounting?.realized_pnl : accounting?.unrealized_pnl;
   const pnlTitle = pnlMode === "realized" ? "Realized P&L" : pnlMode === "unrealized" ? "Unrealized P&L" : "P&L";
-  const pnlBasis = pnlMode === "unrealized"
-    ? "Live PancakeSwap V3 mark-to-market"
-    : pnlMode === "realized"
-      ? "Verified onchain round-trip accounting"
-      : pnl?.mode === "unpriced"
-        ? "Awaiting an independently identifiable price pool"
-        : pnlError
-          ? "Independent onchain calculation unavailable"
-          : "Awaiting verified execution";
+  const pnlDisplay = executionObserved && pnlValue
+    ? pnlLabel(pnlValue, pnlToken)
+    : executionObserved && pnlStatus === "unpriced"
+      ? "Awaiting live mark"
+      : "Calculating…";
 
   return (
     <section className="mb-6 rounded-[18px_9px_20px_10px] border border-brass/40 bg-brasssoft/30 p-5">
@@ -172,7 +101,9 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
         <div>
           <small className="mb-1 block font-mono text-[8px] uppercase text-[#8a8477]">{pnlTitle}</small>
           <strong className="font-mono text-[13px]">{pnlDisplay}</strong>
-          <span className="mt-0.5 block text-[8px] text-inksoft">{pnl?.unrealized?.percent ? `${pnl.unrealized.percent}%` : pnlLoading ? "syncing" : pnlBasis}</span>
+          <span className="mt-0.5 block text-[8px] text-inksoft">
+            {accounting?.pnl_percentage ? `${accounting.pnl_percentage}%` : pnlMode === "unrealized" ? "live mark" : pnlMode === "realized" ? "verified round trip" : "syncing"}
+          </span>
         </div>
       </div>
 
@@ -189,26 +120,13 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
         </div>
       )}
 
-      {pnl?.observed && pnlMode === "unrealized" && (
+      {executionObserved && accounting && (
         <div className="mb-4 rounded-[12px_7px_13px_8px] border border-line bg-paperhi p-4">
           <small className="mb-2 block font-mono text-[8px] uppercase tracking-widest text-brass">P&amp;L basis</small>
           <div className="grid gap-2 text-[10px] sm:grid-cols-2">
-            <div><strong>Position:</strong> {pnl.position?.remaining_wbnb || "0"} WBNB</div>
-            <div><strong>Cost basis:</strong> {pnl.position?.remaining_cost_basis_cake2 || "0"} CAKE2</div>
-            <div><strong>Marked value:</strong> {pnl.position?.marked_value_cake2 || "0"} CAKE2</div>
-            <div><strong>Spot:</strong> {pnl.quote?.cake2_per_wbnb || "—"} CAKE2 / WBNB</div>
-            <div className="sm:col-span-2"><strong>Source:</strong> {pnlBasis} · block {pnl.block_number || "—"}</div>
-          </div>
-        </div>
-      )}
-
-      {pnl?.observed && pnlMode === "realized" && (
-        <div className="mb-4 rounded-[12px_7px_13px_8px] border border-line bg-paperhi p-4">
-          <small className="mb-2 block font-mono text-[8px] uppercase tracking-widest text-brass">P&amp;L basis</small>
-          <div className="grid gap-2 text-[10px] sm:grid-cols-2">
-            <div><strong>Realized P&amp;L:</strong> {pnlLabel(pnl.realized?.pnl_cake2, pnlToken)}</div>
-            <div><strong>Verified transactions:</strong> {pnl.gas?.execution_transaction_count ?? "—"}</div>
-            <div className="sm:col-span-2"><strong>Source:</strong> {pnlBasis}</div>
+            <div><strong>Mode:</strong> {pnlMode === "realized" ? "Realized" : pnlMode === "unrealized" ? "Unrealized mark-to-market" : "Pending"}</div>
+            <div><strong>Total P&amp;L:</strong> {accounting.total_pnl ? pnlLabel(accounting.total_pnl, accounting.total_pnl_token || "CAKE2") : "—"}</div>
+            <div className="sm:col-span-2"><strong>Basis:</strong> {accounting.pnl_basis || "Independent onchain accounting"}</div>
           </div>
         </div>
       )}
@@ -223,7 +141,6 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
       {request?.session_grant_tx_hash && <p className="mb-0 border-t border-dashed border-line pt-3 text-[10px] text-inksoft">Session grant tx: <span className="font-mono text-brass">{compact(request.session_grant_tx_hash)}</span> · user-owned authorization, independently verified where observable.</p>}
       {!request && <p className="mb-0 text-[10px] text-inksoft">No execution capital request has been observed yet. ERC-8183 job budget remains separate.</p>}
       {request && <p className="mb-0 mt-3 text-[10px] text-inksoft">P&amp;L is calculated from independently observed onchain execution evidence. Open positions use a live PancakeSwap V3 mark; realized P&amp;L requires a verified closing execution.</p>}
-      {pnlError && <p className="mb-0 mt-2 text-[10px] text-rust">P&amp;L refresh: {pnlError}</p>}
     </section>
   );
 }
