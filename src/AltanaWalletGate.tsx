@@ -4,6 +4,7 @@ import {
   getAltanaPasskeyReadiness,
   getAltanaWalletResolution,
   getPersistentAltanaWallet,
+  markAltanaRecoveryFailed,
   recoverAltanaWallet,
   type AltanaPasskeyReadiness,
   type AltanaWalletResolution,
@@ -33,6 +34,7 @@ export default function AltanaWalletGate({
   const [funding, setFunding] = useState<AltanaFundingResult | null>(null);
   const [readiness, setReadiness] = useState<AltanaPasskeyReadiness | null>(null);
   const [error, setError] = useState("");
+  const [recoveryFailed, setRecoveryFailed] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -64,7 +66,7 @@ export default function AltanaWalletGate({
       setReadiness(currentReadiness);
 
       if (mode === "create") {
-        const result = await createAltanaWallet();
+        const result = await createAltanaWallet({ replaceAfterRecoveryFailure: recoveryFailed });
         setWallet(result);
         setFunding(result.funding);
         setState("ready");
@@ -76,19 +78,28 @@ export default function AltanaWalletGate({
       const result = await recoverAltanaWallet();
       setWallet(result);
       setState("ready");
+      setRecoveryFailed(false);
       setStoredWallet(await getPersistentAltanaWallet());
       onResolved?.(result);
     } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Unable to resolve the Altana execution wallet";
+      setError(message);
+      if (mode === "recover") {
+        try {
+          await markAltanaRecoveryFailed();
+          setStoredWallet(await getPersistentAltanaWallet());
+        } catch {}
+        setRecoveryFailed(true);
+      }
       setState("error");
-      setError(cause instanceof Error ? cause.message : "Unable to resolve the Altana execution wallet");
     }
   }
 
   const persistentAddress = existingWalletAddress || storedWallet?.wallet_address || null;
   const hasPersistentWallet = Boolean(persistentAddress);
   const createLabel = state === "creating"
-    ? "Creating and funding Altana wallet…"
-    : "Create & fund Altana Passkey wallet →";
+    ? "Creating and funding new Altana wallet…"
+    : "Create a new Altana Passkey wallet →";
 
   return (
     <section className="border border-line rounded-[16px_8px_18px_9px] bg-paper p-5">
@@ -122,8 +133,22 @@ export default function AltanaWalletGate({
 
       {!wallet && (
         <div className="mt-5 flex gap-3 flex-wrap">
-          {!hasPersistentWallet && <button type="button" onClick={() => void resolveWith("create")} disabled={state === "creating" || state === "recovering"} className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">{createLabel}</button>}
-          <button type="button" onClick={() => void resolveWith("recover")} disabled={state === "creating" || state === "recovering"} className="font-display font-bold text-[12px] px-5 py-3 border border-line bg-paperhi text-ink btn-asym">{state === "recovering" ? "Recovering…" : hasPersistentWallet ? "Unlock existing Altana wallet →" : "Recover existing Altana wallet →"}</button>
+          {!hasPersistentWallet && (
+            <button type="button" onClick={() => void resolveWith("create")} disabled={state === "creating" || state === "recovering"} className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">{createLabel}</button>
+          )}
+          {hasPersistentWallet && !recoveryFailed && (
+            <button type="button" onClick={() => void resolveWith("recover")} disabled={state === "creating" || state === "recovering"} className="font-display font-bold text-[12px] px-5 py-3 border border-line bg-paperhi text-ink btn-asym">{state === "recovering" ? "Recovering…" : "Unlock existing Altana wallet →"}</button>
+          )}
+          {recoveryFailed && (
+            <>
+              <div className="w-full border border-[#cfad9f] bg-rustsoft rounded-[12px_7px_13px_8px] px-4 py-3 text-[10px] text-rust">Recovery could not unlock the registered wallet. Creating a new wallet will replace the recovery-required wallet record. Any funds still held by the old wallet remain at its old address until recovered separately.</div>
+              <button type="button" onClick={() => void resolveWith("create")} disabled={state === "creating" || state === "recovering"} className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">{createLabel}</button>
+              <button type="button" onClick={() => { setRecoveryFailed(false); setError(""); }} disabled={state === "creating" || state === "recovering"} className="font-display font-bold text-[12px] px-5 py-3 border border-line bg-paperhi text-ink btn-asym">Try recovery again →</button>
+            </>
+          )}
+          {!hasPersistentWallet && !recoveryFailed && (
+            <span className="self-center text-[10px] text-inksoft">No persistent Altana wallet is registered for this account yet.</span>
+          )}
         </div>
       )}
 
