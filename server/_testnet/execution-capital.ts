@@ -43,9 +43,11 @@ export type PublicExecutionCapability = {
   private_key_exposed: false;
   protocol?: string;
   preflight_path?: string;
+  session_scope?: string;
+  job_id?: number | null;
 };
 
-function validateCapability(body: unknown): PublicExecutionCapability {
+function validateCapability(body: unknown, expectedJobId?: number): PublicExecutionCapability {
   if (!body || typeof body !== "object") throw new Error("Grid execution capability response is not an object");
   const value = body as Record<string, unknown>;
   if (value.network !== "bsc-testnet" || Number(value.chainId) !== 97) throw new Error("Grid execution capability is not for BSC Testnet");
@@ -59,6 +61,15 @@ function validateCapability(body: unknown): PublicExecutionCapability {
   if (derivedAddress.toLowerCase() !== value.session_key_address.toLowerCase()) throw new Error("Grid execution session address does not match its public key");
   if (!Array.isArray(value.allowed_targets) || value.allowed_targets.length === 0 || !value.allowed_targets.every(address)) throw new Error("Grid execution capability has no valid contract target allowlist");
   if (!Array.isArray(value.allowed_selectors) || value.allowed_selectors.length === 0 || !value.allowed_selectors.every(selector)) throw new Error("Grid execution capability has no valid function selector allowlist");
+
+  if (expectedJobId !== undefined) {
+    if (value.session_scope !== "request-scoped") throw new Error(`Grid execution capability for job ${expectedJobId} is not request-scoped`);
+    const returnedJobId = Number(value.job_id);
+    if (!Number.isSafeInteger(returnedJobId) || returnedJobId !== expectedJobId) {
+      throw new Error(`Grid execution capability returned job_id ${value.job_id ?? "null"}, expected ${expectedJobId}`);
+    }
+  }
+
   return {
     network: "bsc-testnet",
     chainId: 97,
@@ -73,12 +84,15 @@ function validateCapability(body: unknown): PublicExecutionCapability {
     private_key_exposed: false,
     ...(typeof value.protocol === "string" && value.protocol.trim() ? { protocol: value.protocol.trim().toLowerCase() } : {}),
     ...(typeof value.preflight_path === "string" && value.preflight_path.trim().startsWith("/") ? { preflight_path: value.preflight_path.trim() } : {}),
+    ...(typeof value.session_scope === "string" && value.session_scope.trim() ? { session_scope: value.session_scope.trim() } : {}),
+    ...(value.job_id === null ? { job_id: null } : Number.isSafeInteger(Number(value.job_id)) ? { job_id: Number(value.job_id) } : {}),
   };
 }
 
-async function fetchExecutionCapability(capabilityUrl: string) {
+async function fetchExecutionCapability(capabilityUrl: string, expectedJobId?: number) {
   let parsed: URL;
   try { parsed = new URL(capabilityUrl); } catch { throw new Error("Provider capability URL is invalid"); }
+  if (expectedJobId !== undefined) parsed.searchParams.set("job_id", String(expectedJobId));
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new Error("Provider execution endpoint must use HTTP(S)");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), CAPABILITY_TIMEOUT_MS);
@@ -90,7 +104,7 @@ async function fetchExecutionCapability(capabilityUrl: string) {
     const raw = await response.text();
     if (new TextEncoder().encode(raw).byteLength > MAX_CAPABILITY_BYTES) throw new Error("Execution capability response is too large");
     const parsedBody = raw ? JSON.parse(raw) : null;
-    const capability = validateCapability(parsedBody);
+    const capability = validateCapability(parsedBody, expectedJobId);
     const market = executionObject(executionObject(parsedBody).execution_market);
     if (!address(market.token_in)) throw new Error("Provider execution capability did not declare a valid execution token");
     return {
@@ -124,7 +138,7 @@ function metadataCapabilityUrls(agent: Record<string, unknown>) {
   ].filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => value.trim());
 }
 
-async function loadExecutionCapability(supabase: ReturnType<typeof serverClient>, agent: Record<string, unknown>) {
+async function loadExecutionCapability(supabase: ReturnType<typeof serverClient>, agent: Record<string, unknown>, chainJobId: number) {
   const agentId = String(agent.id || "");
   const { data: endpoints, error } = await supabase
     .from("agent_endpoints")
@@ -143,7 +157,7 @@ async function loadExecutionCapability(supabase: ReturnType<typeof serverClient>
   const failures: string[] = [];
   for (const candidate of uniqueCandidates) {
     try {
-      const capability = await fetchExecutionCapability(candidate);
+      const capability = await fetchExecutionCapability(candidate, chainJobId);
       const endpoint = (endpoints ?? []).find((row) => candidate.startsWith(`${String(row.endpoint_url).replace(/\/+$/, "")}/`));
       return {
         capability,
@@ -254,7 +268,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!integerBetween(duration, 300, 7 * 24 * 60 * 60)) return res.status(400).json({ error: "requested duration must be an integer between 300 and 604800 seconds" });
     if (walletProvider !== "altana" || authorizationModel !== "scoped_session") return res.status(400).json({ error: "Execution capital is currently available only through Altana scoped sessions" });
     const owned = await loadOwnedFundedJob(supabase, jobId, auth.user.id, auth.user.wallet_address);
-    const capability = await loadExecutionCapability(supabase, owned.agent as Record<string, unknown>);
+    const capability = await loadExecutionCapability(supabase, owned.agent as Record<string, unknown>, Number(owned.job.chain_job_id));
     if (!address(capability.capability.execution_market.token_in)) return res.status(409).json({ error: "Provider execution capability did not declare a valid execution-capital token" });
     const { data: existing, error: existingError } = await supabase.from("execution_capital_requests").select("*").eq("job_id", jobId).maybeSingle();
     if (existingError) return res.status(500).json({ error: existingError.message });
