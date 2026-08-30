@@ -30,14 +30,6 @@ export type AltanaSessionGrantGateProps = {
 function compact(address: string) { return `${address.slice(0, 6)}…${address.slice(-4)}`; }
 function compactHex(value: string) { return value.length > 14 ? `${value.slice(0, 10)}…${value.slice(-4)}` : value; }
 
-function isAddress(value: unknown): value is Address {
-  return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value);
-}
-
-function isHex(value: unknown): value is Hex {
-  return typeof value === "string" && /^0x[a-fA-F0-9]*$/.test(value);
-}
-
 export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProps) {
   const [reviewed, setReviewed] = useState(false);
   const [status, setStatus] = useState<"idle" | "checking" | "funding_capital" | "approving_allowance" | "signing" | "verifying" | "authorized" | "error">("idle");
@@ -47,22 +39,6 @@ export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProp
   const [capitalTxHash, setCapitalTxHash] = useState("");
   const [allowanceTxHash, setAllowanceTxHash] = useState("");
   const [feeReadiness, setFeeReadiness] = useState<Awaited<ReturnType<typeof getAltanaGrantFeeReadiness>> | null>(null);
-  const [resolvedSessionAddress, setResolvedSessionAddress] = useState<Address>(props.agentSessionAddress);
-  const [resolvedSessionPublicKey, setResolvedSessionPublicKey] = useState<Hex>(props.agentSessionPublicKey);
-
-  async function resolveRequestScopedCapability(): Promise<{ address: Address; publicKey: Hex }> {
-    if (!props.capabilitySource) return { address: props.agentSessionAddress, publicKey: props.agentSessionPublicKey };
-    const response = await fetch(props.capabilitySource, {
-      method: "GET",
-      cache: "no-store",
-      headers: { Accept: "application/json" },
-    });
-    const body = await response.json().catch(() => null) as Record<string, unknown> | null;
-    if (!response.ok) throw new Error(typeof body?.error === "string" ? body.error : "Unable to resolve the request-scoped Grid session key");
-    if (!isAddress(body?.session_key_address) || !isHex(body?.session_key_public_key)) throw new Error("Grid did not return a valid request-scoped session key");
-    if (String(body.session_scope || "") !== "request-scoped") throw new Error("Grid did not return a request-scoped execution capability");
-    return { address: body.session_key_address, publicKey: body.session_key_public_key };
-  }
 
   async function grant() {
     setStatus("checking");
@@ -70,6 +46,13 @@ export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProp
     setCapitalTxHash("");
     setAllowanceTxHash("");
     try {
+      /*
+       * The server creates and validates the capability for the selected ERC-8183
+       * chain job before it reaches this component. Do not re-fetch the public
+       * endpoint here: doing so loses the job_id query parameter and can resolve
+       * the provider's default/unscoped capability instead of the capability
+       * already verified and stored for this request.
+       */
       const executionWallet = ensureAltanaWallet();
       if (!/^0x[a-fA-F0-9]{40}$/.test(props.capitalToken)) throw new Error("The agent did not provide a valid execution-capital token address. Authorization cannot continue.");
       const decimals = props.capitalDecimals ?? 18;
@@ -79,10 +62,6 @@ export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProp
       const symbol = props.capitalSymbol || "execution token";
       const approvalSpender = props.approvalSpender || (props.allowedCalls.length === 1 ? props.allowedCalls[0] : null);
       if (!approvalSpender) throw new Error("A single execution spender must be identified before requesting an ERC-20 allowance.");
-
-      const scopedCapability = await resolveRequestScopedCapability();
-      setResolvedSessionAddress(scopedCapability.address);
-      setResolvedSessionPublicKey(scopedCapability.publicKey);
 
       const readiness = await getAltanaGrantFeeReadiness();
       setFeeReadiness(readiness);
@@ -101,8 +80,8 @@ export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProp
       setStatus("signing");
       const expiry = Math.floor(Date.now() / 1000) + props.durationSeconds;
       const granted = await grantAltanaExecutionSession({
-        agentSessionAddress: scopedCapability.address,
-        agentSessionPublicKey: scopedCapability.publicKey,
+        agentSessionAddress: props.agentSessionAddress,
+        agentSessionPublicKey: props.agentSessionPublicKey,
         allowedCalls: props.allowedCalls,
         capitalToken: props.capitalToken,
         capitalAmount: props.capitalAmount,
@@ -154,7 +133,7 @@ export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProp
         <div className="border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-3.5"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Execution capital required</small><strong className="font-mono text-[11px]">{props.capitalAmount.toString()} {symbol}</strong></div>
         <div className="border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-3.5"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Exact token</small><strong className="font-mono text-[10px] break-all">{props.capitalToken}</strong></div>
         <div className="border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-3.5"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Duration</small><strong className="font-mono text-[11px]">{Math.round(props.durationSeconds / 3600)}h</strong></div>
-        <div className="border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-3.5"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Session key</small><strong className="font-mono text-[11px]">{compact(resolvedSessionAddress)}</strong></div>
+        <div className="border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-3.5"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Session key</small><strong className="font-mono text-[11px]">{compact(props.agentSessionAddress)}</strong></div>
       </div>
       {feeReadiness && <div className={`mt-4 border rounded-[12px_7px_13px_8px] px-4 py-3 text-[10.5px] ${feeReadiness.sufficientForRegistration ? "border-green/30 bg-green/5" : "border-[#cfad9f] bg-rustsoft text-rust"}`}><strong className="block mb-1">Testnet registration fee check</strong><div>Altana wallet: <span className="font-mono">{compact(feeReadiness.walletAddress)}</span></div><div>Native tBNB balance: <span className="font-mono">{feeReadiness.nativeBalanceFormatted}</span></div><div>KeyStore fee per registration: <span className="font-mono">{feeReadiness.registrationFeeFormatted} tBNB</span></div><div>Minimum for first admin + session registration: <span className="font-mono">{feeReadiness.minimumRegistrationValueFormatted} tBNB</span></div></div>}
       <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-4"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-2">Execution funding</small><div className="text-[10.5px] text-inksoft leading-5">Only the exact token address shown above is funded. The user's connected wallet signs the ERC-20 transfer to the user's own Altana execution wallet. No alternate settlement token is substituted.</div>{capitalTxHash && <a className="inline-block mt-2 text-[9px] font-mono text-brass break-all" href={`https://testnet.bscscan.com/tx/${capitalTxHash}`} target="_blank" rel="noreferrer">Execution-capital transfer ↗</a>}</div>
