@@ -56,6 +56,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const walletAddress = req.body?.wallet_address;
     const signerAddress = optionalAddress(req.body?.signer_address);
     const rpId = optionalString(req.body?.rp_id, 255);
+    const replaceExisting = req.body?.replace_existing === true;
 
     if (!address(walletAddress)) {
       return res.status(400).json({ error: "wallet_address must be a valid EVM address" });
@@ -69,10 +70,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (existingError) return res.status(500).json({ error: existingError.message });
 
     if (existing && String(existing.wallet_address).toLowerCase() !== walletAddress.toLowerCase()) {
-      return res.status(409).json({
-        error: "This AgentMarket user already has a different persistent Altana execution wallet. Recover that wallet instead of creating another one.",
-        wallet: existing,
-      });
+      if (!replaceExisting || existing.status !== "recovery_required") {
+        return res.status(409).json({
+          error: "This AgentMarket user already has a different persistent Altana execution wallet. Recover that wallet first. A new wallet can only replace a wallet explicitly marked recovery-required after a failed recovery attempt.",
+          wallet: existing,
+        });
+      }
     }
 
     const payload = {
