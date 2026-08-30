@@ -40,6 +40,8 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
 
+  const authorizationVerified = isVerifiedAuthorization(request);
+
   useEffect(() => {
     let active = true;
 
@@ -84,9 +86,7 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
         setPending(Boolean(body?.observed === false && txHash));
         setError("");
       } catch (cause) {
-        if (active) {
-          setError(cause instanceof Error ? cause.message : "Unable to verify execution directly from BSC Testnet");
-        }
+        if (active) setError(cause instanceof Error ? cause.message : "Unable to verify execution directly from BSC Testnet");
       }
     };
 
@@ -101,7 +101,6 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
   const market = execution?.market;
   const wallet = execution?.execution?.execution_wallet || request.user_execution_wallet || null;
   const verifiedExecution = Boolean(execution?.observed && market?.verified_onchain);
-  const authorizationVerified = isVerifiedAuthorization(request);
   const amountIn = market?.token_in_amount || "Not yet observed";
   const amountOut = market?.token_out_amount || "Not yet observed";
   const tokenInSymbol = market?.token_in_symbol || "CAKE2";
@@ -109,6 +108,7 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
 
   const capability = object(request.evidence?.execution_capability);
   const capabilityMarket = object(capability.execution_market);
+  const capabilitySourceUrl = typeof capability.source_url === "string" ? capability.source_url.trim() : "";
   const sessionAddress = typeof capability.session_key_address === "string" ? capability.session_key_address : request.agent_session_key;
   const sessionPublicKey = typeof capability.session_key_public_key === "string" ? capability.session_key_public_key : null;
   const allowedCalls = Array.isArray(capability.allowed_targets)
@@ -127,9 +127,12 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
     }
   })();
   const approvalSpenders = allowedCalls.filter((value) => value.toLowerCase() !== capitalToken.toLowerCase());
-  const approvalSpender = approvalSpenders.length === 1 ? approvalSpenders[0] : undefined;
-  const needsAuthorization = !authorizationVerified || request.status === "requested";
-  const canRenderAuthorization = Boolean(sessionAddress && sessionPublicKey && allowedCalls.length > 0 && allowedSelectors.length > 0);
+  const approvalSpender = approvalSpenders.length === 1 ? approvalSpender : undefined;
+  const needsAuthorization = !authorizationVerified;
+  const canRenderAuthorization = Boolean(capabilitySourceUrl && sessionAddress && sessionPublicKey && allowedCalls.length > 0 && allowedSelectors.length > 0);
+  const jobScopedCapabilityUrl = capabilitySourceUrl
+    ? `${capabilitySourceUrl}${capabilitySourceUrl.includes("?") ? "&" : "?"}job_id=${encodeURIComponent(request.job_id)}`
+    : "";
 
   return (
     <section className="border border-line rounded-[16px_8px_18px_9px] bg-paper p-5">
@@ -158,32 +161,12 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
           <div><strong>Block:</strong> {execution?.execution?.block_number || "Not yet observed"}</div>
           <div><strong>Gas used:</strong> {execution?.execution?.gas_used || "Not yet observed"}</div>
         </div>
-        {execution?.transaction_hash && (
-          <div className="mt-3 text-[10px]">
-            <strong>Transaction:</strong>{" "}
-            <a className="font-mono text-brass underline break-all" href={`https://testnet.bscscan.com/tx/${execution.transaction_hash}`} target="_blank" rel="noreferrer">
-              {compact(execution.transaction_hash)} ↗
-            </a>
-          </div>
-        )}
+        {execution?.transaction_hash && <div className="mt-3 text-[10px]"><strong>Transaction:</strong>{" "}<a className="font-mono text-brass underline break-all" href={`https://testnet.bscscan.com/tx/${execution.transaction_hash}`} target="_blank" rel="noreferrer">{compact(execution.transaction_hash)} ↗</a></div>}
       </div>
 
-      <div className="mt-4 grid sm:grid-cols-2 gap-3">
-        <div className="border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-3.5">
-          <small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Verification source</small>
-          <strong className="font-mono text-[10.5px]">AgentMarket · BSC RPC</strong>
-          <p className="text-[10px] text-inksoft mt-1">Receipt and transfer logs are read and checked independently by AgentMarket.</p>
-        </div>
-        <div className="border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-3.5">
-          <small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Accounting</small>
-          <strong className="font-mono text-[10.5px]">{execution?.accounting?.pnl_basis === "single_swap" ? "P&L basis not established" : "Onchain accounting"}</strong>
-          <p className="text-[10px] text-inksoft mt-1">A single swap gives actual asset deltas, but not a defensible realized P&amp;L figure without a closing/valuation basis.</p>
-        </div>
-      </div>
-
-      {pending && <div className="mt-3 text-[10px] text-brass">A transaction hash exists, but its BSC Testnet receipt is not independently observable yet. AgentMarket will keep checking automatically.</div>}
       {error && <div className="mt-3 text-[10px] text-rust">Unable to refresh independent execution evidence: {error}</div>}
       {!pending && !verifiedExecution && !error && <div className="mt-3 text-[10px] text-inksoft">No independently observed execution transaction is recorded yet. The hired provider operates independently of AgentMarket.</div>}
+      {pending && <div className="mt-3 text-[10px] text-brass">A transaction hash exists, but its BSC Testnet receipt is not independently observable yet. AgentMarket will keep checking automatically.</div>}
 
       {needsAuthorization && canRenderAuthorization && (
         <div className="mt-5">
@@ -200,6 +183,7 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
             approvalSpender={approvalSpender}
             purpose={request.purpose}
             durationSeconds={request.requested_duration_seconds || request.duration_seconds || 86400}
+            capabilitySource={jobScopedCapabilityUrl}
             onAuthorized={() => window.location.reload()}
           />
         </div>
