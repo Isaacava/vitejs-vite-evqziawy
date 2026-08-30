@@ -12,7 +12,7 @@ const CAPABILITY_TIMEOUT_MS = 8_000;
 const MAX_CAPABILITY_BYTES = 64 * 1024;
 
 function address(value: unknown): value is Address { return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value); }
-function hex(value: unknown): value is Hex { return typeof value === "string" && /^0x[a-f-F0-9]*$/.test(value); }
+function hex(value: unknown): value is Hex { return typeof value === "string" && /^0x[a-fA-F0-9]*$/.test(value); }
 function selector(value: unknown): value is Hex { return typeof value === "string" && /^0x[a-fA-F0-9]{8}$/.test(value); }
 function object(value: unknown) { return value && typeof value === "object" ? value as Record<string, unknown> : {}; }
 
