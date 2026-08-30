@@ -1,8 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 
-type WorkspacePage = "Overview" | "Discover" | "Missions" | "Activity" | "Payments" | "Create mission" | "Testnet" | "Register agent" | "Permissions";
+type WorkspacePage = "Overview" | "Discover" | "Missions" | "Activity" | "Payments" | "Create mission" | "Execution Wallet" | "Testnet" | "Register agent" | "Permissions";
 
-const primaryLinks: Array<{ label: Exclude<WorkspacePage, "Create mission" | "Testnet" | "Register agent" | "Permissions">; href: string }> = [
+const primaryLinks: Array<{ label: Exclude<WorkspacePage, "Create mission" | "Execution Wallet" | "Testnet" | "Register agent" | "Permissions">; href: string }> = [
   { label: "Overview", href: "/dashboard" },
   { label: "Discover", href: "/discover" },
   { label: "Missions", href: "/missions" },
@@ -11,6 +11,7 @@ const primaryLinks: Array<{ label: Exclude<WorkspacePage, "Create mission" | "Te
 ];
 
 const manageLinks: Array<{ label: Exclude<WorkspacePage, "Overview" | "Discover" | "Missions" | "Activity" | "Payments" | "Create mission">; href: string; detail: string; icon: string }> = [
+  { label: "Execution Wallet", href: "/execution-wallet", detail: "Persistent Altana wallet & agent access", icon: "◉" },
   { label: "Testnet", href: "/testnet", detail: "BSC Testnet · Chain 97 sandbox", icon: "◎" },
   { label: "Register agent", href: "/agents/register", detail: "List a new provider", icon: "+" },
   { label: "Permissions", href: "/permissions", detail: "Session scopes & allowances", icon: "◈" },
@@ -25,6 +26,7 @@ function currentPage(): WorkspacePage {
   if (path === "/missions" || path === "/mission") return "Missions";
   if (path === "/activity") return "Activity";
   if (path === "/payments") return "Payments";
+  if (path === "/execution-wallet") return "Execution Wallet";
   if (path === "/agents/register") return "Register agent";
   if (path === "/permissions") return "Permissions";
   if (path.startsWith("/testnet")) return "Testnet";
@@ -72,20 +74,15 @@ export default function WorkspaceShell({ children }: { children: ReactNode }) {
       <header className={`sticky top-0 z-50 border-b border-line bg-paper/90 backdrop-blur transition-shadow duration-200 ${scrolled ? "shadow-[0_8px_24px_rgba(23,23,20,.06)]" : ""}`}>
         <div className="mx-auto flex h-[72px] max-w-[1240px] items-center justify-between gap-6 px-6 md:px-8">
           <a href="/dashboard" className="flex shrink-0 items-center gap-2.5 no-underline">
-            <span className="h-7 w-7 text-brass">
-              <svg viewBox="0 0 28 28" fill="none" aria-hidden="true"><rect x="1.5" y="1.5" width="25" height="25" rx="7" stroke="currentColor" strokeWidth="1.5"/><path d="M7 18L11.4 10.2L15.2 15L20.8 7.7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
-            </span>
+            <span className="h-7 w-7 text-brass"><svg viewBox="0 0 28 28" fill="none" aria-hidden="true"><rect x="1.5" y="1.5" width="25" height="25" rx="7" stroke="currentColor" strokeWidth="1.5"/><path d="M7 18L11.4 10.2L15.2 15L20.8 7.7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg></span>
             <span className="font-display text-[16px] font-bold tracking-tight">AgentMarket</span>
           </a>
 
           <nav className="hidden items-center gap-7 font-mono text-[11px] font-medium uppercase tracking-wide text-inksoft lg:flex">
             {primaryLinks.map((link) => <button key={link.label} type="button" onClick={() => navigate(link.href, link.label)} className={`nav-link relative pb-1 transition-colors ${page === link.label ? "text-ink current" : "hover:text-ink"}`}>{link.label}</button>)}
             <div className="relative">
-              <button type="button" onClick={(event) => { event.stopPropagation(); setManageOpen((value) => !value); }} className={`nav-link relative flex items-center gap-1.5 pb-1 transition-colors ${manageOpen ? "text-ink current" : "hover:text-ink"}`} aria-expanded={manageOpen}>
-                Manage
-                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-              </button>
-              <div className={`absolute left-0 top-[calc(100%+14px)] w-64 card-asym border border-line bg-paperhi p-2 shadow-[0_20px_50px_-24px_rgba(23,23,20,.35)] transition-all ${manageOpen ? "pointer-events-auto translate-y-0 scale-100 opacity-100" : "pointer-events-none -translate-y-1.5 scale-[.98] opacity-0"}`}>
+              <button type="button" onClick={(event) => { event.stopPropagation(); setManageOpen((value) => !value); }} className={`nav-link relative flex items-center gap-1.5 pb-1 transition-colors ${manageOpen ? "text-ink current" : "hover:text-ink"}`} aria-expanded={manageOpen}>Manage <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+              <div className={`absolute left-0 top-[calc(100%+14px)] w-72 card-asym border border-line bg-paperhi p-2 shadow-[0_20px_50px_-24px_rgba(23,23,20,.35)] transition-all ${manageOpen ? "pointer-events-auto translate-y-0 scale-100 opacity-100" : "pointer-events-none -translate-y-1.5 scale-[.98] opacity-0"}`}>
                 {manageLinks.map((link) => <button key={link.label} type="button" onClick={() => navigate(link.href, link.label)} className="flex w-full items-start gap-3 rounded-lg p-3 text-left hover:bg-paper"><span className="mt-0.5 text-brass">{link.icon}</span><span><span className="block text-[13px] font-semibold normal-case text-ink">{link.label}</span><span className="block text-[11px] text-inksoft normal-case">{link.detail}</span></span></button>)}
               </div>
             </div>
@@ -94,6 +91,7 @@ export default function WorkspaceShell({ children }: { children: ReactNode }) {
           <div className="hidden shrink-0 items-center gap-3 md:flex">
             <span className="flex items-center gap-2 rounded-lg border border-line bg-paperhi px-3 py-2 font-mono text-[9.5px] text-inksoft"><span className="h-1.5 w-1.5 rounded-full bg-green"/> CHAIN 97</span>
             <span className="btn-asym bg-ink px-3 py-2 font-mono text-[11.5px] font-semibold text-paperhi">{compact(wallet)}</span>
+            <button type="button" onClick={() => navigate("/execution-wallet", "Execution Wallet")} className="btn-asym flex items-center gap-2 border border-line bg-paperhi px-4 py-2.5 font-display text-[11px] font-bold text-ink hover:bg-white">Wallet <span className="text-brass">◉</span></button>
             <button type="button" onClick={() => navigate("/app", "Create mission")} className="btn-asym flex items-center gap-2 bg-ink px-4 py-2.5 font-display text-[11px] font-bold text-paperhi hover:bg-black">Create mission <span className="text-brasslt">+</span></button>
           </div>
 
