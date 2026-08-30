@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ExecutionCapitalRequest } from "./lib/executionCapital";
 import type { OnchainExecutionSummary } from "./ExecutionCapitalCard";
 
@@ -40,6 +40,46 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
   const [execution, setExecution] = useState<OnchainExecutionSummary | null>(null);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+  const [dispatchState, setDispatchState] = useState<"idle" | "starting" | "submitted" | "error">("idle");
+  const dispatchStarted = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (request.status !== "authorized") return;
+    if (dispatchStarted.current === request.id) return;
+    dispatchStarted.current = request.id;
+
+    let active = true;
+    async function dispatchExecution() {
+      setDispatchState("starting");
+      try {
+        const response = await fetch("/api/testnet?route=execution-capital-execute", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            request_id: request.id,
+            execution_id: `agentmarket-${request.id}`,
+          }),
+        });
+        const body = await response.json().catch(() => null) as {
+          error?: string;
+          execution?: OnchainExecutionSummary;
+        } | null;
+        if (!response.ok) throw new Error(body?.error || "Authorized execution could not be dispatched");
+        if (!active) return;
+        if (body?.execution) setExecution(body.execution);
+        setDispatchState("submitted");
+        setError("");
+      } catch (cause) {
+        if (!active) return;
+        setDispatchState("error");
+        setError(cause instanceof Error ? cause.message : "Authorized execution could not be dispatched");
+      }
+    }
+
+    void dispatchExecution();
+    return () => { active = false; };
+  }, [request.id, request.status]);
 
   useEffect(() => {
     let active = true;
@@ -80,6 +120,7 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
         setExecution(body);
         const txHash = transactionHashFromExecution(body);
         setPending(Boolean(body?.observed === false && txHash));
+        if (txHash) setDispatchState("submitted");
         setError("");
       } catch (cause) {
         if (active) setError(cause instanceof Error ? cause.message : "Unable to verify execution directly from BSC Testnet");
@@ -106,8 +147,8 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
           <h3 className="font-display text-[18px] font-bold m-0">Agent execution</h3>
           <p className="text-[10.5px] text-inksoft mt-1">Execution evidence is independently read from BSC Testnet. The marketplace does not use the agent response as the source for the transaction amounts or pool details.</p>
         </div>
-        <span className={`font-mono text-[9px] px-2.5 py-1 rounded-lg ${verified ? "status-green" : "status-brass"}`}>
-          {verified ? "ONCHAIN VERIFIED" : pending ? "PENDING RECEIPT" : "NOT YET OBSERVED"}
+        <span className={`font-mono text-[9px] px-2.5 py-1 rounded-lg ${verified ? "status-green" : dispatchState === "error" ? "status-rust" : "status-brass"}`}>
+          {verified ? "ONCHAIN VERIFIED" : pending ? "PENDING RECEIPT" : dispatchState === "starting" ? "DISPATCHING" : dispatchState === "submitted" ? "SUBMITTED" : "NOT YET OBSERVED"}
         </span>
       </div>
 
@@ -141,9 +182,11 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
         </div>
       </div>
 
+      {dispatchState === "starting" && <div className="mt-3 text-[10px] text-brass">The authorized Grid session is being dispatched through AgentMarket. The browser is not signing the trade itself.</div>}
       {pending && <div className="mt-3 text-[10px] text-brass">A transaction hash has been submitted, but its BSC Testnet receipt is not independently observable yet. AgentMarket will continue checking automatically.</div>}
-      {!pending && !verified && !error && <div className="mt-3 text-[10px] text-inksoft">No independently observed execution transaction is recorded yet. The hired provider can execute only through the authorized job session.</div>}
-      {error && <div className="mt-3 text-[10px] text-rust">Unable to refresh independent execution evidence: {error}</div>}
+      {dispatchState === "error" && <div className="mt-3 text-[10px] text-rust">Authorized execution did not dispatch: {error}</div>}
+      {dispatchState !== "error" && !pending && !verified && !error && dispatchState !== "starting" && <div className="mt-3 text-[10px] text-inksoft">No independently observed execution transaction is recorded yet. The hired provider can execute only through the authorized job session.</div>}
+      {error && dispatchState !== "error" && <div className="mt-3 text-[10px] text-rust">Unable to refresh independent execution evidence: {error}</div>}
     </section>
   );
 }
