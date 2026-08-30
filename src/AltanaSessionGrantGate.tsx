@@ -55,7 +55,7 @@ export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProp
     const response = await fetch(props.capabilitySource, {
       method: "GET",
       cache: "no-store",
-      headers: { Accept: "application/json", "x-agentmarket-request-id": props.requestId },
+      headers: { Accept: "application/json" },
     });
     const body = await response.json().catch(() => null) as Record<string, unknown> | null;
     if (!response.ok) throw new Error(typeof body?.error === "string" ? body.error : "Unable to resolve the request-scoped Grid session key");
