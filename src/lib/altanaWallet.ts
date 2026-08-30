@@ -40,6 +40,19 @@ export type AltanaTradingCapitalResult = {
   alreadyFunded: boolean;
 };
 
+export type PersistentAltanaWalletRecord = {
+  user_id: string;
+  wallet_address: Address;
+  signer_address: Address | null;
+  chain_id: 97;
+  wallet_provider: "altana";
+  authorization_model: "passkey";
+  rp_id: string | null;
+  status: "active" | "recovery_required" | "disabled";
+  created_at: string;
+  updated_at: string;
+};
+
 const RP_NAME = "AgentMarket Testnet";
 const chainId = 97 as const;
 const ALTANA_KEYSTORE_CONTROLLER: Address = "0xb530D1971f5453F3359518343F05D0AedFfF7e12";
@@ -86,6 +99,29 @@ async function waitForTransactionReceipt(hash: `0x${string}`) {
     await sleep(2_000);
   }
   throw new Error(`Altana wallet transaction did not confirm within 120 seconds: ${hash}`);
+}
+
+export async function getPersistentAltanaWallet(): Promise<PersistentAltanaWalletRecord | null> {
+  const response = await fetch("/api/testnet?route=execution-wallet", { credentials: "include", cache: "no-store" });
+  const body = await response.json().catch(() => null) as { wallet?: PersistentAltanaWalletRecord | null; error?: string } | null;
+  if (!response.ok) throw new Error(body?.error || "Unable to load the persistent Altana execution wallet");
+  return body?.wallet || null;
+}
+
+export async function persistAltanaWalletResolution(resolution: AltanaWalletResolution): Promise<PersistentAltanaWalletRecord> {
+  const response = await fetch("/api/testnet?route=execution-wallet", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      wallet_address: resolution.walletAddress,
+      signer_address: resolution.signerAddress,
+      rp_id: rpId(),
+    }),
+  });
+  const body = await response.json().catch(() => null) as { wallet?: PersistentAltanaWalletRecord; error?: string } | null;
+  if (!response.ok || !body?.wallet) throw new Error(body?.error || "Unable to persist the Altana execution wallet");
+  return body.wallet;
 }
 
 export async function getAltanaPasskeyReadiness(): Promise<AltanaPasskeyReadiness> {
@@ -181,12 +217,18 @@ function formatTokenAmount(value: bigint, decimals: number) {
 }
 
 export async function createAltanaWallet(): Promise<AltanaWalletResolution & { funding: AltanaFundingResult }> {
+  const existing = await getPersistentAltanaWallet();
+  if (existing) {
+    throw new Error(`A persistent Altana execution wallet already exists for this account at ${existing.wallet_address}. Use Recover existing Altana wallet instead of creating another wallet.`);
+  }
+
   const readiness = await getAltanaPasskeyReadiness();
   assertPasskeyReady(readiness);
   const client = createClient({ chains: [BNB_TESTNET] });
   const result = await client.createPasskeyWallet({ name: RP_NAME, rpId: readiness.rpId });
   const resolved = normalizeResolution({ address: result.address, signer: result.signer });
   const funding = await fundAltanaWalletFromAgentMarketWallet(resolved.walletAddress);
+  await persistAltanaWalletResolution(resolved);
   cachedResolution = resolved;
   return { ...resolved, funding };
 }
@@ -197,6 +239,11 @@ export async function recoverAltanaWallet(): Promise<AltanaWalletResolution> {
   const client = createClient({ chains: [BNB_TESTNET] });
   const result = await client.recoverFromPasskey({ rpId: readiness.rpId, chainId });
   const resolved = normalizeResolution({ address: result.address, signer: result.signer });
+  const existing = await getPersistentAltanaWallet();
+  if (existing && existing.wallet_address.toLowerCase() !== resolved.walletAddress.toLowerCase()) {
+    throw new Error(`The recovered Passkey resolves to ${resolved.walletAddress}, but this account is registered to ${existing.wallet_address}. Recover the Passkey that owns the registered execution wallet.`);
+  }
+  await persistAltanaWalletResolution(resolved);
   cachedResolution = resolved;
   return resolved;
 }
