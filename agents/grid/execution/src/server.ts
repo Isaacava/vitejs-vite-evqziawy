@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage } from "node:http";
 import { privateKeyToAccount } from "viem/accounts";
-import { executeConfiguredGridAction, executeGridAction } from "./altanaExecutor.js";
+import { BNB_TESTNET } from "@altananetwork/sdk";
+import { executeConfiguredGridAction, executeGridAction, configuredSessionDescriptor, deriveJobSessionPrivateKey } from "./altanaExecutor.js";
 import { pancakeSwapPreflight } from "./preflight.js";
 import { buildPancakeTestnetConfig } from "./pancakeSwap.js";
 import { observeTestnetReceipt } from "./receipt.js";
@@ -14,6 +15,9 @@ function json(res: import("node:http").ServerResponse, status: number, value: un
   res.statusCode = status;
   res.setHeader("content-type", "application/json; charset=utf-8");
   res.setHeader("cache-control", "no-store");
+  res.setHeader("access-control-allow-origin", process.env.GRID_CORS_ORIGIN || "*");
+  res.setHeader("access-control-allow-methods", "GET,POST,OPTIONS");
+  res.setHeader("access-control-allow-headers", "Content-Type, Accept, Authorization, X-ERC8183-Job-Id");
   res.end(JSON.stringify(value, (_, item) => typeof item === "bigint" ? item.toString() : item));
 }
 
@@ -85,9 +89,19 @@ function executionConfigState() {
   };
 }
 
-async function publicExecutionCapabilities() {
+function jobIdFromRequest(req: IncomingMessage, input?: Record<string, unknown>): number | undefined {
+  const url = new URL(req.url || "/", "http://127.0.0.1");
+  const raw = url.searchParams.get("job_id") || req.headers["x-erc8183-job-id"] || (typeof input?.job_id === "string" || typeof input?.job_id === "number" ? String(input.job_id) : "");
+  if (!raw) return undefined;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error("job_id must be a positive integer");
+  return value;
+}
+
+async function publicExecutionCapabilities(req: IncomingMessage) {
   const configured = executionConfigState();
   const market = buildPancakeTestnetConfig();
+  const jobId = jobIdFromRequest(req);
   const base = {
     ok: true,
     network: "bsc-testnet",
@@ -109,14 +123,16 @@ async function publicExecutionCapabilities() {
     selectors_required: true,
     private_key_exposed: false,
     configuration: configured,
-    execution_wallet_mode: "grid-owned-wallet",
-    session_scope: "grid-owned",
+    execution_wallet_mode: "user-granted-wallet",
+    session_scope: jobId ? "request-scoped" : "job-required",
+    job_id: jobId || null,
   };
 
   if (!SESSION_PRIVATE_KEY) return { ...base, execution_ready: false };
 
+  const sessionPrivateKey = jobId ? deriveJobSessionPrivateKey(jobId) : SESSION_PRIVATE_KEY;
   const account = privateKeyToAccount(
-    (SESSION_PRIVATE_KEY.startsWith("0x") ? SESSION_PRIVATE_KEY : `0x${SESSION_PRIVATE_KEY}`) as `0x${string}`,
+    (sessionPrivateKey.startsWith("0x") ? sessionPrivateKey : `0x${sessionPrivateKey}`) as `0x${string}`,
   );
 
   return {
@@ -134,11 +150,14 @@ async function publicExecutionCapabilities() {
 
 const server = createServer(async (req, res) => {
   try {
-    if (req.method === "GET" && req.url === "/health") {
-      return json(res, 200, { ...(await publicExecutionCapabilities()), service: "Grid Agent Altana Execution" });
+    if (req.method === "OPTIONS") {
+      return json(res, 204, null);
     }
-    if (req.method === "GET" && req.url === "/execution-capabilities") {
-      return json(res, 200, await publicExecutionCapabilities());
+    if (req.method === "GET" && req.url === "/health") {
+      return json(res, 200, { ...(await publicExecutionCapabilities(req)), service: "Grid Agent Altana Execution", chain: BNB_TESTNET.id });
+    }
+    if (req.method === "GET" && req.url?.startsWith("/execution-capabilities")) {
+      return json(res, 200, await publicExecutionCapabilities(req));
     }
     if (req.method === "GET" && req.url === "/execution-readiness") {
       return json(res, 200, await getExecutionReadiness());
@@ -154,23 +173,26 @@ const server = createServer(async (req, res) => {
       return json(res, 200, { ok: true, result: await observeTestnetReceipt(hash) });
     }
     if (req.method === "POST" && req.url === "/execute-configured") {
-      if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "ALTANA_SESSION_PRIVATE_KEY is not configured" });
+      if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "Grid execution key derivation secret is not configured" });
       const request = await body(req) as Record<string, unknown>;
-      return json(res, 200, { ok: true, result: await executeConfiguredGridAction(calls(request.calls)) });
+      const jobId = jobIdFromRequest(req, request);
+      if (jobId === undefined) return json(res, 400, { error: "job_id is required for standalone Grid execution" });
+      return json(res, 200, { ok: true, result: await executeConfiguredGridAction(calls(request.calls), jobId) });
     }
     if (req.method !== "POST" || req.url !== "/execute") {
       return json(res, 404, { error: "Not found" });
     }
-    if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "ALTANA_SESSION_PRIVATE_KEY is not configured" });
+    if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "Grid execution key derivation secret is not configured" });
     const request = await body(req) as Record<string, unknown>;
+    const jobId = jobIdFromRequest(req, request);
+    if (jobId === undefined) return json(res, 400, { error: "job_id is required for standalone Grid execution" });
     const session = descriptor(request.session);
-    const configuredAccount = privateKeyToAccount(
-      (SESSION_PRIVATE_KEY.startsWith("0x") ? SESSION_PRIVATE_KEY : `0x${SESSION_PRIVATE_KEY}`) as `0x${string}`,
-    );
-    if (configuredAccount.address.toLowerCase() !== session.agentSessionAddress.toLowerCase()) {
-      throw new Error("Session descriptor does not match Grid's configured signing key");
+    const sessionPrivateKey = deriveJobSessionPrivateKey(jobId);
+    const expected = configuredSessionDescriptor(jobId);
+    if (expected.agentSessionAddress.toLowerCase() !== session.agentSessionAddress.toLowerCase()) {
+      throw new Error("Session descriptor does not match the job-scoped Grid signing key");
     }
-    return json(res, 200, { ok: true, result: await executeGridAction(session, calls(request.calls), SESSION_PRIVATE_KEY) });
+    return json(res, 200, { ok: true, result: await executeGridAction(session, calls(request.calls), sessionPrivateKey) });
   } catch (error) {
     console.error("Grid Altana execution request failed", error);
     return json(res, 400, { ok: false, error: error instanceof Error ? error.message : "Execution request failed" });
