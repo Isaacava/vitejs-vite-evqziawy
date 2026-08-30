@@ -45,19 +45,13 @@ function executorPreflightUrl(request: Record<string, unknown>, protocol: string
   return parsed.toString();
 }
 
-async function dispatch(url: string, input: GridPreflightInput) {
+async function dispatch(url: string, input: GridPreflightInput, requestId?: string) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify(input),
-      signal: controller.signal,
-    });
+    const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json" };
+    if (requestId) headers["x-agentmarket-request-id"] = requestId;
+    const response = await fetch(url, { method: "POST", headers, body: JSON.stringify(input), signal: controller.signal });
     const raw = await response.text();
     if (new TextEncoder().encode(raw).byteLength > MAX_BODY_BYTES) throw new Error("Execution adapter response is too large");
     let body: Record<string, unknown> = {};
@@ -73,5 +67,6 @@ async function dispatch(url: string, input: GridPreflightInput) {
 }
 
 export async function runGridPreflight(request: Record<string, unknown>, input: GridPreflightInput, protocol = "pancake-v3-swap") {
-  return dispatch(executorPreflightUrl(request, protocol), input);
+  const requestId = typeof request.id === "string" ? request.id : typeof request.request_id === "string" ? request.request_id : undefined;
+  return dispatch(executorPreflightUrl(request, protocol), input, requestId);
 }
