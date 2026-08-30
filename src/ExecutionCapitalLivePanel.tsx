@@ -4,13 +4,36 @@ import type { OnchainExecutionSummary } from "./ExecutionCapitalCard";
 
 type Props = { request: ExecutionCapitalRequest };
 
+type ReceiptStatus = {
+  observed: boolean;
+  transaction_hash?: string;
+  error?: string;
+};
+
 function compact(value?: string | null) {
   return value ? `${value.slice(0, 10)}…${value.slice(-8)}` : "—";
+}
+
+function missingReceiptError(value?: string) {
+  if (!value) return false;
+  const normalized = value.toLowerCase();
+  return normalized.includes("transaction receipt") && (
+    normalized.includes("could not be found") ||
+    normalized.includes("not processed on a block") ||
+    normalized.includes("receipt not found")
+  );
+}
+
+function transactionHashFromError(value?: string) {
+  if (!value) return null;
+  const match = value.match(/0x[a-fA-F0-9]{64}/);
+  return match?.[0] || null;
 }
 
 export default function ExecutionCapitalLivePanel({ request }: Props) {
   const [execution, setExecution] = useState<OnchainExecutionSummary | null>(null);
   const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -22,8 +45,34 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
         );
         const body = await response.json().catch(() => null) as (OnchainExecutionSummary & { error?: string }) | null;
         if (!active) return;
-        if (!response.ok) throw new Error(body?.error || "Unable to verify execution directly from BSC Testnet");
+
+        if (!response.ok) {
+          const message = body?.error || "Unable to verify execution directly from BSC Testnet";
+          if (missingReceiptError(message)) {
+            const candidateHash = transactionHashFromError(message);
+            if (candidateHash) {
+              try {
+                const receiptResponse = await fetch(
+                  `/api/testnet/execution-receipt?tx_hash=${encodeURIComponent(candidateHash)}`,
+                  { credentials: "include", cache: "no-store" },
+                );
+                const receiptBody = await receiptResponse.json().catch(() => null) as ReceiptStatus | null;
+                if (active && receiptResponse.ok && receiptBody?.observed === false) {
+                  setPending(true);
+                  setError("");
+                  return;
+                }
+              } catch {}
+            }
+            setPending(true);
+            setError("");
+            return;
+          }
+          throw new Error(message);
+        }
+
         setExecution(body);
+        setPending(body?.observed === false);
         setError("");
       } catch (cause) {
         if (active) setError(cause instanceof Error ? cause.message : "Unable to verify execution directly from BSC Testnet");
@@ -50,7 +99,9 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
           <h3 className="font-display text-[18px] font-bold m-0">Agent execution</h3>
           <p className="text-[10.5px] text-inksoft mt-1">Execution evidence is independently read from BSC Testnet. The marketplace does not use the agent response as the source for the transaction amounts or pool details.</p>
         </div>
-        <span className={`font-mono text-[9px] px-2.5 py-1 rounded-lg ${verified ? "status-green" : "status-brass"}`}>{verified ? "ONCHAIN VERIFIED" : "VERIFYING"}</span>
+        <span className={`font-mono text-[9px] px-2.5 py-1 rounded-lg ${verified ? "status-green" : "status-brass"}`}>
+          {verified ? "ONCHAIN VERIFIED" : pending ? "PENDING RECEIPT" : "VERIFYING"}
+        </span>
       </div>
 
       <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-4">
@@ -63,7 +114,7 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
           <div><strong>Pool fee:</strong> {market?.fee ?? "Not yet independently identified"}</div>
           <div><strong>Pool:</strong> {market?.pool ? compact(market.pool) : "Not yet independently identified"}</div>
           <div><strong>Execution wallet:</strong> {wallet ? compact(wallet) : "Not yet observed"}</div>
-          <div><strong>Receipt:</strong> {execution?.execution?.status || "Not yet observed"}</div>
+          <div><strong>Receipt:</strong> {execution?.execution?.status || (pending ? "Not yet observed" : "Not yet observed")}</div>
           <div><strong>Block:</strong> {execution?.execution?.block_number || "Not yet observed"}</div>
           <div><strong>Gas used:</strong> {execution?.execution?.gas_used || "Not yet observed"}</div>
         </div>
@@ -83,6 +134,7 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
         </div>
       </div>
 
+      {pending && <div className="mt-3 text-[10px] text-brass">Transaction submitted, but its BSC Testnet receipt is not independently observable yet. AgentMarket will continue checking automatically.</div>}
       {error && <div className="mt-3 text-[10px] text-rust">Unable to refresh independent execution evidence: {error}</div>}
     </section>
   );
