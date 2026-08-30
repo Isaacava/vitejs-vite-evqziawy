@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { BNB_TESTNET, createClient, signerFromPrivateKey } from "@altananetwork/sdk";
 import type { Address, Hex } from "viem";
 import { privateKeyToAccount, publicKeyToAddress } from "viem/accounts";
@@ -43,6 +44,13 @@ function configuredHexList(name: string, expectedBytes?: number): Hex[] {
     });
 }
 
+export function deriveJobSessionPrivateKey(jobId: number, env: NodeJS.ProcessEnv = process.env): `0x${string}` {
+  if (!Number.isSafeInteger(jobId) || jobId <= 0) throw new Error("jobId must be a positive integer");
+  const master = normalizePrivateKey(env.ALTANA_SESSION_PRIVATE_KEY || "");
+  const digest = createHmac("sha256", master.slice(2)).update(`grid-job-session:${jobId}`).digest("hex");
+  return `0x${digest}`;
+}
+
 export function reconstructSession(
   descriptor: GridSessionDescriptor,
   sessionPrivateKey: string,
@@ -86,9 +94,11 @@ export function reconstructSession(
   };
 }
 
-export function configuredSessionDescriptor(env: NodeJS.ProcessEnv = process.env): GridSessionDescriptor {
-  const privateKey = normalizePrivateKey(env.ALTANA_SESSION_PRIVATE_KEY || "");
-  const account = privateKeyToAccount(privateKey);
+export function configuredSessionDescriptor(jobId?: number, env: NodeJS.ProcessEnv = process.env): GridSessionDescriptor {
+  const sessionPrivateKey = jobId !== undefined
+    ? deriveJobSessionPrivateKey(jobId, env)
+    : normalizePrivateKey(env.ALTANA_SESSION_PRIVATE_KEY || "");
+  const account = privateKeyToAccount(sessionPrivateKey);
   const publicKey = account.publicKey as Hex;
   const walletAddress = env.ALTANA_WALLET_ADDRESS?.trim() || "";
   if (!isAddress(walletAddress)) throw new Error("ALTANA_WALLET_ADDRESS must be the user Altana wallet address that granted this session");
@@ -150,8 +160,11 @@ export async function executeGridAction(
 
 export async function executeConfiguredGridAction(
   calls: readonly GridCall[],
+  jobId?: number,
 ): Promise<GridExecutionResult> {
-  const sessionPrivateKey = normalizePrivateKey(process.env.ALTANA_SESSION_PRIVATE_KEY || "");
-  const descriptor = configuredSessionDescriptor();
+  const sessionPrivateKey = jobId !== undefined
+    ? deriveJobSessionPrivateKey(jobId)
+    : normalizePrivateKey(process.env.ALTANA_SESSION_PRIVATE_KEY || "");
+  const descriptor = configuredSessionDescriptor(jobId);
   return executeGridAction(descriptor, calls, sessionPrivateKey);
 }
