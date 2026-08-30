@@ -30,6 +30,12 @@ function transactionHashFromError(value?: string) {
   return match?.[0] || null;
 }
 
+function transactionHashFromExecution(value?: OnchainExecutionSummary | null) {
+  return typeof value?.transaction_hash === "string" && /^0x[a-fA-F0-9]{64}$/.test(value.transaction_hash)
+    ? value.transaction_hash
+    : null;
+}
+
 export default function ExecutionCapitalLivePanel({ request }: Props) {
   const [execution, setExecution] = useState<OnchainExecutionSummary | null>(null);
   const [error, setError] = useState("");
@@ -64,7 +70,7 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
                 }
               } catch {}
             }
-            setPending(true);
+            setPending(Boolean(candidateHash));
             setError("");
             return;
           }
@@ -72,7 +78,8 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
         }
 
         setExecution(body);
-        setPending(body?.observed === false);
+        const txHash = transactionHashFromExecution(body);
+        setPending(Boolean(body?.observed === false && txHash));
         setError("");
       } catch (cause) {
         if (active) setError(cause instanceof Error ? cause.message : "Unable to verify execution directly from BSC Testnet");
@@ -100,7 +107,7 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
           <p className="text-[10.5px] text-inksoft mt-1">Execution evidence is independently read from BSC Testnet. The marketplace does not use the agent response as the source for the transaction amounts or pool details.</p>
         </div>
         <span className={`font-mono text-[9px] px-2.5 py-1 rounded-lg ${verified ? "status-green" : "status-brass"}`}>
-          {verified ? "ONCHAIN VERIFIED" : pending ? "PENDING RECEIPT" : "VERIFYING"}
+          {verified ? "ONCHAIN VERIFIED" : pending ? "PENDING RECEIPT" : "NOT YET OBSERVED"}
         </span>
       </div>
 
@@ -134,7 +141,8 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
         </div>
       </div>
 
-      {pending && <div className="mt-3 text-[10px] text-brass">Transaction submitted, but its BSC Testnet receipt is not independently observable yet. AgentMarket will continue checking automatically.</div>}
+      {pending && <div className="mt-3 text-[10px] text-brass">A transaction hash has been submitted, but its BSC Testnet receipt is not independently observable yet. AgentMarket will continue checking automatically.</div>}
+      {!pending && !verified && !error && <div className="mt-3 text-[10px] text-inksoft">No independently observed execution transaction is recorded yet. The hired provider can execute only through the authorized job session.</div>}
       {error && <div className="mt-3 text-[10px] text-rust">Unable to refresh independent execution evidence: {error}</div>}
     </section>
   );
