@@ -33,6 +33,7 @@
     { "source": "/mission", "destination": "/index.html" },
     { "source": "/activity", "destination": "/index.html" },
     { "source": "/payments", "destination": "/index.html" },
+    { "source": "/execution-wallet", "destination": "/index.html" },
     { "source": "/permissions", "destination": "/index.html" },
     { "source": "/agent/evidence", "destination": "/index.html" },
     { "source": "/prepare", "destination": "/index.html" },
