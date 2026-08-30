@@ -5,6 +5,7 @@ import { pancakeSwapPreflight } from "./preflight.js";
 import { buildPancakeTestnetConfig } from "./pancakeSwap.js";
 import { observeTestnetReceipt } from "./receipt.js";
 import { getExecutionReadiness } from "./readiness.js";
+import { deriveRequestSessionPrivateKey } from "./sessionKey.js";
 import type { GridCall, GridSessionDescriptor } from "./types.js";
 
 const PORT = Number(process.env.GRID_EXECUTION_PORT || 8788);
@@ -42,18 +43,39 @@ function executionConfigState() {
     pancake_router_configured: Boolean(process.env.PANCAKE_TESTNET_ROUTER),
   };
 }
-async function publicExecutionCapabilities() {
+function requestIdFromHeaders(req: IncomingMessage) {
+  return String(req.headers["x-agentmarket-request-id"] || "").trim();
+}
+function requestScopedPrivateKey(req: IncomingMessage) {
+  if (!SESSION_PRIVATE_KEY) throw new Error("ALTANA_SESSION_PRIVATE_KEY is not configured");
+  const requestId = requestIdFromHeaders(req);
+  if (!requestId) throw new Error("x-agentmarket-request-id is required for scoped Grid execution");
+  return deriveRequestSessionPrivateKey(SESSION_PRIVATE_KEY, requestId);
+}
+async function publicExecutionCapabilities(req?: IncomingMessage) {
   const configured = executionConfigState();
   const market = buildPancakeTestnetConfig();
   const base = { ok: true, network: "bsc-testnet", chainId: 97, execution: "altana-scoped-session", wallet_provider: "altana", authorization_model: "scoped_session", protocol: "pancake-v3-swap", execution_market: { token_in: market.tokenIn, token_out: market.tokenOut, token_in_symbol: market.tokenInSymbol, token_out_symbol: market.tokenOutSymbol, fee: market.fee }, preflight_path: "/preflight/pancake", allowed_targets: configuredList(process.env.GRID_ALLOWED_TARGETS || ""), allowed_selectors: configuredList(process.env.GRID_ALLOWED_SELECTORS || ""), selectors_required: true, private_key_exposed: false, configuration: configured, execution_wallet_mode: "per-job-user-wallet" };
   if (!SESSION_PRIVATE_KEY) return { ...base, execution_ready: false };
-  const account = privateKeyToAccount((SESSION_PRIVATE_KEY.startsWith("0x") ? SESSION_PRIVATE_KEY : `0x${SESSION_PRIVATE_KEY}`) as `0x${string}`);
-  return { ...base, execution_ready: true, session_key_address: account.address, session_key_public_key: account.publicKey, authorization_check: { wallet_address: null, session_key_id: null, keystore_authorized: "checked_at_execution" } };
+
+  const requestId = req ? requestIdFromHeaders(req) : "";
+  const account = requestId
+    ? privateKeyToAccount(deriveRequestSessionPrivateKey(SESSION_PRIVATE_KEY, requestId))
+    : privateKeyToAccount((SESSION_PRIVATE_KEY.startsWith("0x") ? SESSION_PRIVATE_KEY : `0x${SESSION_PRIVATE_KEY}`) as `0x${string}`);
+
+  return {
+    ...base,
+    execution_ready: true,
+    ...(requestId ? { request_id: requestId, session_scope: "request-scoped" } : { session_scope: "legacy-global" }),
+    session_key_address: account.address,
+    session_key_public_key: account.publicKey,
+    authorization_check: { wallet_address: null, session_key_id: null, keystore_authorized: "checked_at_execution" },
+  };
 }
 const server = createServer(async (req, res) => {
   try {
-    if (req.method === "GET" && req.url === "/health") return json(res, 200, { ...(await publicExecutionCapabilities()), service: "Grid Agent Altana Execution" });
-    if (req.method === "GET" && req.url === "/execution-capabilities") return json(res, 200, await publicExecutionCapabilities());
+    if (req.method === "GET" && req.url === "/health") return json(res, 200, { ...(await publicExecutionCapabilities(req)), service: "Grid Agent Altana Execution" });
+    if (req.method === "GET" && req.url === "/execution-capabilities") return json(res, 200, await publicExecutionCapabilities(req));
     if (req.method === "GET" && req.url === "/execution-readiness") return json(res, 200, await getExecutionReadiness());
     if (req.method === "POST" && req.url === "/preflight/pancake") {
       const request = await body(req) as Record<string, unknown>;
@@ -62,9 +84,14 @@ const server = createServer(async (req, res) => {
     if (req.method === "GET" && req.url?.startsWith("/receipt/")) { if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "Grid execution service is not configured" }); const hash = decodeURIComponent(req.url.slice("/receipt/".length)).split("?", 1)[0]; if (!hash) return json(res, 400, { error: "transaction hash is required" }); return json(res, 200, { ok: true, result: await observeTestnetReceipt(hash) }); }
     if (req.method === "POST" && req.url === "/execute-configured") { if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "ALTANA_SESSION_PRIVATE_KEY is not configured" }); const request = await body(req) as Record<string, unknown>; return json(res, 200, { ok: true, result: await executeConfiguredGridAction(calls(request.calls)) }); }
     if (req.method !== "POST" || req.url !== "/execute") return json(res, 404, { error: "Not found" });
-    if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "ALTANA_SESSION_PRIVATE_KEY is not configured" });
+    const sessionPrivateKey = requestScopedPrivateKey(req);
     const request = await body(req) as Record<string, unknown>;
-    return json(res, 200, { ok: true, result: await executeGridAction(descriptor(request.session), calls(request.calls), SESSION_PRIVATE_KEY) });
+    const session = descriptor(request.session);
+    const derivedAccount = privateKeyToAccount(sessionPrivateKey);
+    if (derivedAccount.address.toLowerCase() !== session.agentSessionAddress.toLowerCase()) {
+      throw new Error("Session descriptor does not match the request-scoped Grid signing key");
+    }
+    return json(res, 200, { ok: true, result: await executeGridAction(session, calls(request.calls), sessionPrivateKey) });
   } catch (error) { console.error("Grid Altana execution request failed", error); return json(res, 400, { ok: false, error: error instanceof Error ? error.message : "Execution request failed" }); }
 });
 server.listen(PORT, "127.0.0.1", () => console.log(`Grid Altana execution service listening on ${PORT} (localhost / BSC Testnet / chain 97)`));
