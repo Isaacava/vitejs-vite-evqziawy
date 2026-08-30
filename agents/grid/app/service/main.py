@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
 from bnbagent import EVMWalletProvider
@@ -264,6 +265,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_cors_origin = os.getenv("GRID_CORS_ORIGIN") or "*"
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[_cors_origin] if _cors_origin != "*" else ["*"],
+    allow_credentials=_cors_origin != "*",
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
+
 
 @app.get("/health")
 async def health() -> dict[str, str]:
@@ -371,7 +381,7 @@ async def negotiate(request: Request) -> dict[str, Any]:
 
 @app.get("/erc8183/execution-capabilities")
 async def execution_capabilities(request: Request) -> Response:
-    return await _proxy_execution(request, "/execution-capabilities")
+    return await _proxy_execution(request, "/execution-capabilities" + (("?" + request.url.query) if request.url.query else ""))
 
 
 @app.get("/erc8183/execution-health")
