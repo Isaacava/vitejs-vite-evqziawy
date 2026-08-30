@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createPublicClient, http, type Address, type Hex } from "viem";
 import { bscTestnet } from "viem/chains";
 import { getAuthenticatedUser, serverClient } from "../_auth.js";
+import { assertGridExecutionCapability, runGridPreflight, type GridPreflightInput } from "./gridExecutionAdapter.js";
 
 const publicClient = createPublicClient({
   chain: bscTestnet,
@@ -12,6 +13,9 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_BODY_BYTES = 128 * 1024;
 const MAX_CALLS = 8;
 const DEFAULT_NATIVE_GAS_SPEND_LIMIT_WEI = 20_000_000_000_000_000n;
+const TESTNET_WBNB = "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd" as Address;
+const PANCAKE_V3_SWAP = "pancake-v3-swap";
+const DEFAULT_PANCAKE_FEE = 2500;
 
 function isAddress(value: unknown): value is Address {
   return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value);
@@ -56,18 +60,11 @@ function capabilityFromRequest(request: Record<string, unknown>) {
   if (!Array.isArray(capability.allowed_selectors) || capability.allowed_selectors.length === 0 || !capability.allowed_selectors.every((value) => typeof value === "string" && isSelector(value))) throw new Error("Stored execution capability has no valid selector allowlist");
   if (!Number.isInteger(sessionExpiry) || sessionExpiry <= Math.floor(Date.now() / 1000)) throw new Error("Verified Altana session has expired");
 
-  // capital_authorized/capital_requested are stored in human-readable token
-  // units (e.g. "1" meaning 1 U), not raw wei — see execution-capital.ts,
-  // where capital_requested is set to String(TESTNET_EXECUTION_CAPITAL_MAX).
-  // The on-chain grant (src/lib/altanaSession.ts) authorized
-  // capitalAmount * 10 ** decimals raw units, so the executor's spend
-  // permission must be scaled the same way or its reconstructed session
-  // permissions won't match what was actually registered on-chain.
   const humanAmountRaw = String(request.capital_authorized ?? request.capital_requested ?? "");
   if (!/^\d+(\.\d+)?$/.test(humanAmountRaw) || Number(humanAmountRaw) <= 0) {
     throw new Error("Authorized execution capital must be a positive numeric amount");
   }
-  const decimals = Number.isInteger(request.capital_decimals) && Number(request.capital_decimals) > 0
+  const decimals = Number.isInteger(request.capital_decimals) && Number(request.capital_decimals) >= 0
     ? BigInt(request.capital_decimals as number)
     : 18n;
   const [wholePart, fractionPart = ""] = humanAmountRaw.split(".");
@@ -75,9 +72,6 @@ function capabilityFromRequest(request: Record<string, unknown>) {
   const spendRaw = (BigInt(wholePart) * 10n ** decimals + BigInt(fraction || "0")).toString();
   if (BigInt(spendRaw) <= 0n) throw new Error("Authorized execution capital must be a positive integer raw amount");
 
-  // capital_token is a top-level column on execution_capital_requests, not
-  // nested under evidence — check it first (matching execution-capital-preflight.ts
-  // and ExecutionCapitalLivePanel.tsx), falling back to evidence for older rows.
   const spendToken = typeof request.capital_token === "string" && isAddress(request.capital_token)
     ? request.capital_token
     : typeof evidence.capital_token === "string" && isAddress(evidence.capital_token)
@@ -188,6 +182,69 @@ async function receiptFor(hash: string | null) {
   }
 }
 
+function existingExecution(request: Record<string, unknown>) {
+  const evidence = object(request.evidence);
+  const last = object(evidence.last_execution);
+  if (typeof last.transaction_hash === "string" && isHex(last.transaction_hash)) return last;
+  const executions = Array.isArray(evidence.executions) ? evidence.executions : [];
+  const match = [...executions].reverse().map(object).find((item) => typeof item.transaction_hash === "string" && isHex(item.transaction_hash));
+  return match || null;
+}
+
+async function deriveGridCalls(request: Record<string, unknown>, session: ReturnType<typeof capabilityFromRequest>, input: Record<string, unknown>) {
+  const evidence = object(request.evidence);
+  const capability = object(evidence.execution_capability);
+  assertGridExecutionCapability(capability);
+
+  const protocol = typeof capability.protocol === "string" && capability.protocol.trim()
+    ? capability.protocol.trim().toLowerCase()
+    : PANCAKE_V3_SWAP;
+  if (protocol !== PANCAKE_V3_SWAP) throw new Error("Automatic Grid execution requires the provider's declared PancakeSwap V3 execution protocol");
+
+  const market = object(capability.execution_market);
+  const tokenOut = isAddress(input.tokenOut)
+    ? input.tokenOut
+    : isAddress(market.token_out)
+      ? market.token_out
+      : TESTNET_WBNB;
+  const router = isAddress(input.router)
+    ? input.router
+    : isAddress(market.router)
+      ? market.router
+      : session.allowedCalls.find((value) => value.toLowerCase() !== String(session.spendToken).toLowerCase());
+  if (!isAddress(router)) throw new Error("Automatic Grid execution could not identify a router inside the verified target allowlist");
+
+  const amountIn = /^\d+$/.test(String(input.amountIn ?? ""))
+    ? String(input.amountIn)
+    : session.spendLimit.toString();
+  const amountOutMinimum = /^\d+$/.test(String(input.amountOutMinimum ?? ""))
+    ? String(input.amountOutMinimum)
+    : "0";
+  const fee = Number.isInteger(Number(input.fee)) ? Number(input.fee) : Number.isInteger(Number(market.fee)) ? Number(market.fee) : DEFAULT_PANCAKE_FEE;
+
+  const preflightInput: GridPreflightInput = {
+    router,
+    tokenIn: session.spendToken,
+    tokenOut,
+    recipient: session.walletAddress,
+    fee,
+    amountIn,
+    amountOutMinimum,
+  };
+  const preflightResponse = await runGridPreflight(
+    { ...request, evidence: { ...evidence, execution_capability: capability } },
+    preflightInput,
+    protocol,
+  );
+  const result = object(preflightResponse.result);
+  if (result.broadcast !== false) throw new Error("Testnet preflight did not prove that no transaction was broadcast");
+  const call = object(result.call);
+  if (!isAddress(call.to) || !isHex(call.data)) throw new Error("Grid preflight did not return an executable scoped call");
+
+  const calls = validateCalls([call], session.allowedCalls as readonly Address[], session.allowedSelectors as readonly string[]);
+  return { calls, preflight: result };
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const auth = await getAuthenticatedUser(req);
@@ -218,10 +275,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const session = capabilityFromRequest(request as Record<string, unknown>);
-    if (String(session.agentSessionAddress).toLowerCase() !== String(request.agent_session_key).toLowerCase()) return res.status(409).json({ error: "Stored session key does not match the provider capability" });
-    if (String(session.walletAddress).toLowerCase() !== String(request.user_execution_wallet).toLowerCase()) return res.status(409).json({ error: "Stored execution wallet does not match the authorized session wallet" });
+    if (String(session.agentSessionAddress).toLowerCase() !== String(request.agent_session_key).toLowerCase()) throw new Error("Stored session key does not match the provider capability");
+    if (String(session.walletAddress).toLowerCase() !== String(request.user_execution_wallet).toLowerCase()) throw new Error("Stored execution wallet does not match the authorized session wallet");
 
-    const calls = validateCalls(input.calls, session.allowedCalls as readonly Address[], session.allowedSelectors as readonly string[]);
+    const prior = existingExecution(request as Record<string, unknown>);
+    if (prior) {
+      return res.status(200).json({ ok: true, request, execution: prior, note: "An execution transaction is already recorded for this execution-capital request; no duplicate execution was submitted." });
+    }
+
+    let calls: ReturnType<typeof validateCalls>;
+    let preflight: Record<string, unknown> | null = null;
+    if (Array.isArray(input.calls) && input.calls.length > 0) {
+      calls = validateCalls(input.calls, session.allowedCalls as readonly Address[], session.allowedSelectors as readonly string[]);
+    } else {
+      const derived = await deriveGridCalls(request as Record<string, unknown>, session, input);
+      calls = derived.calls;
+      preflight = derived.preflight;
+    }
+
     const endpoint = await executorUrl(request as Record<string, unknown>);
     const execution = await dispatchToExecutor(endpoint, session, calls);
     const result = object(execution.result);
@@ -242,6 +313,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       receipt_verified: Boolean(receipt),
       chain_id: 97,
       source: "grid_testnet_execution_adapter",
+      ...(preflight ? {
+        preflight: {
+          router: preflight.router,
+          tokenIn: preflight.tokenIn,
+          tokenOut: preflight.tokenOut,
+          recipient: preflight.recipient,
+          fee: preflight.fee,
+          amountIn: preflight.amountIn,
+          amountOutMinimum: preflight.amountOutMinimum,
+          selector: preflight.selector,
+          pool: preflight.pool,
+          checks: preflight.checks,
+        },
+      } : {}),
     };
 
     const nextEvidence = {
