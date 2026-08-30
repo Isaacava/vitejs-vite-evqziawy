@@ -135,6 +135,7 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
   const tokenOutSymbol = market?.token_out_symbol || "WBNB";
   const capability = object(request.evidence?.execution_capability);
   const capabilityMarket = object(capability.execution_market);
+  const capabilitySourceUrl = typeof capability.source_url === "string" ? capability.source_url : "";
   const renewalToken = request.capital_token as Address;
   const renewalAmount = (() => { try { const value = BigInt(request.capital_requested || "1"); return value > 0n ? value : 1n; } catch { return 1n; } })();
   const renewalAllowedCalls = Array.isArray(capability.allowed_targets) ? capability.allowed_targets.filter((v): v is Address => typeof v === "string" && /^0x[a-fA-F0-9]{40}$/.test(v)) : [];
@@ -163,7 +164,7 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
       {dispatchState !== "error" && !pending && !verified && !error && dispatchState !== "starting" && <div className="mt-3 text-[10px] text-inksoft">No independently observed execution transaction is recorded yet. The hired provider can execute only through the authorized job session.</div>}
       {error && dispatchState !== "error" && <div className="mt-3 text-[10px] text-rust">Unable to refresh independent execution evidence: {error}</div>}
 
-      {renewalNeeded && capability.source_url && renewalAllowedCalls.length > 0 && renewalAllowedSelectors.length > 0 && (
+      {renewalNeeded && capabilitySourceUrl && renewalAllowedCalls.length > 0 && renewalAllowedSelectors.length > 0 && (
         <div className="mt-5"><AltanaSessionGrantGate
           requestId={request.id}
           agentSessionAddress={capability.session_key_address as Address}
@@ -177,8 +178,7 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
           approvalSpender={renewalSpender}
           purpose={request.purpose}
           durationSeconds={request.requested_duration_seconds || request.duration_seconds || 86400}
-          capabilitySource={String(capability.source_url)}
-          renewal
+          capabilitySource={capabilitySourceUrl}
           onAuthorized={() => window.location.reload()}
         /></div>
       )}
