@@ -1,12 +1,46 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700;800&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --color-paper: #eeeade;
+  --color-paperhi: #fbfaf5;
+  --color-ink: #171714;
+  --color-inksoft: #6d6a61;
+  --color-line: #d5cfbf;
+  --color-linesoft: #e2ddcf;
+  --color-brass: #9d7428;
+  --color-brasslt: #d2b05e;
+  --color-green: #2d6b4f;
+  --color-greensoft: #e7efe9;
+  --color-rust: #9b4733;
+  --color-rustsoft: #f3e6e1;
+  --color-brasssoft: #f7ecd3;
+  --color-deep: #191a17;
+  --color-cream: #f7f4e9;
+  --font-display: "Space Grotesk", sans-serif;
+  --font-body: "Manrope", sans-serif;
+  --font-mono: "DM Mono", monospace;
+}
+
 html {
   min-width: 320px;
   background: #eeeade;
+  font-family: "Manrope", sans-serif;
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
 }
 
 body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  background: #eeeade;
+}
+
+h1,
+h2,
+h3 {
+  font-family: "Space Grotesk", sans-serif;
 }
 
 button,
@@ -19,4 +53,40 @@ select {
 #root {
   min-height: 100vh;
   width: 100%;
+}
+
+main,
+main > *,
+main section,
+main article,
+main aside {
+  min-width: 0;
+}
+
+main {
+  overflow-x: hidden;
+}
+
+main :where(p, strong, span, small, a, code, .font-mono) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+main :where(input, textarea, select) {
+  max-width: 100%;
+}
+
+.card-asym { border-radius: 20px 9px 22px 10px; }
+.card-asym-lg { border-radius: 26px 10px 28px 13px; }
+.card-asym-sm { border-radius: 14px 8px 15px 9px; }
+.btn-asym { border-radius: 14px 8px 16px 9px; }
+.dash-b { border-bottom: 1px dashed #c8c0af; }
+.dash-t { border-top: 1px dashed #d5cfbf; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }

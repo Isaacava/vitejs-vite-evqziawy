@@ -5,6 +5,8 @@ import { buildErc8183Plan, type Erc8183PreparedResponse } from "./lib/erc8183Tra
 import { extractCreatedJobId } from "./lib/erc8183Events";
 import "./mission-console.css";
 
+const TESTNET_PREPARE_API = "/api/testnet/erc8183";
+
 export default function OnchainExecute() {
   const params = new URLSearchParams(window.location.search);
   const missionId = params.get("mission") || "";
@@ -27,7 +29,7 @@ export default function OnchainExecute() {
   useEffect(() => {
     if (!missionId || !user) return;
     let active = true;
-    fetch("/api/testnet/erc8183", {
+    fetch(TESTNET_PREPARE_API, {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -67,7 +69,7 @@ export default function OnchainExecute() {
       setChainJobId(created.jobId);
       setError("");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to decode the JobCreated event");
+      setError(cause instanceof Error ? cause.message : "Unable to decode the Testnet JobCreated event");
     }
   }
 
@@ -78,7 +80,7 @@ export default function OnchainExecute() {
       <div className="console-shell">
         <header className="console-nav">
           <a href="/" className="console-brand">AgentMarket</a>
-          <span>MISSION / WALLET EXECUTION</span>
+          <span>TESTNET / WALLET EXECUTION</span>
           <a href={`/prepare?mission=${encodeURIComponent(missionId)}`}>Back to preparation →</a>
         </header>
 
@@ -86,23 +88,23 @@ export default function OnchainExecute() {
 
         <section className="console-hero">
           <div>
-            <span className="console-kicker">ERC-8183 / BSC TESTNET</span>
-            <h1>Fund the mission from your own wallet.</h1>
-            <p>Each state-changing transaction requires an explicit wallet confirmation. AgentMarket never receives or stores your private key.</p>
+            <span className="console-kicker">ERC-8183 / BSC TESTNET / CHAIN 97</span>
+            <h1>Fund the Testnet mission from your own wallet.</h1>
+            <p>Every state-changing transaction requires explicit wallet confirmation. This development runner only targets the BSC Testnet contracts.</p>
           </div>
-          <div className="console-state"><small>JOB</small><strong>{chainJobId ? `#${chainJobId}` : "AWAITING createJob"}</strong><span>{chainJobId ? "Confirmed on-chain job ID." : "createJob must confirm before later steps are enabled."}</span></div>
+          <div className="console-state"><small>JOB</small><strong>{chainJobId ? `#${chainJobId}` : "AWAITING createJob"}</strong><span>{chainJobId ? "Confirmed on BSC Testnet." : "createJob must confirm before later steps are enabled."}</span></div>
         </section>
 
         <section className="console-card console-plan-card">
-          <div className="console-section-head"><span>EXECUTION STATE</span><b>{prepared ? (chainJobId ? "JOB READY" : "PLAN READY") : "PREPARING"}</b></div>
-          <p className="console-evidence">Once createJob confirms, AgentMarket decodes the real <code>JobCreated</code> event and automatically re-encodes registerJob, setBudget, and fund with that exact job ID.</p>
+          <div className="console-section-head"><span>TESTNET EXECUTION STATE</span><b>{prepared ? (chainJobId ? "JOB READY" : "PLAN READY") : "PREPARING"}</b></div>
+          <p className="console-evidence">The Testnet flow decodes the real <code>JobCreated</code> event, then builds Testnet registerJob, setBudget, approval, and fund transactions with the confirmed job ID.</p>
           <OnchainTransactionRunner steps={steps} onConfirmed={handleConfirmed} />
         </section>
 
         {receipt && chainJobId && (
           <section className="console-card console-plan-card">
-            <div className="console-section-head"><span>CHAIN EVIDENCE</span><b>JOB #{chainJobId}</b></div>
-            <p className="console-evidence">createJob transaction {receipt.hash.slice(0, 10)}… confirmed in block {receipt.blockNumber}. The job ID was decoded directly from the receipt.</p>
+            <div className="console-section-head"><span>TESTNET CHAIN EVIDENCE</span><b>JOB #{chainJobId}</b></div>
+            <p className="console-evidence">createJob transaction {receipt.hash.slice(0, 10)}… confirmed in block {receipt.blockNumber}. The job ID was decoded directly from the BSC Testnet receipt.</p>
           </section>
         )}
       </div>

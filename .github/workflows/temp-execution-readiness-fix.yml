@@ -1,0 +1,74 @@
+name: temp execution readiness fix
+on:
+  push:
+    branches:
+      - marketplace-testnet
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: marketplace-testnet
+          fetch-depth: 0
+      - name: Patch execution readiness UI
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('src/ExecutionCapitalPanel.tsx')
+          s = p.read_text()
+          old = '''  const fundingLink = requirement?.execution_capital?.token\n    ? `/testnet/swap?token=${encodeURIComponent(capitalSymbol)}&address=${encodeURIComponent(requirement.execution_capital.token)}`\n    : "/testnet/swap";\n'''
+          new = '''  const fundingLink = requirement?.execution_capital?.token\n    ? `/testnet/swap?token=${encodeURIComponent(capitalSymbol)}&address=${encodeURIComponent(requirement.execution_capital.token)}`\n    : "/testnet/swap";\n  const approvalSpenders = (capability?.allowed_targets || []).filter((target) => target.toLowerCase() !== capitalToken.toLowerCase());\n  const approvalSpender = approvalSpenders.length === 1 ? approvalSpenders[0] : undefined;\n'''
+          if old not in s: raise SystemExit('fundingLink anchor not found')
+          s = s.replace(old, new, 1)
+          old = '''    const token = capitalToken as Address;\n    const spender = (capability?.allowed_targets?.[0] || "") as string;\n'''
+          new = '''    const token = capitalToken as Address;\n    const spender = approvalSpender as string | undefined;\n'''
+          if old not in s: raise SystemExit('spender block not found')
+          s = s.replace(old, new, 1)
+          old = '''  }, [request?.id, request?.status, request?.user_execution_wallet, capitalToken, capability?.allowed_targets]);\n\n  const requiredRaw = assetState ? requestedRawAmount(request?.capital_requested || null, assetState.decimals) : null;\n  const needsFunding = Boolean(assetState && requiredRaw !== null && assetState.balance < requiredRaw);\n  const needsAllowance = Boolean(assetState && requiredRaw !== null && capability?.allowed_targets?.[0] && assetState.allowance < requiredRaw);\n'''
+          new = '''  }, [request?.id, request?.status, request?.user_execution_wallet, capitalToken, approvalSpender]);\n\n  const requiredAmountDisplay = requirement?.execution_capital?.required_amount || request?.capital_requested || "";\n  const requiredRawDisplay = requirement?.execution_capital?.required_amount_raw || request?.spend_cap || "";\n  const requiredRaw = assetState\n    ? (requiredRawDisplay && /^\\d+$/.test(requiredRawDisplay) ? BigInt(requiredRawDisplay) : requestedRawAmount(requiredAmountDisplay || null, assetState.decimals))\n    : null;\n  const needsFunding = Boolean(assetState && requiredRaw !== null && assetState.balance < requiredRaw);\n  const needsAllowance = Boolean(assetState && requiredRaw !== null && approvalSpender && assetState.allowance < requiredRaw);\n'''
+          if old not in s: raise SystemExit('requiredRaw block not found')
+          s = s.replace(old, new, 1)
+          old = '''        requiredRaw,\n        capability?.allowed_targets?.[0] as Address | undefined,\n        requiredRaw,\n'''
+          new = '''        requiredRaw,\n        approvalSpender as Address | undefined,\n        requiredRaw,\n'''
+          if old not in s: raise SystemExit('repairFunding arguments not found')
+          s = s.replace(old, new, 1)
+          old = '''        const result = await ensureAltanaTradingCapital(\n          request.user_execution_wallet as Address,\n          capitalToken as Address,\n          requiredRaw,\n          approvalSpender as Address | undefined,\n          requiredRaw,\n        );\n'''
+          # no-op guard; actual source is not indented this way in current file
+          if old not in s:
+            old2 = '''      const result = await ensureAltanaTradingCapital(\n        request.user_execution_wallet as Address,\n        capitalToken as Address,\n        requiredRaw,\n        approvalSpender as Address | undefined,\n        requiredRaw,\n      );\n'''
+            if old2 not in s: raise SystemExit('ensureAltanaTradingCapital call not found after argument patch')
+            s = s.replace(old2, old2, 1)
+          else:
+            s = s.replace(old, old, 1)
+          
+          old = '''          {assetState && requiredRaw !== null && <div className="mt-3 font-mono text-[9.5px]">Balance {humanAmount(assetState.balance, assetState.decimals)} {capitalSymbol} · Required {humanAmount(requiredRaw, assetState.decimals)} {capitalSymbol}{capability?.allowed_targets?.[0] && ` · Allowance ${humanAmount(assetState.allowance, assetState.decimals)} ${capitalSymbol}`}</div>}\n'''
+          new = '''          {assetState && requiredRaw !== null && <div className="mt-3 font-mono text-[9.5px]">Balance {humanAmount(assetState.balance, assetState.decimals)} {capitalSymbol} · Required {humanAmount(requiredRaw, assetState.decimals)} {capitalSymbol}{approvalSpender && ` · Allowance ${humanAmount(assetState.allowance, assetState.decimals)} ${capitalSymbol}`}</div>}\n          {approvalSpender && <div className="mt-2 text-[9.5px] break-all">Approval spender: <span className="font-mono">{approvalSpender}</span></div>}\n          {!approvalSpender && capability?.allowed_targets && capability.allowed_targets.length > 1 && <div className="mt-2 text-[9.5px]">AgentMarket could not select a unique ERC-20 approval spender from the declared scope, so no allowance transaction is offered.</div>}\n'''
+          if old not in s: raise SystemExit('readiness metrics line not found')
+          s = s.replace(old, new, 1)
+          old = '''          <button type="button" onClick={() => void repairFunding()} disabled={fundingBusy} className="mt-4 font-display font-bold text-[11px] px-4 py-2.5 bg-ink text-paperhi btn-asym">{fundingBusy ? "Funding execution wallet…" : `Fund ${capitalDisplayAmount} ${capitalSymbol} for the authorized session →`}</button>\n'''
+          new = '''          <button type="button" onClick={() => void repairFunding()} disabled={fundingBusy || !approvalSpender || requiredRaw === null} className="mt-4 font-display font-bold text-[11px] px-4 py-2.5 bg-ink text-paperhi btn-asym">{fundingBusy ? "Repairing execution readiness…" : needsAllowance ? `Approve ${capitalDisplayAmount} ${capitalSymbol} for the authorized session →` : `Repair execution readiness for the authorized session →`}</button>\n'''
+          if old not in s: raise SystemExit('repair button line not found')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          p = Path('.github/workflows/temp-execution-readiness-fix.yml')
+          workflow = p.read_text()
+          # Keep this workflow only for this one corrective commit; remove it in the same commit as the source fix.
+          marker = "# self-delete-after-fix"
+          if marker not in workflow:
+            workflow = workflow.replace("          p.write_text(s)\n", "          p.write_text(s)\n          Path('.github/workflows/temp-execution-readiness-fix.yml').unlink()\n")
+            p.write_text(workflow)
+      - name: Build marketplace
+        run: npm ci && npm run build
+      - name: Commit fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/ExecutionCapitalPanel.tsx .github/workflows/temp-execution-readiness-fix.yml
+          git diff --cached --quiet && { echo "No changes to commit"; exit 0; }
+          git commit -m "fix execution capital readiness repair control"
+          git push origin marketplace-testnet

@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getAuthenticatedUser, serverClient } from "./authHandlers.js";
+import { readAgentOnchainStats } from "./testnetOnchain.js";
 
 export async function evidence(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
@@ -22,48 +23,66 @@ export async function evidence(req: VercelRequest, res: VercelResponse) {
       return res.status(403).json({ error: "Agent owner authentication required" });
     }
 
-    const { data: jobs, error: jobsError } = await supabase
-      .from("jobs")
-      .select("id,chain_job_id,status,chain_status,budget,updated_at,created_at,mission_task_id")
-      .eq("provider_agent_id", agent.id)
-      .order("updated_at", { ascending: false })
-      .limit(100);
-    if (jobsError) throw new Error(jobsError.message);
+    const onchain = await readAgentOnchainStats(agentId);
+    if (onchain.owner.toLowerCase() !== auth.user.wallet_address.toLowerCase()) {
+      return res.status(403).json({ error: "Connected wallet is no longer the ERC-8004 owner of this agent" });
+    }
 
-    const rows = jobs || [];
-    const counts = rows.reduce<Record<string, number>>((acc, job: any) => {
-      const state = String(job.chain_status || job.status || "unknown").toLowerCase();
-      acc[state] = (acc[state] || 0) + 1;
-      return acc;
-    }, {});
-
-    const terminalStates = new Set(["completed", "rejected", "expired", "refunded", "settled"]);
-    const terminalTotal = Object.entries(counts).reduce((sum, [state, count]) => terminalStates.has(state) ? sum + count : sum, 0);
-    const successful = (counts.completed || 0) + (counts.settled || 0);
-    const outcomeRate = terminalTotal > 0 ? Number(((successful / terminalTotal) * 100).toFixed(1)) : null;
+    const counts: Record<string, number> = {};
+    for (const job of onchain.jobs) counts[job.chain_status] = (counts[job.chain_status] || 0) + 1;
+    const successful = onchain.completed_jobs;
+    const outcomeRate = onchain.terminal_jobs > 0 ? Number(((successful / onchain.terminal_jobs) * 100).toFixed(1)) : null;
 
     return res.status(200).json({
       ok: true,
       agent,
-      network: "marketplace",
-      source: "AgentMarket verified job records",
+      network: "bsc-testnet",
+      chain_id: 97,
+      source: "ERC-8004 Identity Registry + ERC-8183 Commerce onchain",
+      onchain: {
+        agent_wallet: onchain.agent_wallet,
+        owner: onchain.owner,
+        agent_uri: onchain.agent_uri,
+        total_jobs: onchain.total_jobs,
+        completed_jobs: onchain.completed_jobs,
+        submitted_jobs: onchain.submitted_jobs,
+        funded_jobs: onchain.funded_jobs,
+        open_jobs: onchain.open_jobs,
+        rejected_jobs: onchain.rejected_jobs,
+        expired_jobs: onchain.expired_jobs,
+        terminal_jobs: onchain.terminal_jobs,
+        success_rate: onchain.success_rate,
+        feedback_count: onchain.feedback_count,
+        reputation_value: onchain.reputation_value,
+        reputation_decimals: onchain.reputation_decimals,
+        reputation_score: onchain.reputation_score,
+      },
       outcomes: {
-        scanned: rows.length,
+        scanned: onchain.total_jobs,
         counts,
-        terminal_total: terminalTotal,
+        terminal_total: onchain.terminal_jobs,
         successful_terminal: successful,
         verified_outcome_rate: outcomeRate,
-        methodology: "successful terminal outcomes divided by verified terminal outcomes; no score is produced when terminal history is empty"
+        methodology: "All ERC-8183 jobs created for the agent wallet/owner are read from BSC Testnet and each job status is verified with Commerce.getJob().",
       },
-      jobs: rows.map((job: any) => ({
-        id: job.id,
-        chain_job_id: job.chain_job_id,
-        status: job.status,
+      jobs: onchain.jobs.map((job) => ({
+        id: job.chain_job_id,
+        chain_job_id: Number(job.chain_job_id),
+        status: job.chain_status,
         chain_status: job.chain_status,
         budget: job.budget,
-        created_at: job.created_at,
-        updated_at: job.updated_at
-      }))
+        description: job.description,
+        client: job.client,
+        provider: job.provider,
+        evaluator: job.evaluator,
+        submitted_at: job.submitted_at,
+        expired_at: job.expired_at,
+        deliverable: job.deliverable,
+        tx_hash: job.transaction_hash,
+        block_number: job.block_number,
+        source: "erc8183_onchain",
+      })),
+      cached_marketplace_rows: "not used as the source of job counts or outcomes",
     });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to load agent evidence" });

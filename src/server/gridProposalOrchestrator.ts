@@ -79,6 +79,7 @@ export function prepareGridRuntime(proposal: DefiProposal): GridOrchestrationRes
   const context = applyGridRiskDecision(
     createGridRuntime({
       job_id: proposal.job_id,
+      agent_id: "grid",
       agent_type: "grid",
       chain_id: 97,
       wallet: proposal.wallet,

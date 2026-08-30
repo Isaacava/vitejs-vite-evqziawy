@@ -37,16 +37,12 @@ type Eip1193Provider = {
   request(args: { method: string; params?: unknown[] }): Promise<unknown>;
 };
 
-async function connectedProvider(requestConnection = false): Promise<Eip1193Provider> {
+async function connectedWalletProvider() {
   const provider = await getWalletProvider() as Eip1193Provider;
   const accounts = await provider.request({ method: "eth_accounts" }) as string[];
-  if (!accounts?.[0] && requestConnection) {
-    await provider.request({ method: "eth_requestAccounts" });
-  }
-  const confirmedAccounts = await provider.request({ method: "eth_accounts" }) as string[];
-  if (!confirmedAccounts?.[0]) throw new Error("Connect a wallet before continuing.");
+  if (!accounts?.[0]) throw new Error("Connect your AgentMarket wallet before continuing.");
   await ensureExpectedChain(provider);
-  return provider;
+  return { provider, account: accounts[0].toLowerCase() };
 }
 
 export default function LifecycleActions() {
@@ -68,7 +64,7 @@ export default function LifecycleActions() {
     void refresh().catch((cause) => setError(cause instanceof Error ? cause.message : "Unable to load job"));
     void getWalletProvider()
       .then(async (provider) => {
-        const accounts = await provider.request({ method: "eth_accounts" }) as string[];
+        const accounts = await (provider as Eip1193Provider).request({ method: "eth_accounts" }) as string[];
         if (accounts?.[0]) setWallet(accounts[0].toLowerCase());
       })
       .catch(() => undefined);
@@ -86,13 +82,11 @@ export default function LifecycleActions() {
     setError("");
     setNotice("");
     try {
-      const provider = await connectedProvider(true);
-      const accounts = await provider.request({ method: "eth_accounts" }) as string[];
-      setWallet(String(accounts[0]).toLowerCase());
+      const { account } = await connectedWalletProvider();
+      setWallet(account);
       let tx;
       if (action === "dispute") {
-        const connectedClient = String(accounts[0]).toLowerCase();
-        if (!disputeAvailable || connectedClient !== String(job?.client || "").toLowerCase()) {
+        if (!disputeAvailable || account !== String(job?.client || "").toLowerCase()) {
           throw new Error("Dispute is only available to the connected job client while the submitted job is within the protocol's dispute window.");
         }
         tx = { to: POLICY, data: encodeFunctionData({ abi: POLICY_ABI, functionName: "dispute", args: [BigInt(jobId)] }) };

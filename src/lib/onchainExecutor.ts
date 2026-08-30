@@ -1,8 +1,4 @@
-import { connectWallet } from "./walletAuth";
-
-type Eip1193Provider = {
-  request(args: { method: string; params?: unknown[] }): Promise<unknown>;
-};
+import { getConnectedWalletProvider } from "./walletAuth";
 
 export type PreparedTransaction = {
   to: string;
@@ -24,8 +20,8 @@ export type ConfirmedTransaction = {
 
 const TX_HASH = /^0x[a-fA-F0-9]{64}$/;
 
-async function provider(): Promise<Eip1193Provider> {
-  return connectWallet();
+function provider() {
+  return getConnectedWalletProvider();
 }
 
 function transaction(tx: PreparedTransaction) {
@@ -39,8 +35,7 @@ function transaction(tx: PreparedTransaction) {
 }
 
 export async function sendPreparedTransaction(tx: PreparedTransaction) {
-  const activeProvider = await provider();
-  const hash = String(await activeProvider.request({
+  const hash = String(await provider().request({
     method: "eth_sendTransaction",
     params: [transaction(tx)],
   }));
@@ -50,10 +45,9 @@ export async function sendPreparedTransaction(tx: PreparedTransaction) {
 
 export async function waitForTransaction(hash: string, timeoutMs = 180_000, pollMs = 2_500) {
   if (!TX_HASH.test(hash)) throw new Error("Invalid transaction hash.");
-  const activeProvider = await provider();
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const receipt = await activeProvider.request({
+    const receipt = await provider().request({
       method: "eth_getTransactionReceipt",
       params: [hash],
     }) as null | {

@@ -2,13 +2,40 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#eeeade" />
     <meta name="description" content="AgentMarket finds the most reliable on-chain agent for your goal." />
-    <title>AgentMarket — Find the right on-chain agent</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700;800&display=swap" rel="stylesheet" />
+
+    <!-- The workspace design source uses the Tailwind CDN. The Vite Tailwind plugin remains enabled for the compiled app; this CDN config keeps the browser-side design tokens identical to the supplied HTML. -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              paper: '#eeeade', paperhi: '#fbfaf5', ink: '#171714', inksoft: '#6d6a61',
+              line: '#d5cfbf', linesoft: '#e2ddcf', brass: '#9d7428', brasslt: '#d2b05e',
+              green: '#2d6b4f', greensoft: '#e7efe9', rust: '#9b4733', rustsoft: '#f3e6e1',
+              brasssoft: '#f7ecd3', deep: '#191a17', cream: '#f7f4e9'
+            },
+            fontFamily: {
+              display: ['"Space Grotesk"', 'sans-serif'],
+              body: ['Manrope', 'sans-serif'],
+              mono: ['"DM Mono"', 'monospace']
+            }
+          }
+        }
+      };
+    </script>
+
+    <title>AgentMarket — Workspace</title>
   </head>
-  <body>
+  <body class="text-ink">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

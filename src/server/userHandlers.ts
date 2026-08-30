@@ -2,6 +2,11 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { parseMarketplaceIntent } from "../lib/intent.js";
 import { getAuthenticatedUser, serverClient } from "./authHandlers.js";
 
+const TERMINAL = ["completed", "rejected", "cancelled", "expired", "terminal"];
+const ACTIVE = ["planning", "open", "funded", "accepted", "in_progress", "awaiting_review"];
+const REVIEW = ["submitted", "awaiting_review"];
+const ESCROW = ["pending", "funded", "escrowed", "locked"];
+
 export async function dashboard(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
   const auth = await getAuthenticatedUser(req);
@@ -19,26 +24,46 @@ export async function dashboard(req: VercelRequest, res: VercelResponse) {
     if (activityResult.error) throw new Error(activityResult.error.message);
     if (paymentsResult.error) throw new Error(paymentsResult.error.message);
     if (notificationsResult.error) throw new Error(notificationsResult.error.message);
+
     const missions = missionsResult.data || [];
     const missionIds = missions.map((m: any) => m.id);
     let taskRows: any[] = [];
-    if (missionIds.length) { const { data, error } = await supabase.from("mission_tasks").select("id,mission_id,agent_id,title,role,status,budget").in("mission_id", missionIds); if (error) throw new Error(error.message); taskRows = data || []; }
+    if (missionIds.length) {
+      const { data, error } = await supabase.from("mission_tasks").select("id,mission_id,agent_id,title,role,status,budget").in("mission_id", missionIds);
+      if (error) throw new Error(error.message);
+      taskRows = data || [];
+    }
     const taskIds = taskRows.map((t: any) => t.id);
     let jobRows: any[] = [];
-    if (taskIds.length) { const { data, error } = await supabase.from("jobs").select("id,mission_task_id,provider_agent_id,status,budget,chain_job_id,client_wallet,updated_at").in("mission_task_id", taskIds).order("updated_at", { ascending: false }); if (error) throw new Error(error.message); jobRows = data || []; }
+    if (taskIds.length) {
+      const { data, error } = await supabase.from("jobs").select("id,mission_task_id,provider_agent_id,status,budget,chain_job_id,chain_status,chain_last_synced_at,chain_tx_hash,chain_error,client_wallet,updated_at").in("mission_task_id", taskIds).order("updated_at", { ascending: false });
+      if (error) throw new Error(error.message);
+      jobRows = data || [];
+    }
     const agentIds = Array.from(new Set(taskRows.map((t: any) => t.agent_id).filter(Boolean)));
     const agents = agentIds.length ? ((await supabase.from("agents").select("id,agent_id,name,category,status,verification_status").in("id", agentIds)).data || []) : [];
     const agentById = new Map(agents.map((a: any) => [a.id, a]));
     const taskById = new Map(taskRows.map((t: any) => [t.id, t]));
     const jobsByMission = new Map<string, any[]>();
-    for (const job of jobRows) { const task = taskById.get(job.mission_task_id); if (!task) continue; const list = jobsByMission.get(task.mission_id) || []; list.push({ ...job, task_id: task.id, agent: task.agent_id ? agentById.get(task.agent_id) : null }); jobsByMission.set(task.mission_id, list); }
+    for (const job of jobRows) {
+      const task = taskById.get(job.mission_task_id);
+      if (!task) continue;
+      const list = jobsByMission.get(task.mission_id) || [];
+      list.push({ ...job, task_id: task.id, agent: task.agent_id ? agentById.get(task.agent_id) : null });
+      jobsByMission.set(task.mission_id, list);
+    }
     const missionViews = missions.map((mission: any) => ({ ...mission, jobs: jobsByMission.get(mission.id) || [] }));
-    const active = missionViews.filter((m: any) => ["planning", "in_progress", "submitted", "awaiting_review"].includes(m.status)).length;
-    const completed = missionViews.filter((m: any) => m.status === "completed").length;
-    const awaitingReview = missionViews.filter((m: any) => ["submitted", "awaiting_review"].includes(m.status)).length;
-    const escrow = (paymentsResult.data || []).filter((p: any) => ["pending", "funded", "escrowed"].includes(String(p.status))).reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+    const active = missionViews.filter((m: any) => !TERMINAL.includes(String(m.status)) && (ACTIVE.includes(String(m.status)) || m.jobs.some((j: any) => ACTIVE.includes(String(j.status))))).length;
+    const completed = missionViews.filter((m: any) => TERMINAL.includes(String(m.status)) || m.jobs.some((j: any) => TERMINAL.includes(String(j.status)) || String(j.chain_status) === "completed")).length;
+    const awaitingReview = missionViews.filter((m: any) => REVIEW.includes(String(m.status)) || m.jobs.some((j: any) => REVIEW.includes(String(j.status)) || REVIEW.includes(String(j.chain_status)))).length;
+    const recordedEscrow = (paymentsResult.data || []).filter((p: any) => ESCROW.includes(String(p.status).toLowerCase())).reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
+    const fundedJobs = jobRows.filter((j: any) => ["funded", "accepted", "in_progress", "submitted"].includes(String(j.status)) || ["funded", "accepted", "in_progress", "submitted"].includes(String(j.chain_status))).reduce((sum: number, j: any) => sum + Number(j.budget || 0), 0);
+    const escrow = recordedEscrow > 0 ? recordedEscrow : fundedJobs;
+
     return res.status(200).json({ user: auth.user, stats: { active, completed, awaitingReview, escrow }, missions: missionViews, activity: activityResult.data || [], payments: paymentsResult.data || [], notifications: notificationsResult.data || [] });
-  } catch (error) { return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to load dashboard" }); }
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to load dashboard" });
+  }
 }
 
 export async function createMission(req: VercelRequest, res: VercelResponse) {

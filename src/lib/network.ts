@@ -1,64 +1,52 @@
-import { bsc, bscTestnet } from "viem/chains";
+import { bscTestnet } from "viem/chains";
 import type { Address, Chain } from "viem";
 
-export type BscNetworkName = "mainnet" | "testnet";
-export type AppEnvironment = "production" | "testnet";
+export type BscNetworkName = "testnet";
+export type AppEnvironment = "testnet";
 
-type ViteRuntimeEnv = Record<string, string | undefined>;
-const runtimeEnv = (import.meta as unknown as { env?: ViteRuntimeEnv }).env ?? {};
+export const APP_ENV: AppEnvironment = "testnet";
+export const BSC_NETWORK: BscNetworkName = "testnet";
+export const BSC_CHAIN: Chain = bscTestnet;
+export const BSC_CHAIN_ID = 97;
 
-const configuredEnvironment = (runtimeEnv.VITE_APP_ENV || "production").toLowerCase();
-export const APP_ENV: AppEnvironment = configuredEnvironment === "testnet" ? "testnet" : "production";
+// Dedicated Testnet build: do not inherit the stale public BNB seed RPC.
+export const BSC_RPC_URL = "https://bsc-testnet-rpc.publicnode.com";
 
-const configuredNetwork = (runtimeEnv.VITE_BSC_NETWORK || "mainnet").toLowerCase();
+export const BSC_EXPLORER_URL = "https://testnet.bscscan.com";
 
-if (APP_ENV === "production" && configuredNetwork === "testnet") {
-  throw new Error("Production AgentMarket cannot run against BSC Testnet. Use a dedicated VITE_APP_ENV=testnet build.");
-}
+const runtimeEnv = (import.meta as unknown as {
+  env?: {
+    VITE_ERC8183_COMMERCE_ADDRESS?: string;
+    VITE_ERC8183_ROUTER_ADDRESS?: string;
+    VITE_ERC8183_POLICY_ADDRESS?: string;
+  };
+}).env;
 
-export const BSC_NETWORK: BscNetworkName = APP_ENV === "testnet" ? "testnet" : "mainnet";
-export const BSC_CHAIN: Chain = BSC_NETWORK === "testnet" ? bscTestnet : bsc;
-export const BSC_CHAIN_ID = BSC_CHAIN.id;
+const TESTNET_CONTRACTS = {
+  commerce: runtimeEnv?.VITE_ERC8183_COMMERCE_ADDRESS || "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de",
+  router: runtimeEnv?.VITE_ERC8183_ROUTER_ADDRESS || "0x6d948b47614dbfbbf97a5e3fd9b410deeab44f17",
+  policy: runtimeEnv?.VITE_ERC8183_POLICY_ADDRESS || "0xc4f85d602235e14a45fd1d9794c4092af762b1a6",
+  registry: "0x8004A818BFB912233c491871b3d84c89A494BD9e",
+} as const;
 
-const DEFAULT_MAINNET_RPC = "https://bsc-dataseed.bnbchain.org";
-const DEFAULT_TESTNET_RPC = "https://data-seed-prebsc-1-s1.bnbchain.org:8545";
-
-export const BSC_RPC_URL =
-  runtimeEnv.VITE_BSC_RPC_URL ||
-  (BSC_NETWORK === "testnet" ? DEFAULT_TESTNET_RPC : DEFAULT_MAINNET_RPC);
-
-export const BSC_EXPLORER_URL =
-  BSC_NETWORK === "testnet" ? "https://testnet.bscscan.com" : "https://bscscan.com";
-
-function requireAddress(name: string, value: string | undefined): Address {
-  if (!value || !/^0x[a-fA-F0-9]{40}$/.test(value)) {
-    throw new Error(
-      `${name} is required for BSC ${BSC_NETWORK}. Set the corresponding VITE_* environment variable.`
-    );
+function asAddress(value: string, name: string): Address {
+  if (!/^0x[a-fA-F0-9]{40}$/.test(value)) {
+    throw new Error(`${name} is not a valid Testnet contract address.`);
   }
   return value as Address;
 }
 
-const MAINNET_ADDRESSES = {
-  commerce: "0xea4daa3100a767e86fded867729ae7446476eba6",
-  router: "0x51895229e12f9876011789b04f8698af06ccd6da",
-  policy: "0x9c01845705b3078aa2e8cff7520a6376fd766de5",
-  registry: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
+export const NETWORK_CONTRACTS = {
+  commerce: asAddress(TESTNET_CONTRACTS.commerce, "VITE_ERC8183_COMMERCE_ADDRESS"),
+  router: asAddress(TESTNET_CONTRACTS.router, "VITE_ERC8183_ROUTER_ADDRESS"),
+  policy: asAddress(TESTNET_CONTRACTS.policy, "VITE_ERC8183_POLICY_ADDRESS"),
+  registry: asAddress(TESTNET_CONTRACTS.registry, "ERC-8004 registry"),
 } as const;
-
-export const NETWORK_CONTRACTS = BSC_NETWORK === "mainnet"
-  ? MAINNET_ADDRESSES
-  : {
-      commerce: requireAddress("VITE_ERC8183_COMMERCE_ADDRESS", runtimeEnv.VITE_ERC8183_COMMERCE_ADDRESS),
-      router: requireAddress("VITE_ERC8183_ROUTER_ADDRESS", runtimeEnv.VITE_ERC8183_ROUTER_ADDRESS),
-      policy: requireAddress("VITE_ERC8183_POLICY_ADDRESS", runtimeEnv.VITE_ERC8183_POLICY_ADDRESS),
-      registry: requireAddress("VITE_ERC8004_REGISTRY_ADDRESS", runtimeEnv.VITE_ERC8004_REGISTRY_ADDRESS),
-    };
 
 export function assertExpectedChain(actualChainId: number) {
   if (actualChainId !== BSC_CHAIN_ID) {
     throw new Error(
-      `Wrong BSC network: expected chain ${BSC_CHAIN_ID}, received ${actualChainId}.`
+      `Wrong BSC network: expected BSC Testnet (chain ${BSC_CHAIN_ID}), received ${actualChainId}.`,
     );
   }
 }

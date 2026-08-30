@@ -13,6 +13,15 @@ import {
   NETWORK_CONTRACTS,
 } from "./network.js";
 
+/*
+ * ============================================================
+ * BNB AGENTIC COMMERCE CONTRACTS (ERC-8183)
+ * Network is selected by src/lib/network.ts.
+ * Production defaults to BSC mainnet; preview/testing can use
+ * BSC testnet with VITE_BSC_NETWORK=testnet plus contract overrides.
+ * ============================================================
+ */
+
 export const ERC8183_ADDRESSES = {
   commerce: NETWORK_CONTRACTS.commerce as Address,
   router: NETWORK_CONTRACTS.router as Address,
@@ -66,6 +75,13 @@ export const COMMERCE_ABI = [
       { name: "deliverable", type: "bytes32" },
       { name: "optParams", type: "bytes" },
     ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "claimRefund",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "jobId", type: "uint256" }],
     outputs: [],
   },
   {
@@ -150,6 +166,51 @@ export const ROUTER_ABI = [
       { name: "optParams", type: "bytes" },
     ],
     outputs: [],
+  },
+  {
+    type: "function",
+    name: "markExpired",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "jobId", type: "uint256" }],
+    outputs: [],
+  },
+] as const;
+
+export const POLICY_ABI = [
+  {
+    type: "function",
+    name: "dispute",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "jobId", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "voteReject",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "jobId", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "check",
+    stateMutability: "view",
+    inputs: [{ name: "jobId", type: "uint256" }],
+    outputs: [{ name: "verdict", type: "uint8" }],
+  },
+  {
+    type: "function",
+    name: "disputeWindow",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "voteQuorum",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
   },
 ] as const;
 

@@ -1,0 +1,9 @@
+.landing-auth-overlay{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:20px;background:rgba(23,23,20,.48);backdrop-filter:blur(8px)}
+.landing-auth-modal{width:min(440px,100%);padding:26px;background:#fbfaf5;border:1px solid #d5cfbf;border-radius:24px;box-shadow:0 30px 80px rgba(0,0,0,.22);color:#171714}
+.landing-auth-kicker{margin-bottom:10px;color:#9d7428;font:600 9px/1 "DM Mono",monospace;letter-spacing:.12em;text-transform:uppercase}
+.landing-auth-modal strong{display:block;font:700 25px/1.08 "Space Grotesk",sans-serif;letter-spacing:-.03em}
+.landing-auth-modal p{margin:12px 0 0;color:#6d6a61;font-size:13px;line-height:1.65}
+.landing-auth-close{margin-top:18px;border:0;background:#171714;color:#fbfaf5;border-radius:12px;padding:11px 16px;font-weight:800;cursor:pointer}
+.primary-btn,.land-nav-cta,.inline-link{cursor:pointer}
+.primary-btn{min-width:220px;justify-content:space-between;white-space:nowrap}
+@media(max-width:620px){.land-nav{width:calc(100% - 28px);padding:14px 0}.land-nav-links{display:none}.land-nav-cta{padding:10px 12px;font-size:12px}.primary-btn{width:100%;min-width:0}.hero-actions{width:100%;align-items:stretch}.text-btn{align-self:center}.landing-auth-modal{padding:22px;border-radius:20px}}

@@ -1,3 +1,5 @@
+import type { ExecutionProposal } from "./executionProposal.js";
+
 export type GridProposalInput = {
   jobId: string;
   wallet: string;
@@ -12,20 +14,17 @@ export type GridProposalInput = {
   expiresAt: string;
 };
 
-export type GridProposal = {
-  job_id: string;
+export type GridProposal = ExecutionProposal & {
+  agent_id: "grid";
   agent_type: "grid";
   chain_id: 97;
-  wallet: string;
   action: "create_grid";
-  summary: string;
   token: string;
   protocol: string;
   notional: number;
   spend_cap: number;
   slippage_bps: number;
   risk: "medium";
-  expires_at: string;
   parameters: {
     lower_price: number;
     upper_price: number;
@@ -57,6 +56,7 @@ export function buildGridProposal(input: GridProposalInput): GridProposal {
 
   return {
     job_id: input.jobId.trim(),
+    agent_id: "grid",
     agent_type: "grid",
     chain_id: 97,
     wallet: input.wallet,

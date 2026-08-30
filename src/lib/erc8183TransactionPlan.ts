@@ -5,7 +5,16 @@ export type Erc8183PreparedResponse = {
   network: string;
   chain_id: number;
   transactions: Record<string, { to?: string; data?: string; value?: string; data_builder?: string }>;
-  payment: { token: string; budget_raw: string; allowance_raw: string };
+  payment: {
+    token: string;
+    budget_raw: string;
+    allowance_raw: string;
+    symbol: string;
+    decimals?: number;
+    balance_raw?: string;
+    balance_formatted: string;
+    allowance_formatted: string;
+  };
 };
 
 export type Erc8183PlanStep = {
@@ -81,7 +90,10 @@ function encodeJobTransactions(data: Erc8183PreparedResponse, chainJobId: string
     throw new Error("ERC-8183 transaction targets are incomplete.");
   }
 
-  const fallbackPolicy = "0x4f4678d4439fec812ac7674bb3efb4c8f5fb78a6" as Address;
+  // Fresh BSC Testnet APEX Policy deployed with the rotated Router.
+  // The server-provided data_builder is authoritative; this fallback is only
+  // for older prepared responses that omitted the policy text.
+  const fallbackPolicy = "0xc4f85d602235e14a45fd1d9794c4092af762b1a6" as Address;
   const registerPolicy = isAddress(policy) ? policy : fallbackPolicy;
 
   return {

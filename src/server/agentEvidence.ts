@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 import { getAuthenticatedUser } from "./authHandlers.js";
+import { readAgentOnchainStats } from "./testnetOnchain.js";
 
 function db() {
   const url = process.env.SUPABASE_URL;
@@ -36,40 +37,35 @@ export async function history(req: VercelRequest, res: VercelResponse) {
     if (!agent) return res.status(404).json({ error: "Agent not found" });
     if (!(await authorizedForAgent(req, agent.owner))) return res.status(401).json({ error: "Agent owner authentication required" });
 
-    const { data: rows, error: jobsError } = await supabase
-      .from("jobs")
-      .select("id,chain_job_id,status,chain_status,description,budget,payment_token,chain_tx_hash,chain_last_synced_at,updated_at")
-      .eq("provider_agent_id", agent.id)
-      .order("updated_at", { ascending: false })
-      .limit(100);
-    if (jobsError) throw new Error(jobsError.message);
+    const onchain = await readAgentOnchainStats(agentId);
+    if (agent.owner && onchain.owner.toLowerCase() !== agent.owner.toLowerCase() && !runtimeAuthorized(req)) {
+      return res.status(409).json({ error: "Indexed owner does not match the current ERC-8004 owner", source: "erc8004_identity" });
+    }
 
-    const jobs = rows || [];
     const statusCounts: Record<string, number> = {};
-    const chainStatusCounts: Record<string, number> = {};
-    let settledCount = 0;
-    let failedOrDisputedCount = 0;
-
-    for (const row of jobs) {
-      const status = String(row.status || "unknown").toLowerCase();
-      const chainStatus = String(row.chain_status || "unknown").toLowerCase();
-      statusCounts[status] = (statusCounts[status] || 0) + 1;
-      chainStatusCounts[chainStatus] = (chainStatusCounts[chainStatus] || 0) + 1;
-      if (["settled", "terminal", "completed"].includes(chainStatus) || ["settled", "terminal", "completed"].includes(status)) settledCount += 1;
-      if (["failed", "disputed", "rejected", "refunded", "expired"].includes(chainStatus) || ["failed", "disputed", "rejected", "refunded", "expired"].includes(status)) failedOrDisputedCount += 1;
+    for (const row of onchain.jobs) {
+      statusCounts[row.chain_status] = (statusCounts[row.chain_status] || 0) + 1;
     }
 
     return res.status(200).json({
       ok: true,
       agent,
       history: {
-        total_indexed_jobs: jobs.length,
+        total_indexed_jobs: onchain.total_jobs,
+        total_onchain_jobs: onchain.total_jobs,
         status_counts: statusCounts,
-        chain_status_counts: chainStatusCounts,
-        settled_count: settledCount,
-        failed_disputed_or_recovered_count: failedOrDisputedCount,
-        evidence_note: "Counts are derived from marketplace rows indexed for this provider. No black-box or missing-history score is generated.",
-        recent_jobs: jobs.slice(0, 25),
+        chain_status_counts: statusCounts,
+        completed_jobs: onchain.completed_jobs,
+        terminal_jobs: onchain.terminal_jobs,
+        success_rate: onchain.success_rate,
+        feedback_count: onchain.feedback_count,
+        reputation_score: onchain.reputation_score,
+        settled_count: onchain.completed_jobs,
+        failed_disputed_or_recovered_count: onchain.rejected_jobs + onchain.expired_jobs,
+        evidence_note: "Counts and outcomes are derived directly from BSC Testnet ERC-8183 job events and Commerce.getJob(). Supabase is used only for agent metadata and owner-scoped access.",
+        source: "ERC-8004 + ERC-8183 onchain",
+        agent_wallet: onchain.agent_wallet,
+        recent_jobs: onchain.jobs.slice(0, 25),
       },
     });
   } catch (error) {

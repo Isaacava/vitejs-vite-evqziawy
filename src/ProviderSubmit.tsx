@@ -19,6 +19,8 @@ type Job = {
 
 const compact = (value?: string | null) => value ? `${value.slice(0, 8)}…${value.slice(-6)}` : "—";
 
+const TESTNET_CHAIN_ID_HEX = "0x61";
+
 export default function ProviderSubmit() {
   const jobId = new URLSearchParams(window.location.search).get("job") || "";
   const agentId = new URLSearchParams(window.location.search).get("agent") || "";
@@ -58,10 +60,30 @@ export default function ProviderSubmit() {
       return;
     }
     try {
-      const chainId = String(await window.ethereum.request({ method: "eth_chainId" }));
-      if (Number.parseInt(chainId, 16) !== PROVIDER_ERC8183_TESTNET.chainId) {
-        throw new Error("Switch the wallet to BSC Testnet before submitting.");
+      const chainIdRaw = String(await window.ethereum.request({ method: "eth_chainId" }));
+      const chainId = chainIdRaw.startsWith("0x") ? Number.parseInt(chainIdRaw.slice(2), 16) : Number(chainIdRaw);
+      if (chainId !== PROVIDER_ERC8183_TESTNET.chainId) {
+        try {
+          await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: TESTNET_CHAIN_ID_HEX }] });
+        } catch (switchError) {
+          const code = typeof switchError === "object" && switchError && "code" in switchError ? Number((switchError as { code?: unknown }).code) : 0;
+          if (code !== 4902) throw switchError;
+          await window.ethereum.request({
+            method: "wallet_addEthereumChain",
+            params: [{
+              chainId: TESTNET_CHAIN_ID_HEX,
+              chainName: "BNB Smart Chain Testnet",
+              nativeCurrency: { name: "tBNB", symbol: "tBNB", decimals: 18 },
+              rpcUrls: ["https://bsc-testnet-rpc.publicnode.com"],
+              blockExplorerUrls: ["https://testnet.bscscan.com"],
+            }],
+          });
+        }
       }
+      const confirmedChainRaw = String(await window.ethereum.request({ method: "eth_chainId" }));
+      const confirmedChain = confirmedChainRaw.startsWith("0x") ? Number.parseInt(confirmedChainRaw.slice(2), 16) : Number(confirmedChainRaw);
+      if (confirmedChain !== PROVIDER_ERC8183_TESTNET.chainId) throw new Error("Wallet could not switch to BSC Testnet (chain 97).");
+
       const accounts = await window.ethereum.request({ method: "eth_requestAccounts" }) as string[];
       const first = accounts?.[0];
       if (!first) throw new Error("No wallet account was returned.");

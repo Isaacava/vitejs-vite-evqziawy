@@ -1,13 +1,38 @@
 {
   "crons": [
-    { "path": "/api/index-agents", "schedule": "0 2 * * *" },
-    { "path": "/api/check-agent-endpoints", "schedule": "15 2 * * *" }
+    {
+      "path": "/api/index-agents",
+      "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/check-agent-endpoints",
+      "schedule": "15 2 * * *"
+    }
   ],
   "rewrites": [
-    { "source": "/api", "destination": "/api/index" },
-    { "source": "/api/:path*", "destination": "/api/index?__path=:path*" },
+    { "source": "/api/auth/nonce", "destination": "/api/auth?action=nonce" },
+    { "source": "/api/auth/verify", "destination": "/api/auth?action=verify" },
+    { "source": "/api/auth/me", "destination": "/api/auth?action=me" },
+    { "source": "/api/auth/logout", "destination": "/api/auth?action=logout" },
+    { "source": "/api/agent-actions", "destination": "/api/agent?route=actions" },
+    { "source": "/api/agent-jobs/watch", "destination": "/api/agent?route=watch" },
+    { "source": "/api/agent-runtimes/risk-guardian", "destination": "/api/agent?route=risk-runtime" },
+    { "source": "/api/agent/heartbeat", "destination": "/api/agent?route=heartbeat" },
+    { "source": "/api/risk-guardian", "destination": "/api/agent?route=risk-policy" },
+    { "source": "/api/missions", "destination": "/api/dashboard?route=missions" },
+    { "source": "/api/agent-jobs", "destination": "/api/marketplace?route=agent-jobs" },
+    { "source": "/api/erc8183-settlement", "destination": "/api/marketplace?route=erc8183-settlement" },
+    { "source": "/api/erc8183/prepare", "destination": "/api/marketplace?route=erc8183-prepare" },
+    { "source": "/api/match", "destination": "/api/marketplace?route=match" },
+    { "source": "/api/session-permissions", "destination": "/api/marketplace?route=session-permissions" },
+    { "source": "/api/testnet/:path*", "destination": "/api/testnet?route=:path*" },
     { "source": "/app", "destination": "/index.html" },
     { "source": "/dashboard", "destination": "/index.html" },
+    { "source": "/discover", "destination": "/index.html" },
+    { "source": "/missions", "destination": "/index.html" },
+    { "source": "/mission", "destination": "/index.html" },
+    { "source": "/activity", "destination": "/index.html" },
+    { "source": "/payments", "destination": "/index.html" },
     { "source": "/permissions", "destination": "/index.html" },
     { "source": "/agent/evidence", "destination": "/index.html" },
     { "source": "/prepare", "destination": "/index.html" },
@@ -16,6 +41,8 @@
     { "source": "/provider/submit", "destination": "/index.html" },
     { "source": "/lifecycle", "destination": "/index.html" },
     { "source": "/agents/register", "destination": "/index.html" },
-    { "source": "/agent/inbox", "destination": "/index.html" }
+    { "source": "/agent/inbox", "destination": "/index.html" },
+    { "source": "/testnet", "destination": "/index.html" },
+    { "source": "/testnet/:path*", "destination": "/index.html" }
   ]
 }

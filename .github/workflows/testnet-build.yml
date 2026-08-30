@@ -1,0 +1,219 @@
+name: Testnet Marketplace Build
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.txt"
+  push:
+    branches:
+      - marketplace-testnet
+
+jobs:
+  build:
+    name: TypeScript + Vite build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Run TypeScript/Vite build
+        run: npm run build
+
+  grid-agent:
+    name: Grid Agent Testnet tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Grid Agent SDK and test runner
+        run: python -m pip install "bnbagent[server]" pytest
+
+      - name: Run Grid Agent tests
+        env:
+          PYTHONPATH: agents/grid
+        run: pytest agents/grid/tests -q
+
+  grid-execution:
+    name: Grid Altana executor TypeScript check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache-dependency-path: agents/grid/execution/package.json
+
+      - name: Install Grid executor dependencies
+        working-directory: agents/grid/execution
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck Grid executor
+        working-directory: agents/grid/execution
+        run: npm run typecheck
+
+  grid-container:
+    name: Grid free-plan container build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Build existing Grid service container
+        run: docker build -f agents/grid/Dockerfile agents/grid
+
+  network-isolation:
+    name: Testnet network isolation audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Verify Testnet surfaces do not use Mainnet ERC-8183 addresses
+        shell: bash
+        run: |
+          set -euo pipefail
+          forbidden=(
+            "0xea4daa3100a767e86fded867729ae7446476eba6"
+            "0x51895229e12f9876011789b04f8698af06ccd6da"
+            "0x9c01845705b3078aa2e8cff7520a6376fd766de5"
+          )
+          surfaces=(src server/_testnet agents)
+          for address in "${forbidden[@]}"; do
+            if grep -Rni --exclude-dir=.git --exclude='package-lock.json' "$address" "${surfaces[@]}"; then
+              echo "Found forbidden Mainnet contract address in a Testnet surface: $address"
+              exit 1
+            fi
+          done
+
+      - name: Verify Testnet surfaces contain no Mainnet chain or explorer configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          surfaces=(src server/_testnet agents)
+          forbidden_patterns=(
+            "chainId[^0-9]*56"
+            "chain_id[^0-9]*56"
+            "0x38"
+            "https://bscscan.com"
+            "VITE_BSC_NETWORK=mainnet"
+            "BSC_NETWORK[^A-Za-z0-9_]*=[^A-Za-z0-9_]*mainnet"
+          )
+          for pattern in "${forbidden_patterns[@]}"; do
+            if grep -RniE --exclude-dir=.git --exclude='package-lock.json' "$pattern" "${surfaces[@]}"; then
+              echo "Found forbidden Mainnet configuration in a Testnet surface: $pattern"
+              exit 1
+            fi
+          done
+
+      - name: Verify Testnet wallet implementation is WalletConnect-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -n '"@walletconnect/ethereum-provider"' src/lib/walletAuth.ts >/dev/null
+          grep -n 'WALLETCONNECT_PROJECT_ID' src/lib/walletAuth.ts >/dev/null
+          grep -n 'AUTH_CHAIN_ID = 97' src/lib/walletAuth.ts >/dev/null
+          if grep -n 'eth_requestAccounts' src/TestnetSandbox.tsx; then
+            echo "Testnet sandbox must not use an injected-wallet eth_requestAccounts flow."
+            exit 1
+          fi
+          if grep -n 'window.ethereum' src/TestnetSandbox.tsx; then
+            echo "Testnet sandbox must not directly probe or request from window.ethereum."
+            exit 1
+          fi
+
+      - name: Verify Testnet identifiers are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          surfaces=(src server/_testnet agents)
+          grep -Rni --exclude-dir=.git --exclude='package-lock.json' "bsc-testnet" "${surfaces[@]}" >/dev/null
+          grep -Rni --exclude-dir=.git --exclude='package-lock.json' "chain_id.*97\|chainId.*97\|0x61" "${surfaces[@]}" >/dev/null
+
+      - name: Verify universal router keeps Testnet paths on Testnet components
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -n 'path === "/testnet/execute"' src/main.tsx >/dev/null
+          grep -n 'path === "/testnet/provider-submit"' src/main.tsx >/dev/null
+          grep -n 'path === "/testnet/recover"' src/main.tsx >/dev/null
+          grep -n 'path === "/testnet/jobs"' src/main.tsx >/dev/null
+          grep -n 'path === "/testnet/review"' src/main.tsx >/dev/null
+          grep -n 'path === "/testnet/result"' src/main.tsx >/dev/null
+          grep -n 'path === "/testnet/providers"' src/main.tsx >/dev/null
+          grep -n 'path === "/testnet/preflight"' src/main.tsx >/dev/null
+          grep -n 'path === "/testnet/run"' src/main.tsx >/dev/null
+          if grep -n 'path === "/testnet/execute".*LandingEntry\|path === "/testnet/execute".*DashboardShell' src/main.tsx; then
+            echo "A Testnet execution path is mapped to a production workspace shell."
+            exit 1
+          fi
+
+      - name: Verify ERC-8183 Testnet lifecycle surfaces are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            "createJob"
+            "registerJob"
+            "setBudget"
+            "fund"
+            "settle"
+            "dispute"
+            "voteReject"
+            "claimRefund"
+          )
+          surfaces=(src server/_testnet agents)
+          for method in "${required[@]}"; do
+            if ! grep -Rni --exclude-dir=.git --exclude='package-lock.json' "$method" "${surfaces[@]}" >/dev/null; then
+              echo "Missing required ERC-8183 Testnet lifecycle surface: $method"
+              exit 1
+            fi
+          done
+
+      - name: Verify Vercel Hobby Function budget
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t functions < <(find api -type f -name '*.ts' ! -name '_*.ts' | sort)
+          count=${#functions[@]}
+          echo "Detected deployable Vercel API entrypoints: $count"
+          printf '%s\n' "${functions[@]}"
+          if [ "$count" -gt 12 ]; then
+            echo "Vercel Hobby limit exceeded: $count deployable Functions (maximum 12)."
+            exit 1
+          fi

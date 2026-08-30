@@ -1,4 +1,4 @@
-name: AgentMarket Testnet settlement worker
+name: Testnet ERC-8183 settlement worker
 
 on:
   schedule:
@@ -9,7 +9,7 @@ jobs:
   settle:
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger marketplace-testnet settlement worker
+      - name: Trigger AgentMarket settlement worker
         env:
           AGENTMARKET_BASE_URL: ${{ secrets.AGENTMARKET_BASE_URL }}
           CRON_SECRET: ${{ secrets.AGENTMARKET_CRON_SECRET }}

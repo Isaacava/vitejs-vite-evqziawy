@@ -36,7 +36,7 @@ type Status = "loading" | "ready" | "error";
 
 const SUPABASE_URL = "https://sfbxpscbevnmoppgkjcr.supabase.co";
 const SUPABASE_ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNmYnhwc2NiZXZubW9wcGdramNyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxMTQ3OTQsImV4cCI6MjEwMTY5MDc5NH0.ttfR2pNVqlOYrorGdAs7aaGgufxwXIsG-GXvLDd-jZw";
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNmYnhwc2NiZXZubW9wcGdramNyIiwiaWF0IjoxNzg2MTE0Nzk0LCJleHAiOjIxMDE2OTA3OTR9.ttfR2pNVqlOYrorGdAs7aaGgufxwXIsG-GXvLDd-jZw";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -99,15 +99,15 @@ export default function App() {
   async function connectWallet() {
     setWallet((w) => ({ ...w, connecting: true, error: null }));
     try {
-      console.log("Initializing WalletConnect provider…");
+      console.log("Initializing WalletConnect Testnet provider…");
       const provider = await Promise.race([
         EthereumProvider.init({
           projectId: WALLETCONNECT_PROJECT_ID,
-          chains: [56], // BNB Smart Chain mainnet
+          chains: [97],
           showQrModal: true,
           metadata: {
-            name: "Agent Registry",
-            description: "ERC-8004 agent marketplace on BNB Smart Chain",
+            name: "AgentMarket Testnet",
+            description: "ERC-8004/8183 agent marketplace on BSC Testnet",
             url: window.location.origin,
             icons: [],
           },
@@ -116,10 +116,7 @@ export default function App() {
           setTimeout(() => reject(new Error("WalletConnect init timed out after 15s")), 15000)
         ),
       ]);
-      console.log("WalletConnect provider initialized, opening connect flow…");
-
-      // This opens the WalletConnect modal — a QR code on desktop, or a
-      // direct list of installed wallet apps to deep-link into on mobile.
+      console.log("WalletConnect Testnet provider initialized, opening connect flow…");
       await provider.connect();
       console.log("WalletConnect connect() resolved");
 
@@ -135,7 +132,7 @@ export default function App() {
         provider: provider as unknown as EIP1193Provider,
       });
     } catch (e) {
-      console.error("WalletConnect connection failed:", e);
+      console.error("WalletConnect Testnet connection failed:", e);
       setWallet({
         address: null,
         connecting: false,
@@ -239,7 +236,7 @@ export default function App() {
         <header style={styles.header}>
           <h1 style={styles.title}>Agent Registry</h1>
           <p style={styles.subtitle}>
-            Discover autonomous agents on the ERC-8004 registry — indexed from BNB Smart Chain
+            Discover autonomous agents on the ERC-8004 registry — indexed from BNB Smart Chain Testnet
           </p>
         </header>
 
@@ -404,8 +401,6 @@ function AgentDetail({
     try {
       const walletClient = getWalletClient(wallet.provider, wallet.address);
 
-      // 1. Read the payment token + decimals from the Commerce kernel.
-      // The token address is immutable on-chain and not configurable client-side.
       setHireStep("reading_token");
       const tokenAddress = await publicClient.readContract({
         address: ERC8183_ADDRESSES.commerce,
@@ -426,17 +421,10 @@ function AgentDetail({
       ]);
       setTokenInfo({ symbol, decimals });
 
-      // Default budget: 1 unit of the payment token — matches the SDK's
-      // default ERC8183_SERVICE_PRICE. We don't yet have a per-agent price
-      // (most indexed agents only have an ERC-8004 identity, not a live
-      // ERC-8183 provider server with a published price), so this is a
-      // fixed demo budget, not a real negotiated price.
       const budget = 10n ** BigInt(decimals);
 
-      // 2. Create the job. The EvaluatorRouter also serves as job.evaluator
-      // and job.hook per the ERC-8183 stack's design.
       setHireStep("creating");
-      const expiredAt = BigInt(Math.floor(Date.now() / 1000) + 24 * 60 * 60); // 24h window
+      const expiredAt = BigInt(Math.floor(Date.now() / 1000) + 24 * 60 * 60);
       const createHash = await walletClient.writeContract({
         address: ERC8183_ADDRESSES.commerce,
         abi: COMMERCE_ABI,
@@ -452,11 +440,6 @@ function AgentDetail({
       addTx("Create job", createHash);
       await publicClient.waitForTransactionReceipt({ hash: createHash });
 
-      // The kernel assigns sequential job IDs. We don't decode the
-      // JobCreated event here (ABI only covers the calls we use), so we
-      // read the counter right after our own confirmed create — safe for
-      // a single in-flight hire, but a production indexer should decode
-      // the event directly instead of relying on this assumption.
       const newJobId = await publicClient.readContract({
         address: ERC8183_ADDRESSES.commerce,
         abi: COMMERCE_ABI,
@@ -464,7 +447,6 @@ function AgentDetail({
       });
       setJobId(newJobId);
 
-      // 3. Register the job against the default OptimisticPolicy.
       setHireStep("registering");
       const registerHash = await walletClient.writeContract({
         address: ERC8183_ADDRESSES.router,
@@ -475,7 +457,6 @@ function AgentDetail({
       addTx("Register job", registerHash);
       await publicClient.waitForTransactionReceipt({ hash: registerHash });
 
-      // 4. Set the budget.
       setHireStep("budgeting");
       const budgetHash = await walletClient.writeContract({
         address: ERC8183_ADDRESSES.commerce,
@@ -486,7 +467,6 @@ function AgentDetail({
       addTx("Set budget", budgetHash);
       await publicClient.waitForTransactionReceipt({ hash: budgetHash });
 
-      // 5. Approve the commerce kernel to pull the budget, if needed.
       const allowance = await publicClient.readContract({
         address: tokenAddress,
         abi: ERC20_ABI,
@@ -505,8 +485,6 @@ function AgentDetail({
         await publicClient.waitForTransactionReceipt({ hash: approveHash });
       }
 
-      // 6. Fund the job — this is the moment the provider's own runtime
-      // (if it's listening) picks up the job as FUNDED and can start work.
       setHireStep("funding");
       const fundHash = await walletClient.writeContract({
         address: ERC8183_ADDRESSES.commerce,
@@ -568,7 +546,7 @@ function AgentDetail({
                 <CategoryBadge category={agent.category} />
               </div>
               <div style={styles.detailMeta}>
-                Agent #{agent.agent_id} · {agent.chain === "bsc" ? "BNB Smart Chain" : agent.chain}
+                Agent #{agent.agent_id} · {agent.chain === "bsc" ? "BSC Testnet" : agent.chain}
               </div>
             </div>
           </div>
@@ -580,7 +558,7 @@ function AgentDetail({
               <div style={styles.infoLabel}>Owner</div>
               <a
                 style={styles.infoLink}
-                href={`https://bscscan.com/address/${agent.owner}`}
+                href={`https://testnet.bscscan.com/address/${agent.owner}`}
                 target="_blank"
                 rel="noreferrer"
               >
@@ -591,7 +569,7 @@ function AgentDetail({
               <div style={styles.infoLabel}>Registry</div>
               <a
                 style={styles.infoLink}
-                href={`https://bscscan.com/address/${ERC8004_REGISTRY_ADDRESS}`}
+                href={`https://testnet.bscscan.com/address/${ERC8004_REGISTRY_ADDRESS}`}
                 target="_blank"
                 rel="noreferrer"
               >
@@ -610,7 +588,7 @@ function AgentDetail({
             {!wallet.address && (
               <>
                 <button style={styles.activateBtn} onClick={onConnectWallet} disabled={wallet.connecting}>
-                  {wallet.connecting ? "Opening wallet connect…" : "Connect Wallet to Hire"}
+                  {wallet.connecting ? "Opening Testnet wallet connect…" : "Connect Testnet Wallet to Hire"}
                 </button>
                 {wallet.error && <p style={styles.errorText}>{wallet.error}</p>}
               </>
@@ -623,24 +601,23 @@ function AgentDetail({
                   Connected: {shortAddr(wallet.address)}
                 </div>
                 <button style={styles.activateBtn} onClick={handleActivate}>
-                  Hire Agent (ERC-8183)
+                  Hire Agent (ERC-8183 Testnet)
                 </button>
               </>
             )}
 
             {hireStep === "confirming" && (
               <div style={styles.confirmBox}>
-                <div style={styles.confirmTitle}>Confirm ERC-8183 job</div>
+                <div style={styles.confirmTitle}>Confirm ERC-8183 Testnet job</div>
                 <p style={styles.confirmText}>
-                  This creates and funds a real escrowed job on BNB Smart Chain — Create → Register →
-                  Set Budget → Approve → Fund — with{" "}
-                  <strong>{agent.name || `Agent #${agent.agent_id}`}</strong>'s owner address as the
-                  provider. You'll sign multiple transactions in your wallet. The default budget is 1
-                  unit of the Commerce kernel's payment token.
+                  This creates and funds a real escrowed job on BSC Testnet — Create → Register →
+                  Set Budget → Approve → Fund — with <strong>{agent.name || `Agent #${agent.agent_id}`}</strong>'s
+                  owner address as the provider. You'll sign multiple transactions in your Testnet wallet.
+                  The default budget is 1 unit of the Commerce kernel's payment token.
                 </p>
                 <div style={styles.confirmActions}>
                   <button style={styles.confirmBtn} onClick={confirmActivate}>
-                    Confirm in Wallet
+                    Confirm in Testnet Wallet
                   </button>
                   <button style={styles.cancelBtn} onClick={() => setHireStep("idle")}>
                     Cancel
@@ -662,7 +639,7 @@ function AgentDetail({
                   <a
                     key={i}
                     style={styles.txLink}
-                    href={`https://bscscan.com/tx/${tx.hash}`}
+                    href={`https://testnet.bscscan.com/tx/${tx.hash}`}
                     target="_blank"
                     rel="noreferrer"
                   >
@@ -678,7 +655,7 @@ function AgentDetail({
                   ✓ Job funded{jobId !== null ? ` — #${jobId.toString()}` : ""}
                 </div>
                 <p style={styles.doneText}>
-                  Escrowed{tokenInfo ? ` 1 ${tokenInfo.symbol}` : ""} for this job on BNB Smart Chain.
+                  Escrowed{tokenInfo ? ` 1 ${tokenInfo.symbol}` : ""} for this job on BSC Testnet.
                   If the agent's own runtime is listening for funded jobs, it can now pick this up,
                   work, and submit a deliverable. This marketplace doesn't run the agent itself — only
                   the blockchain connects the two of you.
@@ -696,11 +673,10 @@ function AgentDetail({
             )}
 
             <p style={styles.demoNote}>
-              This creates a real ERC-8183 escrow job on BNB Smart Chain mainnet
+              This creates a real ERC-8183 escrow job on BSC Testnet
               (AgenticCommerce {shortAddr(ERC8183_ADDRESSES.commerce)}). Funding it does not
               guarantee the agent will respond — that depends on whether this agent's operator has a
-              live ERC-8183 provider server listening for funded jobs, which most ERC-8004-only
-              listings do not yet have.
+              live ERC-8183 provider server listening for funded jobs.
             </p>
           </div>
         </div>
@@ -708,7 +684,6 @@ function AgentDetail({
     </div>
   );
 }
-
 
 function CategoryBadge({ category }: { category: string }) {
   const color = CATEGORY_COLORS[category] || CATEGORY_COLORS.other;
@@ -798,4 +773,3 @@ const styles: Record<string, React.CSSProperties> = {
   doneText: { fontSize: 13, color: "#a3a09a", lineHeight: 1.5, margin: 0 },
   demoNote: { fontSize: 11.5, color: "#5f5d57", marginTop: 12, lineHeight: 1.5 },
 };
-
