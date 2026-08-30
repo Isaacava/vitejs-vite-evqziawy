@@ -6,7 +6,7 @@ import { selectAgentAdapter } from "../src/lib/agentAdapter.js";
 import type { AgentCapabilitySnapshot } from "../src/lib/agentCapability.js";
 
 type CachedOnchainStats = {
-  source: OnchainAgentStats["source"];
+  source: "erc8183_commerce" | "erc8183_commerce_provider_wallet";
   network: "bsc-testnet";
   chain_id: 97;
   synced_at: string;
@@ -54,7 +54,7 @@ function isCachedStats(value: unknown): value is CachedOnchainStats {
 function cachedToStats(agent: AgentRow, cached: CachedOnchainStats): OnchainAgentStats {
   const owner = agent.owner as OnchainAgentStats["owner"];
   const provider = cached.provider_address as OnchainAgentStats["agent_wallet"];
-  return { agent_id: agent.agent_id, owner, agent_wallet: provider, agent_uri: agent.uri || null, job_provider_addresses: [provider], total_jobs: cached.total_jobs, completed_jobs: cached.completed_jobs, submitted_jobs: cached.submitted_jobs, funded_jobs: cached.funded_jobs, open_jobs: cached.open_jobs, rejected_jobs: cached.rejected_jobs, expired_jobs: cached.expired_jobs, terminal_jobs: cached.terminal_jobs, success_rate: cached.success_rate, feedback_count: 0, reputation_value: null, reputation_decimals: null, reputation_score: null, jobs: [], source: cached.source, network: "bsc-testnet", chain_id: 97 };
+  return { agent_id: agent.agent_id, owner, agent_wallet: provider, agent_uri: agent.uri || null, job_provider_addresses: [provider], total_jobs: cached.total_jobs, completed_jobs: cached.completed_jobs, submitted_jobs: cached.submitted_jobs, funded_jobs: cached.funded_jobs, open_jobs: cached.open_jobs, rejected_jobs: cached.rejected_jobs, expired_jobs: cached.expired_jobs, terminal_jobs: cached.terminal_jobs, success_rate: cached.success_rate, feedback_count: 0, reputation_value: null, reputation_decimals: null, reputation_score: null, jobs: [], source: cached.source as OnchainAgentStats["source"], network: "bsc-testnet", chain_id: 97 };
 }
 
 function capabilitySnapshot(agent: AgentRow): AgentCapabilitySnapshot {
