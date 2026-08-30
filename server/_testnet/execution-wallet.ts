@@ -53,10 +53,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ ok: true, wallet, sessions: sessions || [] });
     }
 
+    const operation = optionalString(req.body?.operation, 40);
     const walletAddress = req.body?.wallet_address;
     const signerAddress = optionalAddress(req.body?.signer_address);
     const rpId = optionalString(req.body?.rp_id, 255);
     const replaceExisting = req.body?.replace_existing === true;
+
+    if (operation === "mark-recovery-required") {
+      const { data: existing, error: existingError } = await supabase
+        .from("altana_execution_wallets")
+        .select("user_id,wallet_address,status")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (existingError) return res.status(500).json({ error: existingError.message });
+      if (!existing) return res.status(404).json({ error: "No persistent Altana execution wallet exists for this account." });
+
+      const { data: wallet, error: updateError } = await supabase
+        .from("altana_execution_wallets")
+        .update({ status: "recovery_required" })
+        .eq("user_id", userId)
+        .select("user_id,wallet_address,signer_address,chain_id,wallet_provider,authorization_model,rp_id,status,created_at,updated_at")
+        .single();
+      if (updateError) return res.status(500).json({ error: updateError.message });
+      return res.status(200).json({ ok: true, wallet });
+    }
 
     if (!address(walletAddress)) {
       return res.status(400).json({ error: "wallet_address must be a valid EVM address" });
