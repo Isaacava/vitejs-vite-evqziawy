@@ -114,7 +114,7 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
           <div><strong>Pool fee:</strong> {market?.fee ?? "Not yet independently identified"}</div>
           <div><strong>Pool:</strong> {market?.pool ? compact(market.pool) : "Not yet independently identified"}</div>
           <div><strong>Execution wallet:</strong> {wallet ? compact(wallet) : "Not yet observed"}</div>
-          <div><strong>Receipt:</strong> {execution?.execution?.status || (pending ? "Not yet observed" : "Not yet observed")}</div>
+          <div><strong>Receipt:</strong> {execution?.execution?.status || "Not yet observed"}</div>
           <div><strong>Block:</strong> {execution?.execution?.block_number || "Not yet observed"}</div>
           <div><strong>Gas used:</strong> {execution?.execution?.gas_used || "Not yet observed"}</div>
         </div>
@@ -129,7 +129,7 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
         </div>
         <div className="border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-3.5">
           <small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Accounting</small>
-          <strong className="font-mono text-[10.5px]">{execution?.accounting?.realized_pnl_status === "not_determinable_from_single_swap" ? "P&L basis not established" : "Onchain accounting"}</strong>
+          <strong className="font-mono text-[10.5px]">{execution?.accounting?.pnl_basis === "single_swap" ? "P&L basis not established" : "Onchain accounting"}</strong>
           <p className="text-[10px] text-inksoft mt-1">A single swap gives actual asset deltas, but not a defensible realized P&amp;L figure without a closing/valuation basis.</p>
         </div>
       </div>
