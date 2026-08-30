@@ -1,53 +1,41 @@
-# AgentMarket Grid Agent
+# Grid Agent
 
-This is the single first-party agent used to prove the marketplace lifecycle end to end.
+Standalone ERC-8183 execution agent for BSC Testnet.
 
-## Environment boundary
+Grid is intentionally independent from AgentMarket at runtime. It has its own:
 
-The Grid Agent is **BSC Testnet only**. It must never share the production marketplace's BSC Mainnet contracts, payment token, provider endpoint, database records, or job IDs.
+- ERC-8183 provider wallet and service configuration.
+- Altana execution session and private signing key.
+- Local execution service and local storage.
+- Strategy, execution, receipt observation, and ERC-8183 submission logic.
 
-- Grid Agent test runtime: **BSC Testnet, chain ID 97**.
-- Production AgentMarket: **BSC Mainnet, chain ID 56**.
-- Testnet jobs are test jobs only and must not be reused or replayed against mainnet.
-- Testnet provider URLs should live in a dedicated test environment/service deployment.
-- Mainnet AgentMarket readiness must ignore testnet endpoint health records.
+Grid does **not** use an AgentMarket API, AgentMarket database, AgentMarket private headers, or AgentMarket application code.
 
-BNB Chain documents BSC Testnet as chain ID 97 and BSC Mainnet as chain ID 56. citeturn307661search0turn307661search1
-
-## Scope
-
-The first test version is **strategy-only**:
-
-- accepts a funded ERC-8183 job;
-- validates the grid parameters;
-- produces a deterministic grid strategy deliverable;
-- submits the deliverable through the BNB Agent SDK service layer;
-- does not custody user private keys;
-- does not execute trades or move user funds.
-
-This is intentional. It lets AgentMarket prove discovery → provider readiness → quote → ERC-8183 job → funded job → agent execution → deliverable → evaluation/settlement before adding a real DeFi execution adapter.
-
-## Current files
-
-- `app/agent/main.py` — Grid strategy logic and deliverable generation.
-- `app/service/main.py` — public ERC-8183 service adapter using `bnbagent[server]`.
-
-## BNB Agent Studio path
-
-The official BNB Agent Studio quickstart uses a two-layer seller (agent + service) and the ERC-8183 service watches for funded jobs before invoking the agent logic. This repository mirrors that boundary for the first-party Grid test agent.
-
-## Configuration
-
-The Grid Agent should be deployed separately from the Vite production marketplace. Use BSC Testnet while developing and validating the integration.
+## Runtime boundary
 
 ```text
-NETWORK=bsc-testnet
-WALLET_PASSWORD=<testnet-agent-wallet-password>
-PRIVATE_KEY=<testnet-agent-wallet-key; first run only>
-ERC8183_AGENT_URL=https://<testnet-service-host>/erc8183
-ERC8183_SERVICE_PRICE=<quoted minimum in raw test settlement-token units>
+ERC-8183 / BSC Testnet
+        ↑
+        │ on-chain jobs and state
+        │
+   Grid Agent
+   ├── funded-job watcher
+   ├── grid strategy
+   ├── Altana execution
+   ├── receipt verification
+   └── ERC-8183 submit()
 ```
 
-Before the test deployment, configure a real `max_price`/service price and a public **testnet** service URL, then register/update the ERC-8004 endpoint for that testnet identity.
+The marketplace may discover this agent through its public ERC-8183 endpoint and may independently read the same blockchain state. That does not create a private application dependency.
 
-The Grid Agent should only be marked **READY TO HIRE in the test environment** after its testnet service endpoint is healthy and the provider can negotiate/accept the testnet ERC-8183 job flow.
+## Local services
+
+The Python service exposes the public ERC-8183 provider endpoints. The Node execution service listens only on `127.0.0.1:8788` and is used exclusively by Grid's Python runtime.
+
+## Job lifecycle
+
+For a funded job, Grid watches the ERC-8183 contract, executes only when its own configured execution session is ready, observes the transaction receipt, persists a pending deliverable locally before submission, and calls `submit_result()` itself. If submission temporarily fails, the saved local deliverable is retried without automatically performing a second trade.
+
+## Required secrets
+
+Secrets are supplied only to this Grid deployment through its own runtime secret store. Do not copy AgentMarket database credentials, API tokens, request IDs, or execution secrets into this service.
