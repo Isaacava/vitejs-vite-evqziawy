@@ -62,9 +62,15 @@ def _job_execution_parameters(job: dict[str, Any]) -> dict[str, Any]:
 
 
 async def execute_grid_trade(job: dict[str, Any]) -> dict[str, Any]:
-    """Run Grid's own BSC Testnet execution path using its existing Altana session."""
+    """Run Grid's own BSC Testnet execution path with the job-scoped Altana session."""
     params = _job_execution_parameters(job)
     market = params.get("execution_market") if isinstance(params.get("execution_market"), dict) else params
+    try:
+        job_id = int(job.get("jobId"))
+    except (TypeError, ValueError):
+        raise RuntimeError("ERC-8183 jobId is required for Grid execution")
+    if job_id <= 0:
+        raise RuntimeError("ERC-8183 jobId must be positive")
 
     base_url = (_env("GRID_EXECUTION_INTERNAL_URL", "http://127.0.0.1:8788") or "http://127.0.0.1:8788").rstrip("/")
     router = _required_address("PANCAKE_TESTNET_ROUTER", str(market.get("router") or market.get("target") or DEFAULT_ROUTER))
@@ -117,7 +123,7 @@ async def execute_grid_trade(job: dict[str, Any]) -> dict[str, Any]:
 
         execute_response = await client.post(
             f"{base_url}/execute-configured",
-            json={"calls": [call]},
+            json={"job_id": job_id, "calls": [call]},
         )
         execute_body = execute_response.json()
         if execute_response.status_code >= 400 or not execute_body.get("ok"):
