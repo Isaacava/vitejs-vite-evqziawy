@@ -45,24 +45,26 @@ function executionConfigState() {
 async function publicExecutionCapabilities() {
   const configured = executionConfigState();
   const market = buildPancakeTestnetConfig();
-  const base = { ok: true, network: "bsc-testnet", chainId: 97, execution: "altana-scoped-session", wallet_provider: "altana", authorization_model: "scoped_session", protocol: "pancake-v3-swap", execution_market: { token_in: market.tokenIn, token_out: market.tokenOut, token_in_symbol: market.tokenInSymbol, token_out_symbol: market.tokenOutSymbol, fee: market.fee }, preflight_path: "/preflight/pancake", allowed_targets: configuredList(process.env.GRID_ALLOWED_TARGETS || ""), allowed_selectors: configuredList(process.env.GRID_ALLOWED_SELECTORS || ""), selectors_required: true, private_key_exposed: false, configuration: configured };
+  const base = { ok: true, network: "bsc-testnet", chainId: 97, execution: "altana-scoped-session", wallet_provider: "altana", authorization_model: "scoped_session", protocol: "pancake-v3-swap", execution_market: { token_in: market.tokenIn, token_out: market.tokenOut, token_in_symbol: market.tokenInSymbol, token_out_symbol: market.tokenOutSymbol, fee: market.fee }, preflight_path: "/preflight/pancake", allowed_targets: configuredList(process.env.GRID_ALLOWED_TARGETS || ""), allowed_selectors: configuredList(process.env.GRID_ALLOWED_SELECTORS || ""), selectors_required: true, private_key_exposed: false, configuration: configured, execution_wallet_mode: "per-job-user-wallet" };
   if (!SESSION_PRIVATE_KEY) return { ...base, execution_ready: false };
   const account = privateKeyToAccount((SESSION_PRIVATE_KEY.startsWith("0x") ? SESSION_PRIVATE_KEY : `0x${SESSION_PRIVATE_KEY}`) as `0x${string}`);
-  const readiness = await getExecutionReadiness();
-  return { ...base, execution_ready: readiness.ready, session_key_address: account.address, session_key_public_key: account.publicKey, authorization_check: { wallet_address: readiness.walletAddress, session_key_id: readiness.sessionKeyId, keystore_authorized: readiness.checks.keystore_authorization } };
+  return { ...base, execution_ready: true, session_key_address: account.address, session_key_public_key: account.publicKey, authorization_check: { wallet_address: null, session_key_id: null, keystore_authorized: "checked_at_execution" } };
 }
 const server = createServer(async (req, res) => {
   try {
     if (req.method === "GET" && req.url === "/health") return json(res, 200, { ...(await publicExecutionCapabilities()), service: "Grid Agent Altana Execution" });
     if (req.method === "GET" && req.url === "/execution-capabilities") return json(res, 200, await publicExecutionCapabilities());
     if (req.method === "GET" && req.url === "/execution-readiness") return json(res, 200, await getExecutionReadiness());
-    if (req.method === "POST" && req.url === "/preflight/pancake") { const readiness = await getExecutionReadiness(); if (!readiness.ready) return json(res, 409, { ok: false, error: "Grid execution is waiting for the user's Altana session authorization", readiness }); return json(res, 200, { ok: true, result: await pancakeSwapPreflight(await body(req) as Record<string, unknown>) }); }
+    if (req.method === "POST" && req.url === "/preflight/pancake") {
+      const request = await body(req) as Record<string, unknown>;
+      return json(res, 200, { ok: true, result: await pancakeSwapPreflight(request) });
+    }
     if (req.method === "GET" && req.url?.startsWith("/receipt/")) { if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "Grid execution service is not configured" }); const hash = decodeURIComponent(req.url.slice("/receipt/".length)).split("?", 1)[0]; if (!hash) return json(res, 400, { error: "transaction hash is required" }); return json(res, 200, { ok: true, result: await observeTestnetReceipt(hash) }); }
-    if (req.method === "POST" && req.url === "/execute-configured") { if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "ALTANA_SESSION_PRIVATE_KEY is not configured" }); const readiness = await getExecutionReadiness(); if (!readiness.ready) return json(res, 409, { ok: false, error: "Grid execution is waiting for the user's Altana session authorization", readiness }); const request = await body(req) as Record<string, unknown>; return json(res, 200, { ok: true, result: await executeConfiguredGridAction(calls(request.calls)) }); }
+    if (req.method === "POST" && req.url === "/execute-configured") { if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "ALTANA_SESSION_PRIVATE_KEY is not configured" }); const request = await body(req) as Record<string, unknown>; return json(res, 200, { ok: true, result: await executeConfiguredGridAction(calls(request.calls)) }); }
     if (req.method !== "POST" || req.url !== "/execute") return json(res, 404, { error: "Not found" });
     if (!SESSION_PRIVATE_KEY) return json(res, 503, { error: "ALTANA_SESSION_PRIVATE_KEY is not configured" });
-    const readiness = await getExecutionReadiness(); if (!readiness.ready) return json(res, 409, { ok: false, error: "Grid execution is waiting for the user's Altana session authorization", readiness });
-    const request = await body(req) as Record<string, unknown>; return json(res, 200, { ok: true, result: await executeGridAction(descriptor(request.session), calls(request.calls), SESSION_PRIVATE_KEY) });
+    const request = await body(req) as Record<string, unknown>;
+    return json(res, 200, { ok: true, result: await executeGridAction(descriptor(request.session), calls(request.calls), SESSION_PRIVATE_KEY) });
   } catch (error) { console.error("Grid Altana execution request failed", error); return json(res, 400, { ok: false, error: error instanceof Error ? error.message : "Execution request failed" }); }
 });
 server.listen(PORT, "127.0.0.1", () => console.log(`Grid Altana execution service listening on ${PORT} (localhost / BSC Testnet / chain 97)`));
