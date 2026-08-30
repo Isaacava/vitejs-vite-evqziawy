@@ -11,6 +11,7 @@ import WorkspaceMissionPage from "./WorkspaceMissionPage";
 import DemoManagePage from "./DemoManagePage";
 import DemoActivityPage from "./DemoActivityPage";
 import DemoPaymentsPage from "./DemoPaymentsPage";
+import ExecutionWalletPage from "./ExecutionWalletPage";
 import TestnetConsole from "./TestnetConsole";
 import TestnetSwap from "./TestnetSwap";
 import TestnetQuoteExecutionWalletConnect from "./TestnetQuoteExecutionWalletConnect";
@@ -43,6 +44,7 @@ function renderApp() {
   if (path === "/activity") return renderWorkspace(<DemoActivityPage />);
   if (path === "/payments") return renderWorkspace(<DemoPaymentsPage />);
   if (path === "/app") return renderWorkspace(<MarketplaceWorkspace />);
+  if (path === "/execution-wallet") return renderWorkspace(<ExecutionWalletPage />);
   if (path === "/testnet") return renderWorkspace(<TestnetConsole />);
   if (path === "/testnet/manage") return renderWorkspace(<TestnetConsole />);
   if (path === "/testnet/swap") return renderWorkspace(<TestnetSwap />);
