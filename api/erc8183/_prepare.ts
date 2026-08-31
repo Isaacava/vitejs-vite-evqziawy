@@ -23,6 +23,25 @@ function equalWallet(a: string, b: string) {
   return a.toLowerCase() === b.toLowerCase();
 }
 
+function isAltanaAgent(agent: Record<string, unknown>) {
+  const metadata = agent.metadata && typeof agent.metadata === "object" ? agent.metadata as Record<string, unknown> : {};
+  const execution = metadata.execution && typeof metadata.execution === "object" ? metadata.execution as Record<string, unknown> : {};
+  const declared = typeof execution.wallet_provider === "string" ? execution.wallet_provider.toLowerCase() : "";
+  return agent.agent_id === "grid-strategy" || declared === "altana";
+}
+
+function validActiveAltanaWallet(value: Record<string, unknown> | null) {
+  return Boolean(
+    value &&
+    value.status === "active" &&
+    Number(value.chain_id) === 97 &&
+    String(value.wallet_provider).toLowerCase() === "altana" &&
+    String(value.authorization_model).toLowerCase() === "passkey" &&
+    typeof value.wallet_address === "string" &&
+    /^0x[a-fA-F0-9]{40}$/.test(value.wallet_address),
+  );
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -79,7 +98,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const { data: agent, error: agentError } = await supabase
       .from("agents")
-      .select("agent_id, owner, name, status, verification_status")
+      .select("agent_id, owner, name, status, verification_status, metadata")
       .eq("id", task.agent_id)
       .maybeSingle();
     if (agentError) throw new Error(agentError.message);
@@ -92,6 +111,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .eq("user_id", auth.user.id)
       .maybeSingle();
     if (executionWalletError) throw new Error(executionWalletError.message);
+
+    const altanaRequired = isAltanaAgent(agent as Record<string, unknown>);
+    if (altanaRequired && !validActiveAltanaWallet(executionWallet as Record<string, unknown> | null)) {
+      throw new Error("An active BSC Testnet Altana execution wallet must be provisioned before creating a job for this agent; the wallet address is bound into the immutable ERC-8183 job description.");
+    }
 
     const provider = address(agent.owner, "agent.owner");
     const readOptions = { authorizationList: [] as const };
@@ -119,11 +143,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       quote_currency: quote.currency,
     };
 
-    if (executionWallet && executionWallet.status === "active" && Number(executionWallet.chain_id) === 97 && String(executionWallet.wallet_provider).toLowerCase() === "altana" && String(executionWallet.authorization_model).toLowerCase() === "passkey") {
+    if (validActiveAltanaWallet(executionWallet as Record<string, unknown> | null)) {
       descriptionPayload.execution = {
         wallet_provider: "altana",
         authorization_model: "scoped_session",
-        wallet_address: executionWallet.wallet_address,
+        wallet_address: executionWallet!.wallet_address,
         chain_id: 97,
       };
     }
@@ -212,9 +236,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           data_builder: `encode fund(jobId, ${budget.toString()}, 0x) after budget + approval`,
         },
       },
-      note: executionWallet && descriptionPayload.execution
-        ? "Preparation is quote-gated. The active Altana execution wallet is bound into the immutable ERC-8183 job description so the autonomous provider can execute against the same wallet whose session was authorized."
-        : "Preparation is quote-gated. No active Altana execution wallet was available to bind into the immutable ERC-8183 job description; Altana-backed autonomous execution must be provisioned before creating the job.",
+      note: "Preparation is quote-gated. Altana-backed agents require an active user execution wallet, and the wallet address is bound into the immutable ERC-8183 job description before funding.",
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to prepare ERC-8183 Testnet mission";
