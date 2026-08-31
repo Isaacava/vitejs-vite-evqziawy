@@ -207,7 +207,6 @@ async function verifySession(req: VercelRequest, res: VercelResponse, auth: Awai
   const grantTxHash = req.body?.session_grant_tx_hash;
   if (!requestId || !address(wallet) || !/^0x[a-fA-F0-9]{64}$/.test(String(sessionKeyId || "")) || !address(signerAddress) || !Number.isInteger(expiry)) return res.status(400).json({ error: "request_id, user_execution_wallet, signer_address, 32-byte session_key_id, and session_expiry are required" });
   if (grantTxHash !== undefined && grantTxHash !== null && (!hex(grantTxHash) || String(grantTxHash).length < 10)) return res.status(400).json({ error: "session_grant_tx_hash is invalid" });
-  if (!auth?.user.wallet_address || auth.user.wallet_address.toLowerCase() !== signerAddress.toLowerCase()) return res.status(403).json({ error: "The Altana wallet signer does not match the authenticated AgentMarket wallet" });
   if (expiry <= Math.floor(Date.now() / 1000)) return res.status(400).json({ error: "Session expiry is already in the past" });
   const supabase = serverClient();
   const { data: request, error: requestError } = await supabase.from("execution_capital_requests").select("*").eq("id", requestId).maybeSingle();
@@ -218,6 +217,18 @@ async function verifySession(req: VercelRequest, res: VercelResponse, auth: Awai
   const { data: job, error: jobError } = await supabase.from("jobs").select("id,mission_task_id,client_wallet,chain_job_id").eq("id", request.job_id).maybeSingle();
   if (jobError) return res.status(500).json({ error: jobError.message });
   if (!job || !auth.user.wallet_address || String(job.client_wallet || "").toLowerCase() !== auth.user.wallet_address.toLowerCase()) return res.status(403).json({ error: "You do not own this execution-capital request" });
+
+  const { data: persistentWallet, error: persistentWalletError } = await supabase
+    .from("altana_execution_wallets")
+    .select("wallet_address,signer_address,chain_id,wallet_provider,authorization_model,rp_id,status")
+    .eq("user_id", auth.user.id)
+    .maybeSingle();
+  if (persistentWalletError) return res.status(500).json({ error: persistentWalletError.message });
+  if (!persistentWallet) return res.status(409).json({ error: "No persistent Altana execution wallet is registered for this AgentMarket account" });
+  if (persistentWallet.status !== "active") return res.status(409).json({ error: `The persistent Altana execution wallet is ${persistentWallet.status} and cannot authorize a new session` });
+  if (String(persistentWallet.wallet_address).toLowerCase() !== String(wallet).toLowerCase()) return res.status(403).json({ error: "The Altana execution wallet does not belong to the authenticated AgentMarket account" });
+  if (!persistentWallet.signer_address || String(persistentWallet.signer_address).toLowerCase() !== String(signerAddress).toLowerCase()) return res.status(403).json({ error: "The Altana Passkey signer does not match the signer registered for this AgentMarket account" });
+  if (Number(persistentWallet.chain_id) !== 97 || String(persistentWallet.wallet_provider).toLowerCase() !== "altana" || String(persistentWallet.authorization_model).toLowerCase() !== "passkey") return res.status(409).json({ error: "The registered execution wallet is not a valid BSC Testnet Altana Passkey wallet" });
 
   const capability = executionObject(request.evidence).execution_capability;
   if (!capability || typeof capability !== "object") return res.status(409).json({ error: "The execution-capital request has no stored public execution capability descriptor" });
