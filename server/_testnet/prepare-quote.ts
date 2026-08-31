@@ -34,57 +34,35 @@ function validAddress(value: unknown): value is Address { return typeof value ==
 
 function isAltanaAgent(agent: Record<string, unknown>) {
   const metadata = agent.metadata && typeof agent.metadata === "object" ? agent.metadata as Record<string, unknown> : {};
-  const execution = metadata.execution && typeof metadata.execution === "object" ? execution as Record<string, unknown> : {};
+  const execution = metadata.execution && typeof metadata.execution === "object" ? metadata.execution as Record<string, unknown> : {};
   const provider = typeof execution.wallet_provider === "string" ? execution.wallet_provider.toLowerCase() : "";
   return String(agent.agent_id || "").toLowerCase() === "grid-strategy" || provider === "altana";
 }
 
 function validActiveAltanaWallet(value: Record<string, unknown> | null): value is Record<string, unknown> & { wallet_address: Address } {
   return Boolean(
-    value &&
-    value.status === "active" &&
-    Number(value.chain_id) === CHAIN_ID &&
+    value && value.status === "active" && Number(value.chain_id) === CHAIN_ID &&
     String(value.wallet_provider).toLowerCase() === "altana" &&
-    String(value.authorization_model).toLowerCase() === "passkey" &&
-    validAddress(value.wallet_address),
+    String(value.authorization_model).toLowerCase() === "passkey" && validAddress(value.wallet_address),
   );
 }
 
 function assertAltanaWalletBinding(description: string, required: boolean) {
   if (!required) return;
   let parsed: unknown;
-  try {
-    parsed = JSON.parse(description);
-  } catch {
-    throw new Error("Grid Testnet createJob description is not valid JSON.");
-  }
-  const execution = parsed && typeof parsed === "object" && "execution" in parsed
-    ? (parsed as Record<string, unknown>).execution
-    : null;
+  try { parsed = JSON.parse(description); } catch { throw new Error("Grid Testnet createJob description is not valid JSON."); }
+  const execution = parsed && typeof parsed === "object" && "execution" in parsed ? (parsed as Record<string, unknown>).execution : null;
   const executionObject = execution && typeof execution === "object" ? execution as Record<string, unknown> : null;
   const walletAddress = executionObject?.wallet_address;
   const sessionExpiry = Number(executionObject?.session_expiry);
-  if (!validAddress(walletAddress)) {
-    throw new Error("Grid Testnet createJob description is missing the bound Altana execution wallet.");
-  }
-  if (!Number.isSafeInteger(sessionExpiry) || sessionExpiry <= Math.floor(Date.now() / 1000)) {
-    throw new Error("Grid Testnet createJob description is missing a future Altana session expiry.");
-  }
+  if (!validAddress(walletAddress)) throw new Error("Grid Testnet createJob description is missing the bound Altana execution wallet.");
+  if (!Number.isSafeInteger(sessionExpiry) || sessionExpiry <= Math.floor(Date.now() / 1000)) throw new Error("Grid Testnet createJob description is missing a future Altana session expiry.");
 }
 
 async function resolveLivePolicy(): Promise<Address> {
-  const configured = await client.readContract({
-    address: ROUTER,
-    abi: ROUTER_ABI,
-    functionName: "policyWhitelist",
-    args: [POLICY],
-  });
+  const configured = await client.readContract({ address: ROUTER, abi: ROUTER_ABI, functionName: "policyWhitelist", args: [POLICY] });
   if (configured) return POLICY;
-  throw new Error(
-    `The configured Testnet ERC-8183 policy ${POLICY} is not currently whitelisted by EvaluatorRouter ${ROUTER}. ` +
-    "Policy discovery cannot fall back to historical PolicyWhitelisted logs because the configured public RPC prunes historical block data. " +
-    "Repair the Testnet Router policy whitelist, then retry the accepted quote.",
-  );
+  throw new Error(`The configured Testnet ERC-8183 policy ${POLICY} is not currently whitelisted by EvaluatorRouter ${ROUTER}. Repair the Testnet Router policy whitelist, then retry the accepted quote.`);
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -125,15 +103,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const altanaRequired = isAltanaAgent(agent as Record<string, unknown>);
     let activeAltanaWallet: Record<string, unknown> | null = null;
     if (altanaRequired) {
-      const { data: executionWallet, error: executionWalletError } = await supabase
-        .from("altana_execution_wallets")
-        .select("wallet_address,status,chain_id,wallet_provider,authorization_model")
-        .eq("user_id", auth.user.id)
-        .maybeSingle();
+      const { data: executionWallet, error: executionWalletError } = await supabase.from("altana_execution_wallets").select("wallet_address,status,chain_id,wallet_provider,authorization_model").eq("user_id", auth.user.id).maybeSingle();
       if (executionWalletError) throw new Error(executionWalletError.message);
-      if (!validActiveAltanaWallet(executionWallet as Record<string, unknown> | null)) {
-        return res.status(409).json({ error: "An active BSC Testnet Altana execution wallet must be provisioned before creating this Grid job; the wallet is bound into the immutable ERC-8183 description." });
-      }
+      if (!validActiveAltanaWallet(executionWallet as Record<string, unknown> | null)) return res.status(409).json({ error: "An active BSC Testnet Altana execution wallet must be provisioned before creating this Grid job; the wallet is bound into the immutable ERC-8183 description." });
       activeAltanaWallet = executionWallet as Record<string, unknown>;
     }
 
@@ -157,25 +129,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const expiryUnix = Math.floor(Date.now() / 1000) + JOB_LIFETIME_SECONDS;
     const sessionExpiryUnix = Math.floor(Date.now() / 1000) + ALTANA_SESSION_LIFETIME_SECONDS;
     const descriptionPayload: Record<string, unknown> = {
-      marketplace: "AgentMarket",
-      network: "bsc-testnet",
-      chain_id: CHAIN_ID,
-      mission_id: missionId,
-      quote_id: quote.quote_id,
-      quote_hash: quote.quote_hash,
-      price: formatUnits(rawBudget, Number(decimals)),
-      price_raw: rawBudget.toString(),
-      currency: quote.currency,
-      goal: quote.goal,
-      params: quote.request_metadata,
+      marketplace: "AgentMarket", network: "bsc-testnet", chain_id: CHAIN_ID,
+      mission_id: missionId, quote_id: quote.quote_id, quote_hash: quote.quote_hash,
+      price: formatUnits(rawBudget, Number(decimals)), price_raw: rawBudget.toString(),
+      currency: quote.currency, goal: quote.goal, params: quote.request_metadata,
     };
-
     if (altanaRequired && activeAltanaWallet) {
       descriptionPayload.execution = {
-        wallet_provider: "altana",
-        authorization_model: "scoped_session",
-        wallet_address: activeAltanaWallet.wallet_address,
-        chain_id: CHAIN_ID,
+        wallet_provider: "altana", authorization_model: "scoped_session",
+        wallet_address: activeAltanaWallet.wallet_address, chain_id: CHAIN_ID,
         session_expiry: sessionExpiryUnix,
       };
     }
@@ -202,9 +164,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         approve: BigInt(allowance) < rawBudget ? { to: token, data_builder: `encode approve(${COMMERCE}, ${rawBudget.toString()})` } : { data_builder: "No approval transaction required; current allowance covers the accepted quote." },
         fund: { to: COMMERCE, data_builder: `encode fund(jobId, ${rawBudget.toString()}, 0x)` },
       },
-      note: altanaRequired
-        ? "This Testnet plan binds the user's active Altana execution wallet and a single planned session expiry into the immutable ERC-8183 job description before createJob is exposed to the wallet. Grid derives the same expiry from the job on-chain."
-        : "This plan is quote-gated. The on-chain description, budget, provider, and currently whitelisted policy are derived from the accepted Testnet state.",
+      note: altanaRequired ? "This Testnet plan binds the user's active Altana execution wallet and a single planned session expiry into the immutable ERC-8183 job description before createJob is exposed to the wallet. Grid derives the same expiry from the job on-chain." : "This plan is quote-gated. The on-chain description, budget, provider, and currently whitelisted policy are derived from the accepted Testnet state.",
     });
   } catch (error) { return res.status(400).json({ error: error instanceof Error ? error.message : "Unable to prepare the accepted Testnet quote" }); }
 }
