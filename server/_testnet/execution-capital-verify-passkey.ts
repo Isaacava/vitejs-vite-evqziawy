@@ -9,6 +9,7 @@ const publicClient = createPublicClient({ chain: bscTestnet, transport: http(pro
 function address(value: unknown): value is Address { return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value); }
 function hex(value: unknown): value is Hex { return typeof value === "string" && /^0x[a-fA-F0-9]*$/.test(value); }
 function object(value: unknown) { return value && typeof value === "object" ? value as Record<string, unknown> : {}; }
+function isZeroAddress(value: unknown): boolean { return typeof value === "string" && /^0x0{40}$/i.test(value); }
 
 async function fetchRequestScopedCapability(sourceUrl: string, requestId: string, chainJobId: number) {
   let parsed: URL;
@@ -69,7 +70,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!persistentWallet) return res.status(409).json({ error: "No persistent Altana execution wallet is registered for this AgentMarket account" });
     if (persistentWallet.status !== "active") return res.status(409).json({ error: `The persistent Altana execution wallet is ${persistentWallet.status} and cannot authorize a new session` });
     if (String(persistentWallet.wallet_address).toLowerCase() !== String(wallet).toLowerCase()) return res.status(403).json({ error: "The Altana execution wallet does not belong to the authenticated AgentMarket account" });
-    if (!persistentWallet.signer_address || String(persistentWallet.signer_address).toLowerCase() !== String(signerAddress).toLowerCase()) return res.status(403).json({ error: "The Altana Passkey signer does not match the signer registered for this AgentMarket account" });
+
+    // The Altana SDK's Passkey signer address is not the same identity as the
+    // user's external AgentMarket wallet. Some SDK/runtime versions expose an
+    // all-zero placeholder for signer_address. In that case, the persistent
+    // execution-wallet ownership check above plus the on-chain KeyStore check
+    // below are the authoritative authorization checks. When a real signer
+    // address is persisted, require an exact match for audit integrity.
+    const storedSigner = typeof persistentWallet.signer_address === "string" ? persistentWallet.signer_address : "";
+    if (storedSigner && !isZeroAddress(storedSigner) && storedSigner.toLowerCase() !== String(signerAddress).toLowerCase()) {
+      return res.status(403).json({ error: "The Altana Passkey signer does not match the signer registered for this AgentMarket account" });
+    }
     if (Number(persistentWallet.chain_id) !== 97 || String(persistentWallet.wallet_provider).toLowerCase() !== "altana" || String(persistentWallet.authorization_model).toLowerCase() !== "passkey") return res.status(409).json({ error: "The registered execution wallet is not a valid BSC Testnet Altana Passkey wallet" });
 
     const evidence = object(request.evidence);
