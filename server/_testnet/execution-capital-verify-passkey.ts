@@ -10,16 +10,18 @@ function address(value: unknown): value is Address { return typeof value === "st
 function hex(value: unknown): value is Hex { return typeof value === "string" && /^0x[a-fA-F0-9]*$/.test(value); }
 function object(value: unknown) { return value && typeof value === "object" ? value as Record<string, unknown> : {}; }
 
-async function fetchRequestScopedCapability(sourceUrl: string, requestId: string) {
+async function fetchRequestScopedCapability(sourceUrl: string, requestId: string, chainJobId: number) {
   let parsed: URL;
   try { parsed = new URL(sourceUrl); } catch { throw new Error("Stored execution capability source URL is invalid"); }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new Error("Execution capability source URL must use HTTP(S)");
+  parsed.searchParams.set("job_id", String(chainJobId));
   const response = await fetch(parsed.toString(), { method: "GET", cache: "no-store", headers: { Accept: "application/json", "x-agentmarket-request-id": requestId } });
   const body = await response.json().catch(() => null) as Record<string, unknown> | null;
   if (!response.ok) throw new Error(typeof body?.error === "string" ? body.error : "Unable to resolve the current Grid request-scoped capability");
   if (body?.network !== "bsc-testnet" || Number(body?.chainId) !== 97) throw new Error("Grid capability is not for BSC Testnet");
   if (body?.execution !== "altana-scoped-session" || body?.wallet_provider !== "altana" || body?.authorization_model !== "scoped_session") throw new Error("Grid capability is not an Altana scoped-session descriptor");
   if (body?.private_key_exposed !== false || body?.session_scope !== "request-scoped") throw new Error("Grid did not return a request-scoped private-key-safe capability");
+  if (Number(body?.job_id) !== chainJobId) throw new Error(`Grid capability returned job_id ${body?.job_id ?? "null"}, expected ${chainJobId}`);
   if (!address(body.session_key_address) || !hex(body.session_key_public_key)) throw new Error("Grid capability contains an invalid session key");
   if (!Array.isArray(body.allowed_targets) || !body.allowed_targets.every(address) || body.allowed_targets.length === 0) throw new Error("Grid capability contains no valid target allowlist");
   if (!Array.isArray(body.allowed_selectors) || !body.allowed_selectors.every((v) => typeof v === "string" && /^0x[a-fA-F0-9]{8}$/.test(v)) || body.allowed_selectors.length === 0) throw new Error("Grid capability contains no valid selector allowlist");
@@ -44,7 +46,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: "request_id, user_execution_wallet, signer_address, 32-byte session_key_id, and session_expiry are required" });
     }
     if (grantTxHash !== undefined && grantTxHash !== null && (!hex(grantTxHash) || String(grantTxHash).length < 10)) return res.status(400).json({ error: "session_grant_tx_hash is invalid" });
-    if (!auth.user.wallet_address || auth.user.wallet_address.toLowerCase() !== signerAddress.toLowerCase()) return res.status(403).json({ error: "The Altana wallet signer does not match the authenticated AgentMarket wallet" });
     if (expiry <= Math.floor(Date.now() / 1000)) return res.status(400).json({ error: "Session expiry is already in the past" });
 
     const supabase = serverClient();
@@ -57,13 +58,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { data: job, error: jobError } = await supabase.from("jobs").select("id,client_wallet,mission_task_id,chain_job_id").eq("id", request.job_id).maybeSingle();
     if (jobError) return res.status(500).json({ error: jobError.message });
     if (!job || !auth.user.wallet_address || String(job.client_wallet || "").toLowerCase() !== auth.user.wallet_address.toLowerCase()) return res.status(403).json({ error: "You do not own this execution-capital request" });
+    if (!job.chain_job_id) return res.status(409).json({ error: "The execution-capital request is not attached to an ERC-8183 chain job" });
+
+    const { data: persistentWallet, error: persistentWalletError } = await supabase
+      .from("altana_execution_wallets")
+      .select("wallet_address,signer_address,chain_id,wallet_provider,authorization_model,rp_id,status")
+      .eq("user_id", auth.user.id)
+      .maybeSingle();
+    if (persistentWalletError) return res.status(500).json({ error: persistentWalletError.message });
+    if (!persistentWallet) return res.status(409).json({ error: "No persistent Altana execution wallet is registered for this AgentMarket account" });
+    if (persistentWallet.status !== "active") return res.status(409).json({ error: `The persistent Altana execution wallet is ${persistentWallet.status} and cannot authorize a new session` });
+    if (String(persistentWallet.wallet_address).toLowerCase() !== String(wallet).toLowerCase()) return res.status(403).json({ error: "The Altana execution wallet does not belong to the authenticated AgentMarket account" });
+    if (!persistentWallet.signer_address || String(persistentWallet.signer_address).toLowerCase() !== String(signerAddress).toLowerCase()) return res.status(403).json({ error: "The Altana Passkey signer does not match the signer registered for this AgentMarket account" });
+    if (Number(persistentWallet.chain_id) !== 97 || String(persistentWallet.wallet_provider).toLowerCase() !== "altana" || String(persistentWallet.authorization_model).toLowerCase() !== "passkey") return res.status(409).json({ error: "The registered execution wallet is not a valid BSC Testnet Altana Passkey wallet" });
 
     const evidence = object(request.evidence);
     const storedCapability = object(evidence.execution_capability);
     const sourceUrl = typeof storedCapability.source_url === "string" ? storedCapability.source_url.trim() : "";
     if (!sourceUrl) return res.status(409).json({ error: "The execution-capital request has no stored Grid capability source URL" });
 
-    const capability = await fetchRequestScopedCapability(sourceUrl, requestId);
+    const capability = await fetchRequestScopedCapability(sourceUrl, requestId, Number(job.chain_job_id));
     const expectedSessionKeyId = keccak256(capability.session_key_public_key as Hex);
     if (String(sessionKeyId).toLowerCase() !== expectedSessionKeyId.toLowerCase()) return res.status(409).json({ error: "The granted session key ID does not match the current Grid request-scoped public session key" });
     if (String(capability.session_key_address).toLowerCase() !== String(storedCapability.session_key_address || "").toLowerCase() && request.status === "authorized" && !renewal) return res.status(409).json({ error: "Stored Grid session is stale; renewal is required before execution" });
