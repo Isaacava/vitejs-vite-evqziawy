@@ -8,6 +8,7 @@ const ROUTER = "0x6d948b47614dbfbbf97a5e3fd9b410deeab44f17" as Address;
 const POLICY = "0xc4f85d602235e14a45fd1d9794c4092af762b1a6" as Address;
 const CHAIN_ID = 97;
 const JOB_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
+const ALTANA_SESSION_LIFETIME_SECONDS = 24 * 60 * 60;
 const TESTNET_RPC_URL = "https://bsc-testnet-rpc.publicnode.com";
 
 const COMMERCE_ABI = [
@@ -33,7 +34,7 @@ function validAddress(value: unknown): value is Address { return typeof value ==
 
 function isAltanaAgent(agent: Record<string, unknown>) {
   const metadata = agent.metadata && typeof agent.metadata === "object" ? agent.metadata as Record<string, unknown> : {};
-  const execution = metadata.execution && typeof metadata.execution === "object" ? metadata.execution as Record<string, unknown> : {};
+  const execution = metadata.execution && typeof metadata.execution === "object" ? execution as Record<string, unknown> : {};
   const provider = typeof execution.wallet_provider === "string" ? execution.wallet_provider.toLowerCase() : "";
   return String(agent.agent_id || "").toLowerCase() === "grid-strategy" || provider === "altana";
 }
@@ -60,11 +61,14 @@ function assertAltanaWalletBinding(description: string, required: boolean) {
   const execution = parsed && typeof parsed === "object" && "execution" in parsed
     ? (parsed as Record<string, unknown>).execution
     : null;
-  const walletAddress = execution && typeof execution === "object" && "wallet_address" in execution
-    ? (execution as Record<string, unknown>).wallet_address
-    : null;
+  const executionObject = execution && typeof execution === "object" ? execution as Record<string, unknown> : null;
+  const walletAddress = executionObject?.wallet_address;
+  const sessionExpiry = Number(executionObject?.session_expiry);
   if (!validAddress(walletAddress)) {
     throw new Error("Grid Testnet createJob description is missing the bound Altana execution wallet.");
+  }
+  if (!Number.isSafeInteger(sessionExpiry) || sessionExpiry <= Math.floor(Date.now() / 1000)) {
+    throw new Error("Grid Testnet createJob description is missing a future Altana session expiry.");
   }
 }
 
@@ -75,9 +79,7 @@ async function resolveLivePolicy(): Promise<Address> {
     functionName: "policyWhitelist",
     args: [POLICY],
   });
-
   if (configured) return POLICY;
-
   throw new Error(
     `The configured Testnet ERC-8183 policy ${POLICY} is not currently whitelisted by EvaluatorRouter ${ROUTER}. ` +
     "Policy discovery cannot fall back to historical PolicyWhitelisted logs because the configured public RPC prunes historical block data. " +
@@ -153,6 +155,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (BigInt(balance) < rawBudget) return res.status(409).json({ error: `Insufficient Testnet settlement-token balance. Required ${formatUnits(rawBudget, Number(decimals))} ${symbol}.`, required_raw: rawBudget.toString(), balance_raw: String(balance) });
 
     const expiryUnix = Math.floor(Date.now() / 1000) + JOB_LIFETIME_SECONDS;
+    const sessionExpiryUnix = Math.floor(Date.now() / 1000) + ALTANA_SESSION_LIFETIME_SECONDS;
     const descriptionPayload: Record<string, unknown> = {
       marketplace: "AgentMarket",
       network: "bsc-testnet",
@@ -173,6 +176,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         authorization_model: "scoped_session",
         wallet_address: activeAltanaWallet.wallet_address,
         chain_id: CHAIN_ID,
+        session_expiry: sessionExpiryUnix,
       };
     }
 
@@ -188,7 +192,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       agent: { agent_id: agent.agent_id, name: agent.name, provider: agent.owner, status: agent.status, verification_status: agent.verification_status },
       commerce: { address: COMMERCE, evaluator: ROUTER, hook: ROUTER, default_policy: livePolicy },
       payment: { token, symbol, decimals: Number(decimals), budget_raw: rawBudget.toString(), balance_raw: String(balance), allowance_raw: String(allowance), balance_formatted: formatUnits(BigInt(balance), Number(decimals)), allowance_formatted: formatUnits(BigInt(allowance), Number(decimals)) },
-      execution: altanaRequired && activeAltanaWallet ? { wallet_address: activeAltanaWallet.wallet_address, wallet_provider: "altana", authorization_model: "scoped_session", chain_id: CHAIN_ID, bound_into_job_description: true } : { wallet_address: null, bound_into_job_description: false },
+      execution: altanaRequired && activeAltanaWallet ? { wallet_address: activeAltanaWallet.wallet_address, wallet_provider: "altana", authorization_model: "scoped_session", chain_id: CHAIN_ID, session_expiry: sessionExpiryUnix, bound_into_job_description: true } : { wallet_address: null, bound_into_job_description: false },
       job_description: description,
       wallet_steps: ["createJob", "registerJob with confirmed jobId", "setBudget with confirmed jobId and quoted budget", "approve payment token if allowance is insufficient", "fund with the same quoted budget"],
       transactions: {
@@ -199,7 +203,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         fund: { to: COMMERCE, data_builder: `encode fund(jobId, ${rawBudget.toString()}, 0x)` },
       },
       note: altanaRequired
-        ? "This Testnet plan is quote-gated and binds the user's active Altana execution wallet into the immutable ERC-8183 job description before the createJob transaction is exposed to the wallet."
+        ? "This Testnet plan binds the user's active Altana execution wallet and a single planned session expiry into the immutable ERC-8183 job description before createJob is exposed to the wallet. Grid derives the same expiry from the job on-chain."
         : "This plan is quote-gated. The on-chain description, budget, provider, and currently whitelisted policy are derived from the accepted Testnet state.",
     });
   } catch (error) { return res.status(400).json({ error: error instanceof Error ? error.message : "Unable to prepare the accepted Testnet quote" }); }
