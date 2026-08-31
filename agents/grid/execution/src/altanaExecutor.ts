@@ -94,7 +94,12 @@ export function reconstructSession(
   };
 }
 
-export function configuredSessionDescriptor(jobId: number | undefined, walletAddressOverride?: string, env: NodeJS.ProcessEnv = process.env): GridSessionDescriptor {
+export function configuredSessionDescriptor(
+  jobId: number | undefined,
+  walletAddressOverride?: string,
+  expiryOverride?: number,
+  env: NodeJS.ProcessEnv = process.env,
+): GridSessionDescriptor {
   const sessionPrivateKey = jobId !== undefined
     ? deriveJobSessionPrivateKey(jobId, env)
     : normalizePrivateKey(env.ALTANA_SESSION_PRIVATE_KEY || "");
@@ -115,8 +120,12 @@ export function configuredSessionDescriptor(jobId: number | undefined, walletAdd
   const nativeSpendLimitRaw = (env.ALTANA_SESSION_NATIVE_SPEND_LIMIT || "20000000000000000").trim();
   if (!/^\d+$/.test(nativeSpendLimitRaw) || BigInt(nativeSpendLimitRaw) <= 0n) throw new Error("ALTANA_SESSION_NATIVE_SPEND_LIMIT must be a positive raw wei amount");
 
-  const expiryRaw = (env.ALTANA_SESSION_EXPIRY || "").trim();
-  if (!/^\d+$/.test(expiryRaw)) throw new Error("ALTANA_SESSION_EXPIRY must match the expiry of the already-granted Altana session");
+  const expiry = expiryOverride !== undefined
+    ? Number(expiryOverride)
+    : Number((env.ALTANA_SESSION_EXPIRY || "").trim());
+  if (!Number.isSafeInteger(expiry) || expiry <= Math.floor(Date.now() / 1000)) {
+    throw new Error("The job-bound Altana session expiry is missing or has already expired");
+  }
 
   return {
     walletAddress: walletAddress as Address,
@@ -127,7 +136,7 @@ export function configuredSessionDescriptor(jobId: number | undefined, walletAdd
     spendLimit: BigInt(spendLimitRaw),
     spendToken: spendTokenRaw as Address,
     nativeSpendLimit: BigInt(nativeSpendLimitRaw),
-    expiry: Number(expiryRaw),
+    expiry,
   };
 }
 
@@ -162,10 +171,11 @@ export async function executeConfiguredGridAction(
   calls: readonly GridCall[],
   jobId?: number,
   walletAddress?: string,
+  expiryOverride?: number,
 ): Promise<GridExecutionResult> {
   const sessionPrivateKey = jobId !== undefined
     ? deriveJobSessionPrivateKey(jobId)
     : normalizePrivateKey(process.env.ALTANA_SESSION_PRIVATE_KEY || "");
-  const descriptor = configuredSessionDescriptor(jobId, walletAddress);
+  const descriptor = configuredSessionDescriptor(jobId, walletAddress, expiryOverride);
   return executeGridAction(descriptor, calls, sessionPrivateKey);
 }
