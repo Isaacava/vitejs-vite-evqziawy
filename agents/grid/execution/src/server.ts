@@ -1,8 +1,9 @@
 import { createServer, type IncomingMessage } from "node:http";
 import { privateKeyToAccount } from "viem/accounts";
-import { executeConfiguredGridAction, executeGridAction, configuredSessionDescriptor, deriveJobSessionPrivateKey } from "./altanaExecutor.js";
+import { createPublicClient, http } from "viem";
+import { bscTestnet } from "viem/chains";
+import { executeGridAction, configuredSessionDescriptor, deriveJobSessionPrivateKey } from "./altanaExecutor.js";
 import { pancakeSwapPreflight } from "./preflight.js";
-import { buildPancakeTestnetConfig } from "./pancakeSwap.js";
 import { observeTestnetReceipt } from "./receipt.js";
 import { getExecutionReadiness } from "./readiness.js";
 import type { GridCall, GridSessionDescriptor } from "./types.js";
@@ -10,6 +11,18 @@ import type { GridCall, GridSessionDescriptor } from "./types.js";
 const PORT = Number(process.env.GRID_EXECUTION_PORT || 8788);
 const SESSION_PRIVATE_KEY = process.env.ALTANA_SESSION_PRIVATE_KEY || "";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const COMMERCE_ADDRESS = process.env.ERC8183_COMMERCE_ADDRESS || "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de";
+const TESTNET_RPC_URL = process.env.BSC_TESTNET_RPC_URL || "https://bsc-testnet-rpc.publicnode.com";
+const publicClient = createPublicClient({ chain: bscTestnet, transport: http(TESTNET_RPC_URL) });
+const COMMERCE_ABI = [{
+  type: "function", name: "getJob", stateMutability: "view", inputs: [{ name: "jobId", type: "uint256" }],
+  outputs: [{ name: "job", type: "tuple", components: [
+    { name: "id", type: "uint256" }, { name: "client", type: "address" }, { name: "provider", type: "address" },
+    { name: "evaluator", type: "address" }, { name: "description", type: "string" }, { name: "budget", type: "uint256" },
+    { name: "expiredAt", type: "uint256" }, { name: "status", type: "uint8" }, { name: "hook", type: "address" },
+    { name: "submittedAt", type: "uint256" }, { name: "deliverable", type: "bytes32" },
+  ] }],
+}] as const;
 
 function json(res: import("node:http").ServerResponse, status: number, value: unknown) {
   res.statusCode = status;
@@ -84,6 +97,35 @@ function walletAddressFromRequest(req: IncomingMessage, input?: Record<string, u
   return raw;
 }
 
+function parseJobDescription(description: unknown): Record<string, unknown> {
+  if (typeof description !== "string" || !description.trim()) return {};
+  try {
+    const parsed = JSON.parse(description);
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+async function jobBoundSessionExpiry(jobId: number): Promise<number | undefined> {
+  const job = await publicClient.readContract({ address: COMMERCE_ADDRESS as `0x${string}`, abi: COMMERCE_ABI, functionName: "getJob", args: [BigInt(jobId)] });
+  const parsed = parseJobDescription(job.description);
+  const execution = parsed.execution && typeof parsed.execution === "object" ? parsed.execution as Record<string, unknown> : {};
+  const raw = execution.session_expiry;
+  const expiry = Number(raw);
+  if (Number.isSafeInteger(expiry) && expiry > 0) return expiry;
+  return undefined;
+}
+
+async function effectiveSessionExpiry(jobId: number | undefined): Promise<number | undefined> {
+  if (jobId !== undefined) {
+    const bound = await jobBoundSessionExpiry(jobId);
+    if (bound !== undefined) return bound;
+  }
+  const configured = Number(process.env.ALTANA_SESSION_EXPIRY || "");
+  return Number.isSafeInteger(configured) && configured > 0 ? configured : undefined;
+}
+
 async function publicExecutionCapabilities(req: IncomingMessage) {
   const configured = {
     session_private_key_configured: Boolean(SESSION_PRIVATE_KEY),
@@ -94,10 +136,10 @@ async function publicExecutionCapabilities(req: IncomingMessage) {
     allowed_selectors_configured: configuredList(process.env.GRID_ALLOWED_SELECTORS || "").length > 0,
     pancake_router_configured: Boolean(process.env.PANCAKE_TESTNET_ROUTER),
   };
-  const market = buildPancakeTestnetConfig();
   const jobId = jobIdFromRequest(req);
   const walletAddress = walletAddressFromRequest(req);
   const sessionKey = jobId ? deriveJobSessionPrivateKey(jobId) : SESSION_PRIVATE_KEY;
+  const sessionExpiry = await effectiveSessionExpiry(jobId);
   const base = {
     ok: true,
     network: "bsc-testnet",
@@ -106,10 +148,10 @@ async function publicExecutionCapabilities(req: IncomingMessage) {
     wallet_provider: "altana",
     authorization_model: "scoped_session",
     protocol: "pancake-v3-swap",
-    execution_market: { token_in: market.tokenIn, token_out: market.tokenOut, token_in_symbol: market.tokenInSymbol, token_out_symbol: market.tokenOutSymbol, fee: market.fee },
     preflight_path: "/preflight/pancake",
-    allowed_targets: configuredList(process.env.GRID_ALLOWED_TARGETS || ""),
-    allowed_selectors: configuredList(process.env.GRID_ALLOWED_SELECTORS || ""),
+    execution_market: await import("./pancakeSwap.js").then(({ buildPancakeTestnetConfig }) => { const market = buildPancakeTestnetConfig(); return { token_in: market.tokenIn, token_out: market.tokenOut, token_in_symbol: market.tokenInSymbol, token_out_symbol: market.tokenOutSymbol, fee: market.fee }; }),
+    allowed_targets: configuredList(process.env.GRID_ALLOWED_TARGETS || [] as unknown as string),
+    allowed_selectors: configuredList(process.env.GRID_ALLOWED_SELECTORS || [] as unknown as string),
     selectors_required: true,
     private_key_exposed: false,
     configuration: configured,
@@ -117,6 +159,7 @@ async function publicExecutionCapabilities(req: IncomingMessage) {
     session_scope: jobId ? "request-scoped" : "job-required",
     job_id: jobId || null,
     wallet_address: walletAddress || null,
+    session_expiry: sessionExpiry || null,
   };
   if (!sessionKey) return { ...base, execution_ready: false };
   const account = privateKeyToAccount((sessionKey.startsWith("0x") ? sessionKey : `0x${sessionKey}`) as `0x${string}`);
@@ -156,7 +199,8 @@ const server = createServer(async (req, res) => {
       if (jobId === undefined) return json(res, 400, { error: "job_id is required for standalone Grid execution" });
       const walletAddress = walletAddressFromRequest(req, request);
       if (!walletAddress) return json(res, 400, { error: "wallet_address is required for job-bound Grid execution" });
-      const configured = configuredSessionDescriptor(jobId, walletAddress);
+      const sessionExpiry = await effectiveSessionExpiry(jobId);
+      const configured = configuredSessionDescriptor(jobId, walletAddress, sessionExpiry);
       const jobSessionKey = deriveJobSessionPrivateKey(jobId);
       const expectedAddress = privateKeyToAccount(jobSessionKey).address.toLowerCase();
       if (configured.agentSessionAddress.toLowerCase() !== expectedAddress) throw new Error("Derived Grid session key does not match the configured job session");
@@ -169,7 +213,7 @@ const server = createServer(async (req, res) => {
     if (jobId === undefined) return json(res, 400, { error: "job_id is required for standalone Grid execution" });
     const session = descriptor(request.session);
     const sessionPrivateKey = deriveJobSessionPrivateKey(jobId);
-    const expected = configuredSessionDescriptor(jobId, session.walletAddress);
+    const expected = configuredSessionDescriptor(jobId, session.walletAddress, await effectiveSessionExpiry(jobId));
     if (expected.agentSessionAddress.toLowerCase() !== session.agentSessionAddress.toLowerCase()) throw new Error("Session descriptor does not match the job-scoped Grid signing key");
     if (expected.walletAddress.toLowerCase() !== session.walletAddress.toLowerCase()) throw new Error("Session descriptor wallet does not match the job-bound execution wallet");
     return json(res, 200, { ok: true, result: await executeGridAction(session, calls(request.calls), sessionPrivateKey) });
