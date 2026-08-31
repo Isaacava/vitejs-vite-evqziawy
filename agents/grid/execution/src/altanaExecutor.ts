@@ -94,14 +94,14 @@ export function reconstructSession(
   };
 }
 
-export function configuredSessionDescriptor(jobId?: number, env: NodeJS.ProcessEnv = process.env): GridSessionDescriptor {
+export function configuredSessionDescriptor(jobId: number | undefined, walletAddressOverride?: string, env: NodeJS.ProcessEnv = process.env): GridSessionDescriptor {
   const sessionPrivateKey = jobId !== undefined
     ? deriveJobSessionPrivateKey(jobId, env)
     : normalizePrivateKey(env.ALTANA_SESSION_PRIVATE_KEY || "");
   const account = privateKeyToAccount(sessionPrivateKey);
   const publicKey = account.publicKey as Hex;
-  const walletAddress = env.ALTANA_WALLET_ADDRESS?.trim() || "";
-  if (!isAddress(walletAddress)) throw new Error("ALTANA_WALLET_ADDRESS must be the user Altana wallet address that granted this session");
+  const walletAddress = (walletAddressOverride?.trim() || env.ALTANA_WALLET_ADDRESS?.trim() || "");
+  if (!isAddress(walletAddress)) throw new Error("An Altana execution wallet address is required for the job-bound session");
 
   const allowedCalls = configuredAddressList("GRID_ALLOWED_TARGETS");
   if (allowedCalls.length === 0) throw new Error("GRID_ALLOWED_TARGETS must contain at least one contract target");
@@ -161,10 +161,11 @@ export async function executeGridAction(
 export async function executeConfiguredGridAction(
   calls: readonly GridCall[],
   jobId?: number,
+  walletAddress?: string,
 ): Promise<GridExecutionResult> {
   const sessionPrivateKey = jobId !== undefined
     ? deriveJobSessionPrivateKey(jobId)
     : normalizePrivateKey(process.env.ALTANA_SESSION_PRIVATE_KEY || "");
-  const descriptor = configuredSessionDescriptor(jobId);
+  const descriptor = configuredSessionDescriptor(jobId, walletAddress);
   return executeGridAction(descriptor, calls, sessionPrivateKey);
 }
