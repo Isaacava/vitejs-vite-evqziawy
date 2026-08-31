@@ -61,8 +61,25 @@ def _job_execution_parameters(job: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
+def _job_execution_wallet(job: dict[str, Any], params: dict[str, Any]) -> str:
+    candidates = [
+        params.get("wallet_address"),
+        params.get("execution_wallet"),
+        params.get("execution_wallet_address"),
+        job.get("execution_wallet"),
+        job.get("execution_wallet_address"),
+    ]
+    for value in candidates:
+        if isinstance(value, str) and value.strip().startswith("0x") and len(value.strip()) == 42:
+            return value.strip()
+    raise RuntimeError(
+        "ERC-8183 job does not contain a bound Altana execution wallet. "
+        "Create the job only after the user's Altana execution wallet is provisioned so the autonomous agent can use the same wallet that granted the session."
+    )
+
+
 async def execute_grid_trade(job: dict[str, Any]) -> dict[str, Any]:
-    """Run Grid's own BSC Testnet execution path with the job-scoped Altana session."""
+    """Run Grid's own BSC Testnet execution path with the job-bound Altana session."""
     params = _job_execution_parameters(job)
     market = params.get("execution_market") if isinstance(params.get("execution_market"), dict) else params
     try:
@@ -72,11 +89,11 @@ async def execute_grid_trade(job: dict[str, Any]) -> dict[str, Any]:
     if job_id <= 0:
         raise RuntimeError("ERC-8183 jobId must be positive")
 
+    wallet_address = _job_execution_wallet(job, params)
     base_url = (_env("GRID_EXECUTION_INTERNAL_URL", "http://127.0.0.1:8788") or "http://127.0.0.1:8788").rstrip("/")
     router = _required_address("PANCAKE_TESTNET_ROUTER", str(market.get("router") or market.get("target") or DEFAULT_ROUTER))
     token_in = _required_address("GRID_DEFAULT_TOKEN_IN", str(market.get("token_in") or DEFAULT_TOKEN_IN))
     token_out = _required_address("GRID_DEFAULT_TOKEN_OUT", str(market.get("token_out") or DEFAULT_TOKEN_OUT))
-    recipient = _required_address("ALTANA_WALLET_ADDRESS")
     fee = int(market.get("fee") or market.get("pool_fee") or _env("PANCAKE_TESTNET_POOL_FEE", str(DEFAULT_FEE)) or DEFAULT_FEE)
 
     if token_in.lower() != DEFAULT_TOKEN_IN.lower():
@@ -97,7 +114,7 @@ async def execute_grid_trade(job: dict[str, Any]) -> dict[str, Any]:
                 "router": router,
                 "tokenIn": token_in,
                 "tokenOut": token_out,
-                "recipient": recipient,
+                "recipient": wallet_address,
                 "fee": fee,
                 "amountIn": amount,
                 "amountOutMinimum": amount_out_minimum,
@@ -110,12 +127,15 @@ async def execute_grid_trade(job: dict[str, Any]) -> dict[str, Any]:
         result = preflight_body.get("result") or {}
         checked_token = str(result.get("tokenIn") or result.get("token_in") or token_in)
         checked_fee = int(result.get("fee") or fee)
+        checked_recipient = str(result.get("recipient") or wallet_address)
         if checked_token.lower() != token_in.lower():
             raise RuntimeError(f"Grid preflight checked token {checked_token}, but requested token is {token_in}")
         if checked_token.lower() != DEFAULT_TOKEN_IN.lower():
             raise RuntimeError(f"Grid preflight did not use canonical CAKE2 {DEFAULT_TOKEN_IN}")
         if checked_fee != DEFAULT_FEE:
             raise RuntimeError(f"Grid preflight used fee tier {checked_fee}, but Grid requires {DEFAULT_FEE}")
+        if checked_recipient.lower() != wallet_address.lower():
+            raise RuntimeError(f"Grid preflight recipient {checked_recipient} does not match the job-bound Altana wallet {wallet_address}")
 
         call = result.get("call")
         if not isinstance(call, dict) or not call.get("to") or not call.get("data"):
@@ -123,7 +143,7 @@ async def execute_grid_trade(job: dict[str, Any]) -> dict[str, Any]:
 
         execute_response = await client.post(
             f"{base_url}/execute-configured",
-            json={"job_id": job_id, "calls": [call]},
+            json={"job_id": job_id, "wallet_address": wallet_address, "calls": [call]},
         )
         execute_body = execute_response.json()
         if execute_response.status_code >= 400 or not execute_body.get("ok"):
@@ -144,6 +164,7 @@ async def execute_grid_trade(job: dict[str, Any]) -> dict[str, Any]:
             "transaction_hash": transaction_hash,
             "calls_id": execution.get("callsId"),
             "status": execution.get("status"),
+            "execution_wallet": wallet_address,
             "preflight": result,
             "receipt": receipt,
         }
