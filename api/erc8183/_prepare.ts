@@ -52,7 +52,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .maybeSingle();
     if (missionError) throw new Error(missionError.message);
     if (!mission) return res.status(404).json({ error: "Mission not found" });
-    if (mission.client_wallet && !equalWallet(mission.client_wallet, auth.user.wallet_address)) return res.status(403).json({ error: "Mission belongs to another wallet" });
+    if (mission.client_wallet && !equalWallet(mission.client_wallet, auth.user.wallet_address)) throw new Error("Mission belongs to another wallet");
 
     const { data: quote, error: quoteError } = await supabase
       .from("marketplace_quotes")
@@ -86,6 +86,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!agent?.owner) throw new Error("Assigned agent does not have a provider wallet");
     if (agent.verification_status === "revoked") throw new Error("Assigned agent identity is revoked");
 
+    const { data: executionWallet, error: executionWalletError } = await supabase
+      .from("altana_execution_wallets")
+      .select("wallet_address,status,chain_id,wallet_provider,authorization_model")
+      .eq("user_id", auth.user.id)
+      .maybeSingle();
+    if (executionWalletError) throw new Error(executionWalletError.message);
+
     const provider = address(agent.owner, "agent.owner");
     const readOptions = { authorizationList: [] as const };
     const paymentToken = await publicClient.readContract({
@@ -100,7 +107,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ]);
 
     const expiry = BigInt(Math.floor(Date.now() / 1000) + ttlSeconds);
-    const description = JSON.stringify({
+    const descriptionPayload: Record<string, unknown> = {
       marketplace: "AgentMarket",
       network: "bsc-testnet",
       chain_id: BSC_CHAIN_ID,
@@ -110,7 +117,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       quote_hash: quote.quote_hash,
       quote_price: quote.price,
       quote_currency: quote.currency,
-    });
+    };
+
+    if (executionWallet && executionWallet.status === "active" && Number(executionWallet.chain_id) === 97 && String(executionWallet.wallet_provider).toLowerCase() === "altana" && String(executionWallet.authorization_model).toLowerCase() === "passkey") {
+      descriptionPayload.execution = {
+        wallet_provider: "altana",
+        authorization_model: "scoped_session",
+        wallet_address: executionWallet.wallet_address,
+        chain_id: 97,
+      };
+    }
+
+    const description = JSON.stringify(descriptionPayload);
 
     const createJobData = encodeFunctionData({
       abi: COMMERCE_ABI,
@@ -138,6 +156,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         status: agent.status,
         verification_status: agent.verification_status,
       },
+      execution: executionWallet ? {
+        wallet_address: executionWallet.wallet_address,
+        status: executionWallet.status,
+        chain_id: Number(executionWallet.chain_id),
+        wallet_provider: executionWallet.wallet_provider,
+        authorization_model: executionWallet.authorization_model,
+        bound_into_job_description: Boolean(descriptionPayload.execution),
+      } : { wallet_address: null, bound_into_job_description: false },
       commerce: {
         address: ERC8183_ADDRESSES.commerce,
         evaluator: ERC8183_ADDRESSES.router,
@@ -186,7 +212,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           data_builder: `encode fund(jobId, ${budget.toString()}, 0x) after budget + approval`,
         },
       },
-      note: "Preparation is quote-gated. The user's wallet must sign each Testnet transaction and confirmed Testnet receipts must be persisted before the mission is marked funded.",
+      note: executionWallet && descriptionPayload.execution
+        ? "Preparation is quote-gated. The active Altana execution wallet is bound into the immutable ERC-8183 job description so the autonomous provider can execute against the same wallet whose session was authorized."
+        : "Preparation is quote-gated. No active Altana execution wallet was available to bind into the immutable ERC-8183 job description; Altana-backed autonomous execution must be provisioned before creating the job.",
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to prepare ERC-8183 Testnet mission";
