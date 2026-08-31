@@ -193,6 +193,21 @@ async def _on_funded(job: dict[str, Any]) -> None:
     except Exception as exc:
         _runtime["last_execution_failed"] = int(time.time())
         _runtime["last_error"] = str(exc)
+
+        # A funded job without a bound Altana execution wallet is permanently
+        # incompatible with Grid's user-scoped execution model. Do not raise
+        # it back into funded_job_watcher, otherwise the same immutable legacy
+        # jobs are retried forever every poll cycle. The security guard remains
+        # intact: the job is skipped, never executed with a shared wallet.
+        if "ERC-8183 job does not contain a bound Altana execution wallet" in str(exc):
+            logger.error(
+                "ERC8183_FUNDED_JOB_SKIPPED_UNBOUND_WALLET job_id=%s provider=%s reason=%s",
+                job_id,
+                _provider_address(),
+                str(exc),
+            )
+            return
+
         logger.exception(
             "ERC8183_AGENT_EXECUTION_FAILED job_id=%s provider=%s network=%s chain_id=97",
             job_id,
@@ -271,7 +286,7 @@ app.add_middleware(
     allow_origins=[_cors_origin] if _cors_origin != "*" else ["*"],
     allow_credentials=_cors_origin != "*",
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["*"],
+    allow_headers=["*"] ,
 )
 
 
