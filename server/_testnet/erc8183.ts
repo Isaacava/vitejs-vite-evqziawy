@@ -149,7 +149,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (agentError) throw new Error(agentError.message);
     if (!agent?.owner || !/^0x[a-fA-F0-9]{40}$/.test(agent.owner)) return res.status(409).json({ error: "Selected provider has no valid wallet" });
 
-    const executionWallet = (() => { return null as Record<string, unknown> | null; })();
     let activeAltanaWallet: Record<string, unknown> | null = null;
     if (isAltanaAgent(agent as Record<string, unknown>)) {
       const { data: wallet, error: walletError } = await supabase
@@ -163,7 +162,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       activeAltanaWallet = wallet;
     }
-    void executionWallet;
 
     const token = await readContract({ address: COMMERCE, abi: TOKEN_ABI, functionName: "paymentToken" });
     const [decimals, symbol, balance, allowance] = await Promise.all([
