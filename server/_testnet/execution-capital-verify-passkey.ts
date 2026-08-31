@@ -41,12 +41,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const signerAddress = req.body?.signer_address;
     const expiry = Number(req.body?.session_expiry);
     const grantTxHash = req.body?.session_grant_tx_hash;
+    const capitalFundingTxHash = req.body?.capital_funding_tx_hash;
+    const allowanceTxHash = req.body?.allowance_tx_hash;
+    const allowanceSpender = req.body?.allowance_spender;
+    const capitalToken = req.body?.capital_token;
+    const capitalAmountRaw = req.body?.capital_amount_raw;
     const renewal = req.body?.renewal === true;
 
     if (!requestId || !address(wallet) || !/^0x[a-fA-F0-9]{64}$/.test(String(sessionKeyId || "")) || !address(signerAddress) || !Number.isInteger(expiry)) {
       return res.status(400).json({ error: "request_id, user_execution_wallet, signer_address, 32-byte session_key_id, and session_expiry are required" });
     }
     if (grantTxHash !== undefined && grantTxHash !== null && (!hex(grantTxHash) || String(grantTxHash).length < 10)) return res.status(400).json({ error: "session_grant_tx_hash is invalid" });
+    for (const [name, value] of [["capital_funding_tx_hash", capitalFundingTxHash], ["allowance_tx_hash", allowanceTxHash]] as const) {
+      if (value !== undefined && value !== null && value !== "" && (!hex(value) || String(value).length < 10)) return res.status(400).json({ error: `${name} is invalid` });
+    }
+    if (capitalToken !== undefined && capitalToken !== null && capitalToken !== "" && !address(capitalToken)) return res.status(400).json({ error: "capital_token is invalid" });
+    if (capitalAmountRaw !== undefined && capitalAmountRaw !== null && capitalAmountRaw !== "" && (!/^\d+$/.test(String(capitalAmountRaw)) || BigInt(String(capitalAmountRaw)) <= 0n)) return res.status(400).json({ error: "capital_amount_raw is invalid" });
+    if (allowanceSpender !== undefined && allowanceSpender !== null && allowanceSpender !== "" && !address(allowanceSpender)) return res.status(400).json({ error: "allowance_spender is invalid" });
     if (expiry <= Math.floor(Date.now() / 1000)) return res.status(400).json({ error: "Session expiry is already in the past" });
 
     const supabase = serverClient();
@@ -116,16 +127,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       verified_at: now,
       signer_address: signerAddress,
       session_grant_tx_hash: grantTxHash || request.session_grant_tx_hash || null,
+      capital_funding_tx_hash: capitalFundingTxHash || evidence.capital_funding_tx_hash || null,
+      allowance_tx_hash: allowanceTxHash || evidence.allowance_tx_hash || null,
+      allowance_spender: allowanceSpender || evidence.allowance_spender || null,
+      capital_token: capitalToken || evidence.capital_token || null,
+      capital_amount_raw: capitalAmountRaw || evidence.capital_amount_raw || null,
       authorization_renewal: renewal,
     };
     const updateQuery = supabase.from("execution_capital_requests").update({
       user_execution_wallet: wallet,
       agent_session_key: capability.session_key_address,
       session_key_id: sessionKeyId,
+      session_expires_at: new Date(expiry * 1000).toISOString(),
       capital_authorized: request.capital_requested,
       authorization_verified_at: now,
       authorized_at: now,
-      session_grant_tx_hash: grantTxHash || null,
+      session_grant_tx_hash: grantTxHash || request.session_grant_tx_hash || null,
       status: "authorized",
       evidence: nextEvidence,
       updated_at: now,
