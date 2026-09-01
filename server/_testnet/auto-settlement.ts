@@ -4,6 +4,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { bscTestnet } from "viem/chains";
 import { serverClient } from "../../src/server/authHandlers.js";
 import { PROVIDER_ERC8183_TESTNET } from "../../src/lib/erc8183ProviderTestnet.js";
+import { evaluateSubmittedJob, persistEvaluation } from "./evaluate-submitted-job.js";
 
 const NETWORK = "bsc-testnet" as const;
 const CHAIN_ID = 97 as const;
@@ -184,8 +185,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }) as unknown as {
           id: bigint;
           evaluator: Address;
+          provider: Address;
           status: number;
           deliverable: Hex;
+          submittedAt?: bigint;
         };
 
         const status = Number(chainJob.status);
@@ -198,6 +201,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           continue;
         }
 
+        const evaluationResult = await evaluateSubmittedJob(supabase, chainJob);
+        await persistEvaluation(supabase, job.id, evaluationResult, chainJob.evaluator);
+
+        if (evaluationResult.verdict === "pending") {
+          results.push({ job_id: job.id, chain_job_id: chainJobId, action: "wait", evaluator: "pending", reason: evaluationResult.error || "Evidence verification is pending" });
+          continue;
+        }
+
         const policyAddress = await publicClient.readContract({
           address: ROUTER,
           abi: ROUTER_POLICY_ABI,
@@ -205,15 +216,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           args: [BigInt(chainJobId)],
         }) as Address;
 
-        const verdict = Number(await publicClient.readContract({
+        const policyVerdict = Number(await publicClient.readContract({
           address: policyAddress,
           abi: POLICY_ABI,
           functionName: "check",
           args: [BigInt(chainJobId)],
         }));
 
-        if (verdict === 0) {
-          results.push({ job_id: job.id, chain_job_id: chainJobId, action: "wait", policy: "pending" });
+        if (policyVerdict === 0) {
+          results.push({ job_id: job.id, chain_job_id: chainJobId, action: "wait", policy: "pending", evaluator: evaluationResult.verdict });
+          continue;
+        }
+
+        if (policyVerdict === 1 && evaluationResult.verdict !== "approve") {
+          results.push({
+            job_id: job.id,
+            chain_job_id: chainJobId,
+            action: "wait",
+            policy: "approve",
+            evaluator: evaluationResult.verdict,
+            reason: evaluationResult.error || "Independent deliverable verification did not approve the result.",
+          });
           continue;
         }
 
@@ -240,7 +263,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         await syncTerminalJob(supabase, job, chainJobId, txHash, receipt.blockNumber, terminalStatus!, terminal.evaluator);
-        results.push({ job_id: job.id, chain_job_id: chainJobId, action: "settled", policy: verdict === 1 ? "approve" : "reject", chain_status: terminalStatus, tx_hash: txHash, operator: account.address });
+        results.push({
+          job_id: job.id,
+          chain_job_id: chainJobId,
+          action: "settled",
+          policy: policyVerdict === 1 ? "approve" : "reject",
+          evaluator: evaluationResult.verdict,
+          chain_status: terminalStatus,
+          tx_hash: txHash,
+          operator: account.address,
+        });
       } catch (cause) {
         results.push({ job_id: job.id, chain_job_id: chainJobId, action: "error", error: cause instanceof Error ? cause.message : "Settlement attempt failed" });
       }
