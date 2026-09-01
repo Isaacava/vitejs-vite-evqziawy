@@ -13,7 +13,7 @@
       "schedule": "*/5 * * * *"
     },
     {
-      "path": "/api/testnet?route=auto-settlement",
+      "path": "/api/auto-settlement",
       "schedule": "*/5 * * * *"
     }
   ],
