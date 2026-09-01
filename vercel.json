@@ -10,11 +10,11 @@
     },
     {
       "path": "/api/erc8183-indexer",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 3 * * *"
     },
     {
       "path": "/api/auto-settlement",
-      "schedule": "*/5 * * * *"
+      "schedule": "15 3 * * *"
     }
   ],
   "rewrites": [
