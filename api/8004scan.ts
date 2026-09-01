@@ -17,7 +17,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const page = Math.max(Number(req.query?.page || 1), 1);
 
   try {
-    const apiKey = process.env.EIGHTH004SCAN_API_KEY || process.env.ERC8004SCAN_API_KEY || "";
+    const apiKey = process.env.EIGHT004SCAN_API_KEY || process.env.ERC8004SCAN_API_KEY || "";
     const headers: Record<string, string> = { Accept: "application/json" };
     if (apiKey) headers["X-API-Key"] = apiKey;
 
