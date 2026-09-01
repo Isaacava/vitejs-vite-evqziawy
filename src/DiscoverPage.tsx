@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import ERC8004DiscoveryPanel from "./ERC8004DiscoveryPanel";
 
 type Match = {
   agent: { agent_id: string; name: string | null; description: string | null; category: string; status?: string | null; verification_status?: string | null };
@@ -146,5 +147,7 @@ export default function DiscoverPage() {
         </div>;
       })}
     </div>}
+
+    <ERC8004DiscoveryPanel />
   </main>;
 }
