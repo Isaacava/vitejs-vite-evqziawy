@@ -152,7 +152,7 @@ export default function DiscoverPage() {
           return b.bestHireableMatch || b.bestMatch;
         }));
         const seen = new Set<string>();
-        setMatches(values.filter((m): m is Match => !!m && !seen.has(m.agent.agent_id) && (seen.add(m.agent.agent.agent_id), true)).slice(0, 8));
+        setMatches(values.filter((m): m is Match => !!m && !seen.has(m.agent.agent_id) && (seen.add(m.agent.agent_id), true)).slice(0, 8));
       } catch (e) {
         setError(e instanceof Error ? e.message : "Unable to load marketplace inventory");
       } finally {
