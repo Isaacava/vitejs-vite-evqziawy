@@ -7,6 +7,14 @@
     {
       "path": "/api/check-agent-endpoints",
       "schedule": "15 2 * * *"
+    },
+    {
+      "path": "/api/erc8183-indexer",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/testnet?route=auto-settlement",
+      "schedule": "*/5 * * * *"
     }
   ],
   "rewrites": [

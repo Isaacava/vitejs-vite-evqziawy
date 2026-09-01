@@ -3,12 +3,13 @@ import { createPublicClient, createWalletClient, http, type Address, type Hex } 
 import { privateKeyToAccount } from "viem/accounts";
 import { bscTestnet } from "viem/chains";
 import { serverClient } from "../../src/server/authHandlers.js";
+import { PROVIDER_ERC8183_TESTNET } from "../../src/lib/erc8183ProviderTestnet.js";
 
 const NETWORK = "bsc-testnet" as const;
 const CHAIN_ID = 97 as const;
 const RPC_URL = process.env.BSC_TESTNET_RPC_URL || process.env.VITE_BSC_RPC_URL || "https://bsc-testnet-rpc.publicnode.com";
-const COMMERCE = "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address;
-const ROUTER = "0xd7d36d66d2f1b608a0f943f722d27e3744f66f25" as Address;
+const COMMERCE = PROVIDER_ERC8183_TESTNET.commerce;
+const ROUTER = PROVIDER_ERC8183_TESTNET.router;
 
 const COMMERCE_ABI = [{
   type: "function",
@@ -184,11 +185,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           id: bigint;
           evaluator: Address;
           status: number;
+          deliverable: Hex;
         };
 
         const status = Number(chainJob.status);
         if (CHAIN_STATUS[status] !== "submitted") {
           results.push({ job_id: job.id, chain_job_id: chainJobId, action: "sync_only", status: CHAIN_STATUS[status] || `status_${status}` });
+          continue;
+        }
+        if (!chainJob.deliverable || /^0x0+$/i.test(chainJob.deliverable)) {
+          results.push({ job_id: job.id, chain_job_id: chainJobId, action: "wait", reason: "missing_deliverable" });
           continue;
         }
 
@@ -206,7 +212,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           args: [BigInt(chainJobId)],
         }));
 
-        // BNB OptimisticPolicy: 0 = PENDING, 1 = APPROVE, 2 = REJECT.
         if (verdict === 0) {
           results.push({ job_id: job.id, chain_job_id: chainJobId, action: "wait", policy: "pending" });
           continue;
@@ -228,7 +233,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           abi: COMMERCE_ABI,
           functionName: "getJob",
           args: [BigInt(chainJobId)],
-        }) as unknown as { id: bigint; evaluator: Address; status: number };
+        }) as unknown as { id: bigint; evaluator: Address; status: number; deliverable: Hex };
         const terminalStatus = CHAIN_STATUS[Number(terminal.status)];
         if (!["completed", "rejected", "expired"].includes(terminalStatus || "")) {
           throw new Error(`Settlement receipt confirmed but job ${chainJobId} is still non-terminal`);
@@ -241,7 +246,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    return res.status(200).json({ ok: true, network: NETWORK, chain_id: CHAIN_ID, operator: account.address, inspected: jobs?.length || 0, results });
+    return res.status(200).json({ ok: true, network: NETWORK, chain_id: CHAIN_ID, commerce: COMMERCE, router: ROUTER, operator: account.address, inspected: jobs?.length || 0, results });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Automatic settlement worker failed", network: NETWORK, chain_id: CHAIN_ID });
   }
