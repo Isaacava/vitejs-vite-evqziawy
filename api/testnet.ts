@@ -3,6 +3,8 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 type Handler = (req: VercelRequest, res: VercelResponse) => unknown;
 
 async function loadHandler(route: string): Promise<Handler | null> {
+  // Deployment marker: keep the Git-linked Vercel deployment path exercised while
+  // preserving the federated Testnet matcher and production worker routes below.
   switch (route) {
     case "active-quote": return (await import("../server/_testnet/active-quote.js")).default as Handler;
     case "auto-settlement": return (await import("../server/_testnet/auto-settlement.js")).default as Handler;
