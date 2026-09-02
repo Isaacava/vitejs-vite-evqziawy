@@ -122,7 +122,7 @@ export default function WorkspaceMissionConsole() {
     <main className="mx-auto max-w-[1240px] px-6 py-8 md:px-8 font-body text-ink">
       <div className="mb-5 flex items-center justify-between gap-4"><span className="font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477]">Missions / Mission console</span><a href="/missions" className="text-[11px] font-bold text-inksoft no-underline hover:text-ink">← Back to missions</a></div>
       {error && <div className="mb-4 rounded-[14px_8px_15px_9px] border border-[#cfad9f] bg-rustsoft px-4 py-3 text-[12px] text-rust break-words">{error}</div>}
-      {txHash && <div className="mb-4 rounded-[14px_8px_15px_9px] border border-[#b9d2c3] bg-greensoft px-4 py-3 text-[12px] text-green">Transaction submitted: <a className="font-mono underline" href={bscExplorerUrl(txHash as Hex)} target="_blank" rel="noreferrer">{compact(txHash)} ↗</a></div>}
+      {txHash && <div className="mb-4 rounded-[14px_8px_15px_9px] border border-[#b9d2c3] bg-greensoft px-4 py-3 text-[12px] text-green"><strong>Action confirmed.</strong> The latest wallet action was recorded on BSC Testnet. <a className="ml-1 underline" href={bscExplorerUrl(txHash as Hex)} target="_blank" rel="noreferrer">View transaction ↗</a></div>}
 
       <section className="card-asym-lg bg-paperhi p-6 md:p-8">
         <div className="mb-6 grid gap-4 border-b border-dashed border-[#c8c0af] pb-6 sm:grid-cols-2">
