@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 type DemoManageKind = "testnet" | "register" | "permissions";
 
@@ -8,7 +8,7 @@ export default function DemoManagePage({ kind }: { kind: DemoManageKind }) {
   return <TestnetManagementPage />;
 }
 
-function PageWrap({ children }: { children: React.ReactNode }) {
+function PageWrap({ children }: { children: ReactNode }) {
   return <main className="mx-auto max-w-[1240px] px-6 py-8 md:px-8">{children}</main>;
 }
 
