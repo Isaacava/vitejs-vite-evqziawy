@@ -44,8 +44,8 @@ type ExecutionCapitalCardProps = {
   onchainExecution?: OnchainExecutionSummary | null;
 };
 
-function compact(value?: string | null) {
-  return value ? `${value.slice(0, 8)}…${value.slice(-6)}` : "—";
+function bscscanTxUrl(hash?: string | null) {
+  return hash ? `https://testnet.bscscan.com/tx/${hash}` : "";
 }
 
 function observed(value?: string | null) {
@@ -87,6 +87,8 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
     : executionObserved && pnlStatus === "unpriced"
       ? "Awaiting live mark"
       : "Calculating…";
+  const executionProofUrl = bscscanTxUrl(onchainExecution?.transaction_hash);
+  const sessionGrantProofUrl = bscscanTxUrl(request?.session_grant_tx_hash);
 
   return (
     <section className="mb-6 rounded-[18px_9px_20px_10px] border border-brass/40 bg-brasssoft/30 p-5">
@@ -114,13 +116,19 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
 
       {executionObserved && (
         <div className="mb-4 rounded-[12px_7px_13px_8px] border border-line bg-paperhi p-4">
-          <small className="mb-2 block font-mono text-[8px] uppercase tracking-widest text-brass">Onchain execution evidence</small>
+          <div className="mb-3 flex items-start justify-between gap-3">
+            <div>
+              <small className="mb-1 block font-mono text-[8px] uppercase tracking-widest text-brass">Execution evidence</small>
+              <strong className="block text-[12.5px] font-bold">Verified on BSC Testnet</strong>
+              <span className="mt-0.5 block text-[10px] text-inksoft">The execution receipt and market details were independently observed on-chain.</span>
+            </div>
+            {executionProofUrl && <a className="shrink-0 text-[10px] font-bold text-brass no-underline" href={executionProofUrl} target="_blank" rel="noreferrer">View proof ↗</a>}
+          </div>
           <div className="grid gap-2 text-[10px] sm:grid-cols-2">
             <div><strong>Actual execution:</strong> {onchainExecution?.market?.token_in_amount} {onchainExecution?.market?.token_in_symbol} → {onchainExecution?.market?.token_out_amount} {onchainExecution?.market?.token_out_symbol}</div>
             <div><strong>Pool fee:</strong> {onchainExecution?.market?.fee ?? "Not independently identified"}</div>
             <div><strong>Block:</strong> {onchainExecution?.execution?.block_number || "—"}</div>
             <div><strong>Receipt:</strong> {onchainExecution?.execution?.status || "—"}</div>
-            {onchainExecution?.transaction_hash && <div className="sm:col-span-2"><strong>Transaction:</strong> <a className="font-mono text-brass underline" href={`https://testnet.bscscan.com/tx/${onchainExecution.transaction_hash}`} target="_blank" rel="noreferrer">{compact(onchainExecution.transaction_hash)} ↗</a></div>}
           </div>
         </div>
       )}
@@ -139,11 +147,10 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
       <div className="mb-4 flex flex-wrap gap-2">
         <span className="rounded-full border border-line bg-paperhi px-2 py-1 font-mono text-[9px] text-inksoft">wallet: {request?.wallet_provider || "altana"}</span>
         <span className="rounded-full border border-line bg-paperhi px-2 py-1 font-mono text-[9px] text-inksoft">authorization: scoped_session</span>
-        <span className="rounded-full border border-line bg-paperhi px-2 py-1 font-mono text-[9px] text-inksoft">session key: {compact(request?.agent_session_key)}</span>
         {request?.duration_seconds !== null && request?.duration_seconds !== undefined && <span className="rounded-full border border-line bg-paperhi px-2 py-1 font-mono text-[9px] text-inksoft">Duration {Math.round(request.duration_seconds / 3600)}h</span>}
       </div>
 
-      {request?.session_grant_tx_hash && <p className="mb-0 border-t border-dashed border-line pt-3 text-[10px] text-inksoft">Session grant tx: <span className="font-mono text-brass">{compact(request.session_grant_tx_hash)}</span> · user-owned authorization, independently verified where observable.</p>}
+      {sessionGrantProofUrl && <div className="border-t border-dashed border-line pt-3 text-[10px] text-inksoft"><strong className="text-green">Authorization verified</strong><span> · Your execution permission was recorded on BSC Testnet.</span> <a className="font-bold text-brass no-underline" href={sessionGrantProofUrl} target="_blank" rel="noreferrer">View proof ↗</a></div>}
       {!request && <p className="mb-0 text-[10px] text-inksoft">No execution capital request has been observed yet. ERC-8183 job budget remains separate.</p>}
       {request && <p className="mb-0 mt-3 text-[10px] text-inksoft">P&amp;L is calculated from independently observed onchain execution evidence. Open positions use a live PancakeSwap V3 mark; realized P&amp;L requires a verified closing execution.</p>}
     </section>
