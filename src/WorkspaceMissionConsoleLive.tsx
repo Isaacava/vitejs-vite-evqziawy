@@ -21,11 +21,28 @@ type JobView = {
 type JobResult = { content?: unknown; submitted_at?: number | string | null; onchain_deliverable_hash?: string | null; computed_deliverable_hash?: string | null; verified?: boolean; evidence_source?: string | null; agent_name?: string | null; endpoint?: string | null };
 type PolicyState = { disputeWindow: bigint; verdict: bigint | null };
 
-const STEPS = ["open", "funded", "accepted", "in_progress", "submitted"] as const;
+const STEPS = ["open", "funded", "accepted", "in_progress", "submitted", "terminal"] as const;
+const TERMINAL_STATUSES = ["completed", "rejected", "expired", "cancelled", "terminal", "settled"] as const;
 const human = (value: string) => value.replace(/_/g, " ").replace(/\b\w/g, (character) => character.toUpperCase());
 const compact = (value?: string | null) => value ? `${value.slice(0, 8)}…${value.slice(-6)}` : "—";
 function statusClass(value: string) { const lower = value.toLowerCase(); if (["completed", "terminal", "settled"].includes(lower)) return "status-green"; if (["rejected", "cancelled", "expired", "disputed"].includes(lower)) return "status-rust"; return "status-brass"; }
-function Lifecycle({ status }: { status: string }) { const normalized = status.toLowerCase(); const current = STEPS.indexOf(normalized as typeof STEPS[number]); const terminal = ["completed", "rejected", "expired", "cancelled", "terminal", "settled"].includes(normalized); const activeIndex = terminal ? STEPS.length - 1 : current; return <div className="grid grid-cols-2 sm:grid-cols-5 gap-0 rounded-[14px] overflow-hidden bg-deep">{STEPS.map((step, index) => { const active = activeIndex >= 0 && index <= activeIndex; const currentStep = !terminal && normalized === step; return <div key={step} className="p-3.5 border-r border-white/10 last:border-r-0"><span className={`block font-mono text-[8px] uppercase ${active ? "text-brasslt" : "text-[#726f60]"}`}>{human(step)}</span><i className={`block w-2 h-2 rounded-full mt-2 ${active ? "bg-brasslt" : "bg-[#3a3a30]"} ${currentStep ? "shadow-[0_0_0_3px_rgba(210,176,94,.22)]" : ""}`} /></div>; })}</div>; }
+function Lifecycle({ status }: { status: string }) {
+  const normalized = status.toLowerCase();
+  const current = STEPS.indexOf(normalized as typeof STEPS[number]);
+  const terminal = (TERMINAL_STATUSES as readonly string[]).includes(normalized);
+  const activeIndex = terminal ? STEPS.length - 1 : current;
+  return <div className="grid grid-cols-2 sm:grid-cols-6 gap-0 rounded-[14px] overflow-hidden bg-deep">
+    {STEPS.map((step, index) => {
+      const active = activeIndex >= 0 && index <= activeIndex;
+      const currentStep = (!terminal && normalized === step) || (terminal && step === "terminal");
+      const label = step === "terminal" && terminal && normalized !== "terminal" ? `${human(normalized)} · Terminal` : human(step);
+      return <div key={step} className="p-3.5 border-r border-white/10 last:border-r-0">
+        <span className={`block font-mono text-[8px] uppercase ${active ? "text-brasslt" : "text-[#726f60]"}`}>{label}</span>
+        <i className={`block w-2 h-2 rounded-full mt-2 ${active ? "bg-brasslt" : "bg-[#3a3a30]"} ${currentStep ? "shadow-[0_0_0_3px_rgba(210,176,94,.22)]" : ""}`} />
+      </div>;
+    })}
+  </div>;
+}
 function asTimestampSeconds(value: number | string | null | undefined) { if (value === null || value === undefined || value === "") return null; const numeric = Number(value); if (Number.isFinite(numeric)) return numeric > 10_000_000_000 ? Math.floor(numeric / 1000) : Math.floor(numeric); const parsed = Date.parse(String(value)); return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : null; }
 function formatTime(seconds: number) { const safe = Math.max(0, Math.floor(seconds)); const hours = Math.floor(safe / 3600); const minutes = Math.floor((safe % 3600) / 60); const secs = safe % 60; return hours > 0 ? `${hours}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}` : `${minutes}:${String(secs).padStart(2, "0")}`; }
 function resultContent(value: unknown) { if (value === null || value === undefined || value === "") return ""; if (typeof value === "string") return value; try { return JSON.stringify(value, null, 2); } catch { return String(value); } }
@@ -50,11 +67,22 @@ export default function WorkspaceMissionConsole() {
       const nextData = body as JobView;
       setData(nextData); setError("");
       const chainJobId = nextData.chain?.chain_job_id ?? nextData.job.chain_job_id;
-      const submitted = nextData.chain?.chain_status?.toLowerCase() === "submitted" || nextData.job.status?.toLowerCase() === "submitted";
-      if (chainJobId && submitted) {
-        try { const response = await fetch(`/api/testnet/job-result?job=${encodeURIComponent(String(chainJobId))}`, { credentials: "include", cache: "no-store" }); const body = await response.json(); setResult(response.ok ? body as JobResult : null); } catch { setResult(null); }
-        try { const config = await readPolicyConfig(); let verdict: bigint | null = null; try { verdict = BigInt(await readPolicyVerdict(BigInt(chainJobId))); } catch { verdict = null; } setPolicy({ disputeWindow: BigInt(config.disputeWindow), verdict }); } catch { setPolicy(null); }
-      } else { setResult(null); setPolicy(null); }
+      if (chainJobId) {
+        try {
+          const resultResponse = await fetch(`/api/testnet/job-result?job=${encodeURIComponent(String(chainJobId))}`, { credentials: "include", cache: "no-store" });
+          const resultBody = await resultResponse.json();
+          setResult(resultResponse.ok ? resultBody as JobResult : null);
+        } catch { setResult(null); }
+        try {
+          const config = await readPolicyConfig();
+          let verdict: bigint | null = null;
+          try { verdict = BigInt(await readPolicyVerdict(BigInt(chainJobId))); } catch { verdict = null; }
+          setPolicy({ disputeWindow: BigInt(config.disputeWindow), verdict });
+        } catch { setPolicy(null); }
+      } else {
+        setResult(null);
+        setPolicy(null);
+      }
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to load mission"); }
   }, [jobId]);
 
@@ -68,14 +96,17 @@ export default function WorkspaceMissionConsole() {
   const chainJobId = data.chain?.chain_job_id ?? data.job.chain_job_id;
   const budget = data.chain?.chain_budget ?? data.job.budget ?? data.payment?.amount ?? null;
   const tokenSymbol = data.chain?.token_symbol || data.payment?.token_symbol || "tBNB";
-  const submitted = liveStatus === "submitted";
+  const terminal = (TERMINAL_STATUSES as readonly string[]).includes(liveStatus);
   const submittedAt = asTimestampSeconds(result?.submitted_at ?? data.chain?.chain_submitted_at);
   const disputeWindowSeconds = policy ? Number(policy.disputeWindow) : null;
   const disputeDeadline = submittedAt !== null && disputeWindowSeconds !== null ? submittedAt + disputeWindowSeconds : null;
   const remaining = disputeDeadline === null ? null : Math.max(disputeDeadline - now, 0);
-  const disputeOpen = submitted && remaining !== null && remaining > 0;
-  const settlementReady = submitted;
-  const refundReady = submitted && remaining !== null && remaining <= 0 && policy?.verdict === 0n;
+  const disputeOpen = liveStatus === "submitted" && remaining !== null && remaining > 0;
+  const settlementReady = liveStatus === "submitted";
+  const refundReady = liveStatus === "submitted" && remaining !== null && remaining <= 0 && policy?.verdict === 0n;
+  const evaluatorLabel = data.evaluation?.verdict || (policy?.verdict === 1n ? "Approved" : policy?.verdict === 2n ? "Rejected" : terminal ? human(liveStatus) : "Pending");
+  const settlementLabel = liveStatus === "completed" || liveStatus === "settled" || liveStatus === "terminal" ? "Completed" : liveStatus === "rejected" ? "Rejected" : liveStatus === "expired" ? "Expired / refund path" : liveStatus === "submitted" ? "Awaiting terminal settlement" : "Pending";
+  const disputeLabel = disputeOpen ? `Open · ${formatTime(remaining || 0)} remaining` : terminal ? "Closed · terminal" : remaining === null ? "Waiting for submitted timestamp" : "Closed";
   const provider = data.chain?.chain_provider || "Not yet observed";
   const evaluator = data.chain?.chain_evaluator || "Not yet observed";
   const deliverable = data.chain?.chain_deliverable || data.job.deliverable;
@@ -104,7 +135,7 @@ export default function WorkspaceMissionConsole() {
         <span className="mb-3 inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-brass"><span className="h-1.5 w-1.5 rounded-full bg-brass" />Chain-verified state</span>
         <div className="mb-6 grid gap-3 rounded-[16px_8px_18px_9px] border border-line bg-paper p-4 sm:grid-cols-2">
           <div><small className="mb-1 block font-mono text-[8.5px] uppercase text-[#8a8477]">Marketplace status</small><span className={`inline-block rounded-lg px-2.5 py-1 font-mono text-[9.5px] ${statusClass(data.job.status)}`}>{human(data.job.status)}</span></div>
-          <div><small className="mb-1 block font-mono text-[8.5px] uppercase text-[#8a8477]">Chain status (authoritative)</small><span className="inline-block rounded-lg px-2.5 py-1 font-mono text-[9.5px] status-green">{human(liveStatus)}</span></div>
+          <div><small className="mb-1 block font-mono text-[8.5px] uppercase text-[#8a8477]">Chain status (authoritative)</small><span className={`inline-block rounded-lg px-2.5 py-1 font-mono text-[9.5px] ${statusClass(liveStatus)}`}>{human(liveStatus)}</span></div>
           <div><small className="mb-1 block font-mono text-[8.5px] uppercase text-[#8a8477]">Synced</small><strong className="text-[12.5px]">Live RPC · chain {data.chain_id}</strong></div>
           <div><small className="mb-1 block font-mono text-[8.5px] uppercase text-[#8a8477]">Live source</small><strong className="text-[12.5px]">ERC-8183 Commerce · BSC Testnet</strong></div>
         </div>
@@ -122,7 +153,22 @@ export default function WorkspaceMissionConsole() {
 
         <div className="mb-6 rounded-[16px_8px_18px_9px] border border-line bg-paper p-4"><div className="mb-3 flex items-center justify-between gap-3"><strong className="text-[13px] font-bold">Agent submission</strong><span className={`rounded-lg px-2.5 py-1 font-mono text-[9.5px] ${result?.verified ? "status-green" : "status-brass"}`}>{result?.verified ? "Verified" : "Pending"}</span></div><p className="m-0 text-[11px] text-inksoft">The provider response is {result ? "available" : "not available yet"}. The on-chain deliverable hash is preserved when present.</p><div className="mt-3 grid gap-3 sm:grid-cols-2"><div><small className="mb-1 block font-mono text-[8px] uppercase text-[#8a8477]">Deliverable</small><p className="m-0 text-[11px] text-inksoft">{deliverable || "Pending"}</p></div><div><small className="mb-1 block font-mono text-[8px] uppercase text-[#8a8477]">Submitted at</small><strong className="font-mono text-[11px]">{submittedAt ? new Date(submittedAt * 1000).toLocaleString() : "—"}</strong></div></div>{content && <pre className="mt-4 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-linesoft bg-paperhi p-3 font-mono text-[9.5px] text-inksoft">{content}</pre>}</div>
 
-        <div className="rounded-[16px_8px_18px_9px] border border-line bg-paper p-4"><div className="mb-3 flex items-center justify-between gap-3"><strong className="text-[13px] font-bold">Evaluator &amp; settlement</strong><span className={`rounded-lg px-2.5 py-1 font-mono text-[9.5px] ${data.evaluation?.verdict || policy?.verdict ? "status-green" : "status-brass"}`}>{data.evaluation?.verdict || (policy?.verdict === 1n ? "Approved" : policy?.verdict === 2n ? "Rejected" : "Pending")}</span></div><p className="m-0 text-[11px] text-inksoft">Evaluation and settlement remain protocol-controlled rather than simulated by this page.</p><div className="mt-3 grid gap-3 sm:grid-cols-3"><div><small className="mb-1 block font-mono text-[8px] uppercase text-[#8a8477]">Dispute window</small><strong className="font-mono text-[11px]">{remaining === null ? "Waiting for submitted timestamp" : disputeOpen ? formatTime(remaining) : "Closed"}</strong></div><div><small className="mb-1 block font-mono text-[8px] uppercase text-[#8a8477]">Settlement</small><strong className="font-mono text-[11px]">{settlementReady ? "Pending" : "Pending"}</strong></div><div><small className="mb-1 block font-mono text-[8px] uppercase text-[#8a8477]">Evaluator</small><strong className="break-all font-mono text-[11px]">{evaluator}</strong></div></div><div className="mt-4 flex flex-wrap gap-2">{disputeOpen && <button className="btn-asym border border-rust px-4 py-2.5 font-display text-[11px] font-bold text-rust" disabled={!!workingAction} onClick={() => void runPolicyAction("dispute")}>Open dispute</button>}{settlementReady && <button className="btn-asym bg-ink px-4 py-2.5 font-display text-[11px] font-bold text-paperhi" disabled={!!workingAction} onClick={() => void runPolicyAction("settle")}>{workingAction === "settle" ? "Settling…" : "Settle job →"}</button>}{refundReady && <button className="btn-asym border border-brass px-4 py-2.5 font-display text-[11px] font-bold text-brass" disabled={!!workingAction} onClick={() => void runPolicyAction("refund")}>{workingAction === "refund" ? "Claiming…" : "Claim refund →"}</button>}</div></div>
+        <div className="rounded-[16px_8px_18px_9px] border border-line bg-paper p-4">
+          <div className="mb-3 flex items-center justify-between gap-3"><strong className="text-[13px] font-bold">Evaluator &amp; settlement</strong><span className={`rounded-lg px-2.5 py-1 font-mono text-[9.5px] ${terminal ? "status-green" : "status-brass"}`}>{evaluatorLabel}</span></div>
+          <p className="m-0 text-[11px] text-inksoft">Evaluation and settlement remain protocol-controlled rather than simulated by this page.</p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+            <div><small className="mb-1 block font-mono text-[8px] uppercase text-[#8a8477]">Dispute window</small><strong className="font-mono text-[11px]">{disputeLabel}</strong></div>
+            <div><small className="mb-1 block font-mono text-[8px] uppercase text-[#8a8477]">Settlement</small><strong className="font-mono text-[11px]">{settlementLabel}</strong></div>
+            <div><small className="mb-1 block font-mono text-[8px] uppercase text-[#8a8477]">Evaluator</small><strong className="break-all font-mono text-[11px]">{evaluator}</strong></div>
+          </div>
+          {!terminal && disputeOpen && <div className="mt-4 rounded-lg border border-rust bg-rustsoft px-3 py-2.5 text-[11px] text-rust"><strong>Dispute window is open.</strong> A dispute can be opened while the submission remains non-terminal.</div>}
+          {terminal && <div className="mt-4 rounded-lg border border-[#b9d2c3] bg-greensoft px-3 py-2.5 text-[11px] text-green"><strong>Terminal state reached.</strong> The ERC-8183 Commerce job is {human(liveStatus)} on BSC Testnet.</div>}
+          <div className="mt-4 flex flex-wrap gap-2">
+            {disputeOpen && <button className="btn-asym border border-rust px-4 py-2.5 font-display text-[11px] font-bold text-rust" disabled={!!workingAction} onClick={() => void runPolicyAction("dispute")}>{workingAction === "dispute" ? "Opening dispute…" : "Open dispute"}</button>}
+            {settlementReady && <button className="btn-asym bg-ink px-4 py-2.5 font-display text-[11px] font-bold text-paperhi" disabled={!!workingAction} onClick={() => void runPolicyAction("settle")}>{workingAction === "settle" ? "Settling…" : "Settle job →"}</button>}
+            {refundReady && <button className="btn-asym border border-brass px-4 py-2.5 font-display text-[11px] font-bold text-brass" disabled={!!workingAction} onClick={() => void runPolicyAction("refund")}>{workingAction === "refund" ? "Claiming…" : "Claim refund →"}</button>}
+          </div>
+        </div>
       </section>
     </main>
   );
