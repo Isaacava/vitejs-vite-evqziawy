@@ -113,7 +113,12 @@ export default function DemoDiscoverPage() {
       if (!active) return;
       const all = responses.flatMap((response) => response ? [response.bestHireableMatch || response.bestMatch, ...(response.alternatives || [])] : []);
       const seen = new Set<string>();
-      setMatches(all.filter((match): match is Match => Boolean(match) && !seen.has(match.agent.agent_id) && (seen.add(match.agent.agent_id), true)).slice(0, 8));
+      setMatches(all.filter((match): match is Match => {
+        if (!match) return false;
+        if (seen.has(match.agent.agent_id)) return false;
+        seen.add(match.agent.agent_id);
+        return true;
+      }).slice(0, 8));
     }).catch((cause) => {
       if (active) setError(cause instanceof Error ? cause.message : "Unable to load marketplace inventory");
     }).finally(() => {
