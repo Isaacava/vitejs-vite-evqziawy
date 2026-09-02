@@ -171,14 +171,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     );
 
     const supabase = serverClient();
+    const chainIds = userChainJobs.map((job) => Number(job.id));
     const { data: dbJobs } = await supabase
       .from("jobs")
       .select("id,mission_task_id,provider_agent_id,budget,status,created_at,funded_at,submitted_at,terminal_at,updated_at,chain_job_id")
       .not("chain_job_id", "is", null)
-      .in("chain_job_id", userChainJobs.map((job) => Number(job.id)));
+      .in("chain_job_id", chainIds);
 
     const jobByChainId = new Map((dbJobs ?? []).map((job) => [Number(job.chain_job_id), job]));
     const taskIds = Array.from(new Set((dbJobs ?? []).map((job) => job.mission_task_id).filter(Boolean)));
+    const providerAgentIds = Array.from(new Set((dbJobs ?? []).map((job) => job.provider_agent_id).filter(Boolean)));
 
     const { data: tasks } = taskIds.length
       ? await supabase
@@ -195,8 +197,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .in("id", missionIds)
       : { data: [] };
 
+    const { data: providerAgents } = providerAgentIds.length
+      ? await supabase
+          .from("agents")
+          .select("id,agent_id,name,owner")
+          .in("id", providerAgentIds)
+      : { data: [] };
+
     const taskById = new Map((tasks ?? []).map((task) => [task.id, task]));
     const missionById = new Map((missions ?? []).map((mission) => [mission.id, mission]));
+    const agentById = new Map((providerAgents ?? []).map((agent) => [agent.id, agent]));
+    const agentByOwner = new Map((providerAgents ?? []).filter((agent) => typeof agent.owner === "string").map((agent) => [String(agent.owner).toLowerCase(), agent]));
 
     const jobs = userChainJobs
       .sort((a, b) => Number(b.id - a.id))
@@ -205,6 +216,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const db = jobByChainId.get(Number(chainJob.id));
         const task = db ? taskById.get(db.mission_task_id) : undefined;
         const mission = task ? missionById.get(task.mission_id) : undefined;
+        const providerAgent = db?.provider_agent_id ? agentById.get(db.provider_agent_id) : agentByOwner.get(chainJob.provider.toLowerCase());
         const submitted = ["SUBMITTED", "COMPLETED", "REJECTED"].includes(chain.chain_status);
         const missionTitle = cleanLabel(mission?.title, chain.description);
         const taskTitle = cleanLabel(task?.title, missionTitle);
@@ -218,6 +230,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           task_title: taskTitle,
           job_status: chain.chain_status.toLowerCase(),
           budget: db?.budget ?? null,
+          agent: providerAgent ? { id: providerAgent.id, agent_id: providerAgent.agent_id, name: providerAgent.name } : null,
           submitted_at: submitted && chainJob.submittedAt > 0n ? new Date(Number(chainJob.submittedAt) * 1000).toISOString() : null,
           created_at: db?.created_at ?? null,
           funded_at: db?.funded_at ?? null,
