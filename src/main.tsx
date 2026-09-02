@@ -26,6 +26,7 @@ import TestnetPolicyReview from "./TestnetPolicyReview";
 import TestnetJobResult from "./TestnetJobResult";
 import "./index.css";
 import "./agentmarket-design-authority.css";
+import "./agentmarket-landing-authority.css";
 
 const params = new URLSearchParams(window.location.search);
 const missionId = params.get("mission");
