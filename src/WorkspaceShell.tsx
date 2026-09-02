@@ -11,13 +11,13 @@ const primaryLinks: Array<{ label: Exclude<WorkspacePage, "Wallet" | "Create mis
 ];
 
 const manageLinks: Array<{ label: Exclude<WorkspacePage, "Overview" | "Discover" | "Missions" | "Activity" | "Payments">; href: string; detail: string; icon: string }> = [
-  { label: "Execution Wallet", href: "/execution-wallet", detail: "Persistent execution wallet & agent access", icon: "◉" },
-  { label: "Testnet", href: "/testnet", detail: "BSC Testnet · Chain 97 sandbox", icon: "◎" },
-  { label: "Register agent", href: "/agents/register", detail: "List a new provider", icon: "+" },
-  { label: "Permissions", href: "/permissions", detail: "Scoped session permissions", icon: "◈" },
+  { label: "Execution Wallet", href: "/execution-wallet", detail: "Choose how agents are allowed to act", icon: "◉" },
+  { label: "Testnet", href: "/testnet", detail: "Safe BNB test environment", icon: "◎" },
+  { label: "Register agent", href: "/agents/register", detail: "List an agent in the marketplace", icon: "+" },
+  { label: "Permissions", href: "/permissions", detail: "Review and limit agent access", icon: "◈" },
 ];
 
-const compact = (value?: string | null) => (value ? `${value.slice(0, 6)}…${value.slice(-4)}` : "0x••••…••••");
+const compact = (value?: string | null) => (value ? `${value.slice(0, 6)}…${value.slice(-4)}` : "Wallet not connected");
 
 function currentPage(): WorkspacePage {
   const path = window.location.pathname;
@@ -71,16 +71,16 @@ export default function WorkspaceShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen bg-paper text-ink antialiased font-body">
-      <header className={`topbar sticky top-0 z-50 border-b border-line bg-paper/90 backdrop-blur transition-shadow duration-200 ${scrolled ? "shadow-[0_8px_24px_rgba(23,23,20,.06)]" : ""}`}>
+      <header className={`topbar sticky top-0 z-50 border-b border-line bg-paper/95 backdrop-blur transition-shadow duration-200 ${scrolled ? "shadow-[0_8px_24px_rgba(23,23,20,.05)]" : ""}`}>
         <div className="mx-auto flex h-[72px] max-w-[1240px] items-center justify-between gap-6 px-6 md:px-8">
-          <a href="/dashboard" className="flex shrink-0 items-center gap-2.5 no-underline">
+          <a href="/dashboard" className="flex shrink-0 items-center gap-2.5 no-underline" aria-label="AgentMarket home">
             <span className="h-7 w-7 text-brass">
               <svg viewBox="0 0 28 28" fill="none" aria-hidden="true"><rect x="1.5" y="1.5" width="25" height="25" rx="7" stroke="currentColor" strokeWidth="1.5"/><path d="M7 18L11.4 10.2L15.2 15L20.8 7.7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </span>
             <span className="font-display text-[16px] font-bold tracking-tight">AgentMarket</span>
           </a>
 
-          <nav className="hidden items-center gap-7 font-mono text-[11px] font-medium uppercase tracking-wide text-inksoft lg:flex">
+          <nav className="hidden items-center gap-7 font-mono text-[11px] font-medium uppercase tracking-wide text-inksoft lg:flex" aria-label="Primary">
             {primaryLinks.map((link) => (
               <button key={link.label} type="button" onClick={() => navigate(link.href, link.label)} className={`nav-link relative pb-1 transition-colors ${page === link.label ? "text-ink current" : "hover:text-ink"}`}>
                 {link.label}
@@ -106,8 +106,8 @@ export default function WorkspaceShell({ children }: { children: ReactNode }) {
           </nav>
 
           <div className="hidden shrink-0 items-center gap-3 md:flex">
-            <span className="env-badge"><span className="am-dot-brass" /> CHAIN 97</span>
-            <button type="button" onClick={() => navigate("/execution-wallet", "Wallet")} className="btn-asym bg-ink px-3 py-2 font-mono text-[11.5px] font-semibold text-paperhi hover:bg-black">
+            <span className="env-badge"><span className="am-dot-brass" /> BNB TESTNET</span>
+            <button type="button" onClick={() => navigate("/execution-wallet", "Wallet")} className="btn-asym max-w-[150px] truncate bg-ink px-3 py-2 font-mono text-[11px] font-semibold text-paperhi hover:bg-black" title={wallet || "Wallet not connected"}>
               {compact(wallet)}
             </button>
             <button type="button" onClick={() => navigate("/app", "Create mission")} className="btn-asym flex items-center gap-2 bg-ink px-4 py-2.5 font-display text-[11px] font-bold text-paperhi hover:bg-black">
@@ -130,9 +130,9 @@ export default function WorkspaceShell({ children }: { children: ReactNode }) {
       </header>
 
       <div className="border-b border-line bg-paper">
-        <div className="mx-auto flex max-w-[1240px] items-center justify-between px-6 py-3 md:px-8">
+        <div className="mx-auto flex max-w-[1240px] items-center justify-between gap-4 px-6 py-3 md:px-8">
           <span className="font-mono text-[9.5px] uppercase tracking-widest text-inksoft">Workspace / <b className="text-brass">{page}</b></span>
-          <span className="hidden font-mono text-[9.5px] uppercase tracking-widest text-inksoft sm:inline">BSC Testnet · Chain 97 · execution capital in U token</span>
+          <span className="hidden font-mono text-[9.5px] uppercase tracking-widest text-inksoft sm:inline">BNB Testnet · Safe sandbox · test funds only</span>
         </div>
       </div>
       <main className="min-h-[calc(100vh-108px)]">{children}</main>
