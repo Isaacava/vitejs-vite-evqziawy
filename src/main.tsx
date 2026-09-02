@@ -3,8 +3,10 @@ import ReactDOM from "react-dom/client";
 
 import LandingEntry from "./LandingEntry";
 import UserDashboard from "./UserDashboard";
+import DemoOverviewPage from "./DemoOverviewPage";
 import WorkspaceShell from "./WorkspaceShell";
 import DiscoverPage from "./DiscoverPage";
+import DemoDiscoverPage from "./DemoDiscoverPage";
 import MarketplaceWorkspace from "./MarketplaceWorkspace";
 import WorkspaceMissionConsole from "./WorkspaceMissionConsole";
 import WorkspaceMissionPage from "./WorkspaceMissionPage";
@@ -40,8 +42,10 @@ function renderWorkspace(element: React.ReactNode) { return <WorkspaceShell>{ele
 function renderApp() {
   if ((path === "/" || path === "/mission") && jobId) return renderWorkspace(<WorkspaceMissionConsole />);
   if (path === "/") return <LandingEntry />;
-  if (path === "/dashboard") return renderWorkspace(<UserDashboard />);
-  if (path === "/discover") return renderWorkspace(<DiscoverPage />);
+  if (path === "/dashboard") return renderWorkspace(<DemoOverviewPage />);
+  if (path === "/dashboard/legacy") return renderWorkspace(<UserDashboard />);
+  if (path === "/discover") return renderWorkspace(<DemoDiscoverPage />);
+  if (path === "/discover/legacy") return renderWorkspace(<DiscoverPage />);
   if (path === "/missions") return renderWorkspace(<WorkspaceMissionPage />);
   if (path === "/mission") return renderWorkspace(<WorkspaceMissionConsole />);
   if (path === "/activity") return renderWorkspace(<DemoActivityPage />);
