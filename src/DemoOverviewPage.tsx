@@ -141,7 +141,7 @@ export default function DemoOverviewPage() {
               return <article key={job.chain_job_id} className="border-b border-linesoft py-4 last:border-b-0">
                 <div className="flex flex-col gap-3.5 sm:flex-row sm:justify-between">
                   <div className="min-w-0"><div className="font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477]">Mission</div><h2 className="mt-1 text-[14.5px] font-bold">{job.mission_title || job.task_title || "Your mission"}</h2><p className="max-w-[340px] text-[11.5px] leading-relaxed text-inksoft">{job.description || "Your selected agent is handling this mission."}</p></div>
-                  <div className="shrink-0 sm:min-w-[150px] sm:text-right"><Status value={state}/><span className="my-1.5 block text-[11px] text-inksoft">{job.agent?.name || "Assigned provider"}</span><a href={`/mission?job=${encodeURIComponent(String(job.id || ""))}`} className="text-[11px] font-extrabold text-brass no-underline">Review →</a></div>
+                  <div className="shrink-0 sm:min-w-[150px] sm:text-right"><Status value={state}/><span className="my-1.5 block text-[11px] text-inksoft">Assigned provider</span><a href={`/mission?job=${encodeURIComponent(String(job.id || ""))}`} className="text-[11px] font-extrabold text-brass no-underline">Review →</a></div>
                 </div>
                 <div className="mt-3"><Lifecycle state={state}/></div>
                 <div className="mt-2 font-mono text-[9px] text-[#8a8477]">updated {ago(job.updated_at)}</div>
