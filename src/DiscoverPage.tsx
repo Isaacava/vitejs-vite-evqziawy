@@ -7,18 +7,12 @@ type Match = {
   scoreConfidence?: string;
   hireability?: { status: string; canCreateJob: boolean };
   reasons?: string[];
-  execution?: {
-    wallet_provider: "altana" | "twak" | "evm" | "unknown";
-    wallet_model: "agent_owned" | "external" | "unknown";
-    transaction_authority: "scoped_session" | "agent_wallet" | "restricted_commands" | "unknown";
-    supports_spend_cap: boolean;
-    supports_call_allowlist: boolean;
-    supports_expiry: boolean;
-    supports_revocation: boolean;
-    evidence?: string[];
-  };
-  commerce?: { erc8183: boolean; x402: boolean; b402: boolean };
-  communication?: { a2a: boolean; mcp: boolean; http: boolean };
+  adapter?: {
+    id: string;
+    confidence: number | null;
+    capability: string | null;
+    reasons?: string[];
+  } | null;
   onchain?: {
     totalJobs: number;
     completedJobs: number;
@@ -65,13 +59,6 @@ const initials = (v: string) => v.split(/\s+/).map(s => s[0]).join("").slice(0, 
 
 function capabilityPill(label: string, active: boolean) {
   return active ? <span key={label} className="px-2 py-1 rounded-full border border-[#b9d7c7] bg-[#edf6f0] text-[#2d6b4f] text-[9px] font-mono">{label}</span> : null;
-}
-
-function walletLabel(provider: Match["execution"] extends infer E ? E extends { wallet_provider: infer W } ? W : never : never) {
-  if (provider === "altana") return "Altana";
-  if (provider === "twak") return "TWAK";
-  if (provider === "evm") return "EVM wallet";
-  return "Wallet unknown";
 }
 
 function unwrapFederatedAgents(body: unknown): FederatedAgent[] {
@@ -190,9 +177,8 @@ export default function DiscoverPage() {
         const jobs = m.onchain?.totalJobs ?? 0;
         const completed = m.onchain?.completedJobs ?? 0;
         const successRate = m.onchain?.successRate;
-        const execution = m.execution;
-        const commerce = m.commerce;
-        const communication = m.communication;
+        const adapter = m.adapter;
+        const adapterConfidence = adapter?.confidence;
         return <div key={m.agent.agent_id} className={`bg-[#fbfaf5] border border-[#d5cfbf] rounded-[26px_10px_28px_13px] p-[19px] ${i % 2 ? "rotate-[1deg]" : "rotate-[-1deg]"}`}>
           <div className="flex items-center gap-2.5 mb-3">
             <div className="w-10 h-10 rounded-[12px_6px_13px_7px] bg-[#f7ecd3] text-[#9d7428] flex items-center justify-center font-bold text-[13px]">{initials(m.agent.name || m.agent.category)}</div>
@@ -221,18 +207,20 @@ export default function DiscoverPage() {
 
           <div className="py-2 border-b border-[#e2ddcf]">
             <div className="flex items-center justify-between gap-2 mb-2">
-              <span className="text-[10.5px] text-[#6d6a61]">Execution</span>
-              <span className="font-mono text-[10px] text-[#171714]">{walletLabel(execution?.wallet_provider ?? "unknown")}</span>
+              <span className="text-[10.5px] text-[#6d6a61]">Match adapter</span>
+              <span className="font-mono text-[10px] text-[#171714]">{adapter?.id ? human(adapter.id) : "Not declared"}</span>
             </div>
             <div className="flex flex-wrap gap-1.5">
-              {capabilityPill("ERC-8183", commerce?.erc8183 ?? false)}
-              {capabilityPill("A2A", communication?.a2a ?? false)}
-              {capabilityPill("MCP", communication?.mcp ?? false)}
-              {capabilityPill("x402", commerce?.x402 ?? false)}
-              {capabilityPill("B402", commerce?.b402 ?? false)}
-              {capabilityPill("Scoped session", execution?.transaction_authority === "scoped_session")}
+              {adapter?.capability && capabilityPill(adapter.capability, true)}
+              {adapterConfidence !== null && adapterConfidence !== undefined && <span className="px-2 py-1 rounded-full border border-[#d5cfbf] bg-white/50 text-[#6d6a61] text-[9px] font-mono">Confidence {Math.round(adapterConfidence * 100)}%</span>}
+              {m.scoreConfidence && <span className="px-2 py-1 rounded-full border border-[#d5cfbf] bg-white/50 text-[#6d6a61] text-[9px] font-mono">Match confidence {human(m.scoreConfidence)}</span>}
             </div>
-            {execution?.wallet_provider === "unknown" && <div className="mt-2 text-[9.5px] leading-4 text-[#8a8477]">Execution wallet not declared by the agent; AgentMarket does not infer one.</div>}
+            {adapter?.reasons?.length ? <div className="mt-2 space-y-1">{adapter.reasons.slice(0, 3).map(reason => <div key={reason} className="text-[9.5px] leading-4 text-[#8a8477]">{reason}</div>)}</div> : null}
+          </div>
+
+          <div className="py-2 border-b border-[#e2ddcf]">
+            <span className="text-[10.5px] text-[#6d6a61]">Why this match</span>
+            <div className="mt-2 space-y-1">{(m.reasons || []).slice(0, 3).map(reason => <div key={reason} className="text-[9.5px] leading-4 text-[#8a8477]">{reason}</div>)}{!(m.reasons || []).length && <div className="text-[9.5px] text-[#8a8477]">No additional explanation returned.</div>}</div>
           </div>
 
           <div className="flex justify-between items-center mt-3 pt-3 border-t border-dashed border-[#d5cfbf]">
