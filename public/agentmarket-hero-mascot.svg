@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">AgentMarket robot mascot</title>
+  <desc id="desc">A minimal brass and ink robot mascot floating above the AgentMarket hero.</desc>
+  <defs>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#171714" flood-opacity=".14"/>
+    </filter>
+  </defs>
+  <g filter="url(#shadow)">
+    <circle cx="160" cy="155" r="104" fill="#fbfaf5" stroke="#d5cfbf" stroke-width="2"/>
+    <path d="M91 116c0-15 12-27 27-27h84c15 0 27 12 27 27v88c0 15-12 27-27 27h-84c-15 0-27-12-27-27z" fill="#191a17"/>
+    <path d="M113 122c0-8 6-14 14-14h66c8 0 14 6 14 14v54c0 8-6 14-14 14h-66c-8 0-14-6-14-14z" fill="#eeeade"/>
+    <circle cx="142" cy="149" r="10" fill="#9d7428"/>
+    <circle cx="178" cy="149" r="10" fill="#9d7428"/>
+    <path d="M145 171c10 7 20 7 30 0" stroke="#171714" stroke-width="6" stroke-linecap="round"/>
+    <path d="M160 89V68" stroke="#171714" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="160" cy="58" r="13" fill="#d2b05e" stroke="#171714" stroke-width="6"/>
+    <path d="M71 157H54" stroke="#171714" stroke-width="8" stroke-linecap="round"/>
+    <path d="M266 157h-17" stroke="#171714" stroke-width="8" stroke-linecap="round"/>
+    <path d="M109 225v31c0 7 6 13 13 13h11" stroke="#171714" stroke-width="8" stroke-linecap="round"/>
+    <path d="M211 225v31c0 7-6 13-13 13h-11" stroke="#171714" stroke-width="8" stroke-linecap="round"/>
+    <path d="M112 214h96" stroke="#d2b05e" stroke-width="4" stroke-linecap="round"/>
+  </g>
+</svg>
