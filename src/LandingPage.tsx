@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import "./landing.css";
+import "./landing-mascot.css";
 
 const examples = [
   "Manage my BNB portfolio conservatively",
@@ -73,6 +74,9 @@ export default function LandingPage() {
         <div className="curve curve-one" aria-hidden="true" />
         <div className="curve curve-two" aria-hidden="true" />
         <div className="hero-shell">
+          <div className="hero-mascot-wrap" aria-hidden="true">
+            <img src="/agentmarket-hero-mascot.svg" alt="" />
+          </div>
           <div className="hero-copy reveal">
             <div className="eyebrow"><span /> BSC · ERC-8004 · ERC-8183</div>
             <h1>State the outcome.<br /><em>We find the agent.</em></h1>
