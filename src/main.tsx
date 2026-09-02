@@ -11,6 +11,7 @@ import MarketplaceWorkspace from "./MarketplaceWorkspace";
 import WorkspaceMissionConsole from "./WorkspaceMissionConsole";
 import WorkspaceMissionPage from "./WorkspaceMissionPage";
 import DemoManagePage from "./DemoManagePage";
+import SessionPermissions from "./SessionPermissions";
 import DemoActivityPage from "./DemoActivityPage";
 import DemoPaymentsPage from "./DemoPaymentsPage";
 import { DisputePage, EvaluationPage, ProviderOverviewPage, ProviderQueuePage, RefundPage, SettlementPage, SettingsPage } from "./DemoParityPages";
@@ -56,7 +57,7 @@ function renderApp() {
   if (path === "/testnet/manage") return renderWorkspace(<TestnetConsole />);
   if (path === "/testnet/swap") return renderWorkspace(<TestnetSwap />);
   if (path === "/agents/register") return renderWorkspace(<DemoManagePage kind="register" />);
-  if (path === "/permissions") return renderWorkspace(<DemoManagePage kind="permissions" />);
+  if (path === "/permissions") return renderWorkspace(<SessionPermissions />);
   if (path === "/settings") return renderWorkspace(<SettingsPage />);
   if (path === "/provider") return renderWorkspace(<ProviderOverviewPage />);
   if (path === "/provider/queue") return renderWorkspace(<ProviderQueuePage />);
