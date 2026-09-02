@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 type Tone = "brass" | "green" | "rust";
 
-function Status({ tone, children }: { tone: Tone; children: React.ReactNode }) {
+function Status({ tone, children }: { tone: Tone; children: ReactNode }) {
   return <span className={`am-status status-${tone}`}>{children}</span>;
 }
 
@@ -16,7 +16,7 @@ function Header({ kicker, title, text }: { kicker: string; title: string; text?:
   );
 }
 
-function MetaRows({ rows }: { rows: Array<[string, React.ReactNode]> }) {
+function MetaRows({ rows }: { rows: Array<[string, ReactNode]> }) {
   return (
     <div className="am-meta-rows">
       {rows.map(([label, value]) => (
