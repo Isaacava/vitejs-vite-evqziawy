@@ -48,6 +48,11 @@ input,textarea,select{color:var(--am-ink)}input::placeholder,textarea::placehold
 .am-surface-secondary{background:transparent;border-bottom:1px dashed var(--am-line)}
 .am-no-slop-note{max-width:60ch;color:var(--am-ink-soft);font-size:11.5px;line-height:1.6}
 
+/* The overview only shows useful account metrics. Do not reserve a blank slot for unavailable session data. */
+.relative.z-10.mb-6.grid.grid-cols-2.gap-3\.5.md\:grid-cols-5 > section:nth-child(5){display:none}
+.relative.z-10.mb-6.grid.grid-cols-2.gap-3\.5.md\:grid-cols-5{grid-template-columns:repeat(2,minmax(0,1fr))}
+@media (min-width:768px){.relative.z-10.mb-6.grid.grid-cols-2.gap-3\.5.md\:grid-cols-5{grid-template-columns:repeat(4,minmax(0,1fr))}}
+
 @media (max-width:900px){.workspace-content,.page-shell,.dashboard-shell{width:min(var(--am-max),calc(100% - 32px))}.am-provider-metrics{grid-template-columns:repeat(2,1fr)} }
 @media (max-width:640px){.workspace-content,.page-shell,.dashboard-shell{width:calc(100% - 28px)}.am-centered-page{padding-inline:14px}.am-actions,.am-two-up{grid-template-columns:1fr;display:grid}.am-provider-head{flex-direction:column}.am-provider-metrics{grid-template-columns:1fr 1fr;gap:8px}.am-metric-card{min-height:96px;padding:13px}.am-wide-card{align-items:flex-start}.am-form-grid{grid-template-columns:1fr}.am-span-2{grid-column:auto}.am-permission-grid{grid-template-columns:1fr}.am-no-slop-note{max-width:none}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important}}
