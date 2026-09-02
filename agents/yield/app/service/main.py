@@ -1,5 +1,4 @@
 """Standalone ERC-8183 provider service for a first-party AgentMarket agent."""
-
 from __future__ import annotations
 import asyncio, importlib, json, logging, os, time
 from contextlib import asynccontextmanager
@@ -9,25 +8,21 @@ from fastapi import FastAPI, HTTPException, Request
 from bnbagent import EVMWalletProvider
 from bnbagent.erc8183 import ERC8183JobOps, funded_job_watcher
 from bnbagent.storage import LocalStorageProvider
+from app.service.config import validate_runtime_config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 KIND = os.getenv("AGENT_KIND", "defi_agent").strip().lower()
 DISPLAY_NAME = os.getenv("AGENT_DISPLAY_NAME", KIND.replace("_", " ").title())
-ENDPOINT = os.environ["ERC8183_AGENT_URL"]
-NETWORK = os.getenv("NETWORK", "bsc-testnet").strip().lower()
+config = validate_runtime_config()
+NETWORK = config["network"]
 CHAIN_ID = 97
-SERVICE_PRICE = int(os.environ["ERC8183_SERVICE_PRICE"])
-POLL_INTERVAL = int(os.getenv("ERC8183_FUNDED_POLL_INTERVAL", "30"))
+SERVICE_PRICE = config["service_price"]
+POLL_INTERVAL = config["poll_interval"]
 STORAGE_DIR = Path(os.getenv("STORAGE_LOCAL_PATH") or ".agent-data")
-if NETWORK != "bsc-testnet": raise RuntimeError("First-party DeFi agents are Testnet-only")
-if not ENDPOINT.startswith("https://") or not ENDPOINT.rstrip("/").endswith("/erc8183"): raise RuntimeError("ERC8183_AGENT_URL must be public HTTPS and end in /erc8183")
-if SERVICE_PRICE <= 0: raise RuntimeError("ERC8183_SERVICE_PRICE must be positive")
-if not 5 <= POLL_INTERVAL <= 300: raise RuntimeError("ERC8183_FUNDED_POLL_INTERVAL must be between 5 and 300")
 _wallet = EVMWalletProvider(password=os.environ["WALLET_PASSWORD"], private_key=os.environ.get("PRIVATE_KEY"))
 _storage = LocalStorageProvider(base_dir=str(STORAGE_DIR))
-_ops = ERC8183JobOps(_wallet, network=NETWORK, storage_provider=_storage, service_price=SERVICE_PRICE, agent_url=ENDPOINT)
+_ops = ERC8183JobOps(_wallet, network=NETWORK, storage_provider=_storage, service_price=SERVICE_PRICE, agent_url=config["endpoint"])
 _runtime: dict[str, Any] = {"watcher_started_at": None, "last_funded_job": None, "last_execution": None, "last_submission": None, "last_error": None}
-
 
 def provider_address() -> str: return str(_ops.agent_address)
 def payment_token() -> str | None:
@@ -38,14 +33,12 @@ def pending_path(job_id: int) -> Path: return STORAGE_DIR / f"erc8183-pending-su
 def save_pending(job_id: int, deliverable: str, metadata: dict[str, Any]) -> None:
     STORAGE_DIR.mkdir(parents=True, exist_ok=True)
     pending_path(job_id).write_text(json.dumps({"job_id": job_id, "deliverable": deliverable, "metadata": metadata}, separators=(",", ":")), encoding="utf-8")
-
 def load_pending(job_id: int):
     try: payload = json.loads(pending_path(job_id).read_text(encoding="utf-8"))
     except (FileNotFoundError, OSError, json.JSONDecodeError): return None
     if not isinstance(payload, dict) or int(payload.get("job_id", -1)) != job_id: return None
     d, m = payload.get("deliverable"), payload.get("metadata")
     return (d, m) if isinstance(d, str) and isinstance(m, dict) else None
-
 def clear_pending(job_id: int) -> None:
     try: pending_path(job_id).unlink()
     except FileNotFoundError: pass
@@ -61,11 +54,13 @@ async def submit(job_id: int, deliverable: str, metadata: dict[str, Any]):
 
 async def on_funded(job: dict[str, Any]) -> None:
     try: job_id = int(job.get("jobId"))
-    except (TypeError, ValueError): return
+    except (TypeError, ValueError):
+        logging.warning("%s funded callback missing valid jobId", DISPLAY_NAME); return
     _runtime["last_funded_job"] = {"timestamp": int(time.time()), "job_id": job_id}
     try:
         pending = load_pending(job_id)
-        if pending is not None: deliverable, metadata = pending
+        if pending is not None:
+            deliverable, metadata = pending
         else:
             module = importlib.import_module("app.agent.main")
             deliverable, metadata = await asyncio.to_thread(module.fulfill_job, job)
@@ -85,6 +80,7 @@ _watcher_task: asyncio.Task | None = None
 async def lifespan(_: FastAPI):
     global _watcher_task
     _runtime["watcher_started_at"] = int(time.time())
+    logging.info("%s watcher starting provider=%s network=%s chain_id=%s poll=%ss", DISPLAY_NAME, provider_address(), NETWORK, CHAIN_ID, POLL_INTERVAL)
     _watcher_task = asyncio.create_task(funded_job_watcher(_ops, on_funded, interval=POLL_INTERVAL))
     try: yield
     finally:
