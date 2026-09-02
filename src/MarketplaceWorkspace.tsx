@@ -103,7 +103,7 @@ export default function MarketplaceWorkspace() {
   }, [quote?.quote.expires_at]);
 
   useEffect(() => {
-    if (new URLSearchParams(location.search).get("funded") === "1") setStep(4);
+    if (new URLSearchParams(location.search).get("funded") === "1") setStep(6);
   }, []);
 
   async function findAgent() {
@@ -137,31 +137,31 @@ export default function MarketplaceWorkspace() {
     finally { setLoading(false); }
   }
 
-  async function prepare(acceptedQuote: QuoteResponse | null = quote) {
-    if (!acceptedQuote?.quote.quote_id || !mission?.mission.id) return;
-    setPrepareLoading(true); setError("");
-    try {
-      const auth = await read(await fetch("/api/auth/me", { credentials: "include" }));
-      if (!auth?.user?.wallet_address) throw new Error("Connect and sign in with your Testnet wallet first.");
-      const next = await read(await fetch("/api/testnet/prepare-quote", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mission_id: mission.mission.id, quote_id: acceptedQuote.quote.quote_id, client_address: auth.user.wallet_address }) })) as PreparedResponse;
-      setPrepared(next);
-      setConfirmed({});
-      setChainJobId("");
-      setSignError("");
-      setStep(4);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to prepare the accepted quote"); }
-    finally { setPrepareLoading(false); }
-  }
-
   async function acceptQuote() {
     if (!quote?.quote.quote_id) return;
     setQuoteLoading(true); setError("");
     try {
       const next = await read(await fetch("/api/testnet/quotes", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "accept", quote_id: quote.quote.quote_id }) })) as QuoteResponse;
       setQuote(next);
-      await prepare(next);
+      setStep(4);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to accept quote"); }
     finally { setQuoteLoading(false); }
+  }
+
+  async function prepare() {
+    if (!quote?.quote.quote_id || !mission?.mission.id) return;
+    setPrepareLoading(true); setError("");
+    try {
+      const auth = await read(await fetch("/api/auth/me", { credentials: "include" }));
+      if (!auth?.user?.wallet_address) throw new Error("Connect and sign in with your Testnet wallet first.");
+      const next = await read(await fetch("/api/testnet/prepare-quote", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mission_id: mission.mission.id, quote_id: quote.quote.quote_id, client_address: auth.user.wallet_address }) })) as PreparedResponse;
+      setPrepared(next);
+      setConfirmed({});
+      setChainJobId("");
+      setSignError("");
+      setStep(5);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to prepare the accepted quote"); }
+    finally { setPrepareLoading(false); }
   }
 
   async function syncReceipt(stepItem: Erc8183PlanStep, receipt: Receipt) {
@@ -192,12 +192,13 @@ export default function MarketplaceWorkspace() {
         next = activePlan.find((item) => !confirmed[item.id] && item.transaction);
       }
       if (!next?.transaction) {
-        setStep(complete ? 4 : 4);
+        setStep(complete ? 6 : 5);
         return;
       }
       const receipt = await sendAndConfirm(next.transaction);
       await syncReceipt(next, receipt);
       if (next.id === "create") {
+        // The API response is authoritative for the newly created job ID.
         activePlan = buildErc8183Plan(prepared, chainJobId || undefined);
       }
     } catch (cause) {
@@ -205,7 +206,11 @@ export default function MarketplaceWorkspace() {
     } finally { setSigning(false); }
   }
 
-  const labels = ["Goal", "Match", "Quote", "Sign"];
+  useEffect(() => {
+    if (step === 5 && complete) setStep(6);
+  }, [step, complete]);
+
+  const labels = ["Goal", "Match", "Quote", "Mission", "Sign", "Fund"];
   const mins = Math.floor(ttl / 60); const secs = String(ttl % 60).padStart(2, "0");
   const scoreRows = best ? Object.entries(best.breakdown) : [];
 
@@ -224,7 +229,7 @@ export default function MarketplaceWorkspace() {
 
       <div className="bg-paperhi border border-line card-asym-lg p-6 md:p-8 min-h-[420px]">
         {step === 1 && <>
-          <span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-brass mb-3"><span className="w-1.5 h-1.5 rounded-full bg-brass" />Step 1 / 4 · Intent</span>
+          <span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-brass mb-3"><span className="w-1.5 h-1.5 rounded-full bg-brass" />Step 1 / 6 · Intent</span>
           <h2 className="font-display text-[24px] font-bold tracking-tight mb-2">State the outcome you want.</h2>
           <p className="text-[13px] text-inksoft mb-5 max-w-[520px]">Plain language in, structured intent out. No directory to browse — the parser reads the goal and the matcher does the rest.</p>
           <div className="border border-line rounded-[16px_8px_18px_9px] bg-paper p-4 mb-4"><small className="block font-mono text-[9px] uppercase text-[#8a8477] mb-2">Your goal</small><textarea value={goal} onChange={(e) => setGoal(e.target.value)} className="w-full bg-transparent font-display text-[17px] font-semibold resize-none outline-none" rows={2} /></div>
@@ -233,7 +238,7 @@ export default function MarketplaceWorkspace() {
         </>}
 
         {step === 2 && <>
-          <span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-brass mb-3"><span className="w-1.5 h-1.5 rounded-full bg-brass" />Step 2 / 4 · Explainable match</span>
+          <span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-brass mb-3"><span className="w-1.5 h-1.5 rounded-full bg-brass" />Step 2 / 6 · Explainable match</span>
           <h2 className="font-display text-[24px] font-bold tracking-tight mb-1">Top fit, with a paper trail.</h2>
           <p className="text-[13px] text-inksoft mb-5 max-w-[560px]">Weighted, transparent scoring — capability 35 · availability 15 · verification 15 · reputation 15 · completion 10 · liveness 10.</p>
           {best ? <>
@@ -243,30 +248,44 @@ export default function MarketplaceWorkspace() {
               <div className="flex flex-wrap gap-2">{(best.reasons || []).slice(0, 4).map((reason) => <span key={reason} className="font-mono text-[9.5px] px-2.5 py-1 rounded-full bg-paperhi border border-line text-inksoft">{reason}</span>)}</div>
             </div>
             <div className="grid sm:grid-cols-2 gap-3 mb-6">{(result?.alternatives || []).slice(0, 2).map((alternative) => <div key={alternative.agent.agent_id} className="border border-line rounded-[14px_8px_16px_9px] p-4"><div className="flex justify-between items-center mb-1"><strong className="text-[13px] font-bold">{alternative.agent.name || `Agent #${alternative.agent.agent_id}`}</strong><span className="font-mono text-[11px] text-inksoft">{Math.round(alternative.score)}</span></div><div className="text-[10.5px] text-inksoft">{alternative.reasons?.[0] || "Alternative match"}</div></div>)}</div>
-            <div className="flex gap-3"><button type="button" onClick={() => void hire()} disabled={loading || !best.hireability?.canCreateJob} className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">{loading ? "Creating mission and quote…" : `Continue with ${best.agent.name || "agent"} `}<span className="text-brasslt">→</span></button><button type="button" onClick={() => setStep(1)} className="font-bold text-[12px] px-4 py-3 text-inksoft">← Back</button></div>
+            <div className="flex gap-3"><button type="button" onClick={() => void hire()} disabled={loading || !best.hireability?.canCreateJob} className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">{loading ? "Creating mission…" : `Hire ${best.agent.name || "agent"} `}<span className="text-brasslt">→</span></button><button type="button" onClick={() => setStep(1)} className="font-bold text-[12px] px-4 py-3 text-inksoft">← Back</button></div>
           </> : <div className="py-10 text-[13px] text-inksoft">No suitable Testnet agent found.</div>}
         </>}
 
         {step === 3 && quote && <>
-          <span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-brass mb-3"><span className="w-1.5 h-1.5 rounded-full bg-brass" />Step 3 / 4 · Provider quote</span>
-          <h2 className="font-display text-[24px] font-bold tracking-tight mb-1">Review the provider quote.</h2>
-          <p className="text-[13px] text-inksoft mb-5 max-w-[560px]">The mission is already recorded and tied to this quote. Review the agent's price and validity, then continue to the wallet signing step.</p>
-          <div className="border border-line rounded-[18px_9px_20px_10px] overflow-hidden mb-6 bg-paper"><div className="flex justify-between items-center px-5 py-3 dash-b"><span className="font-mono text-[9px] uppercase text-[#8a8477]">Provider quote</span><span className={`inline-block font-mono text-[9.5px] px-2.5 py-1 rounded-lg ${quote.quote.status === "accepted" ? "status-green" : "status-brass"}`}>{human(quote.quote.status)}</span></div><div className="grid sm:grid-cols-2 gap-4 p-5"><Info title="Quoted price" value={`${quote.quote.price} ${quote.quote.currency}`} mono /><Info title="Provider signature" value={quote.signature_present ? "Present ✓" : "Not present"} green /><Info title="Quote hash" value={compact(quote.quote.quote_hash)} mono /><Info title="Expires" value={ttl > 0 ? `in ${mins}:${secs}` : "expired"} /></div><div className="px-5 py-3 dash-t text-[10.5px] text-inksoft">The accepted quote is carried forward as the mission budget. Endpoint negotiation remains provider-side.</div></div>
-          <div className="flex gap-3"><button type="button" disabled={quoteLoading || prepareLoading || ttl <= 0 || quote.quote.status === "accepted"} onClick={() => void acceptQuote()} className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">{quoteLoading || prepareLoading ? "Preparing…" : quote.quote.status === "accepted" ? "Quote accepted · continue →" : "Accept quote →"}</button><button type="button" onClick={() => setStep(2)} className="font-bold text-[12px] px-4 py-3 text-inksoft">← Back</button></div>
-          {quote.quote.status === "accepted" && <div className="mt-4 border border-[#b9d2c3] bg-greensoft text-green rounded-[14px_8px_15px_9px] px-4 py-3 text-[11px]">Quote accepted. The accepted quote is now the input to the wallet preparation step.</div>}
+          <span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-brass mb-3"><span className="w-1.5 h-1.5 rounded-full bg-brass" />Step 3 / 6 · Provider quote</span>
+          <h2 className="font-display text-[24px] font-bold tracking-tight mb-1">The agent sets the price.</h2>
+          <p className="text-[13px] text-inksoft mb-5 max-w-[560px]">Budget isn't something you type in. The agent's endpoint negotiates terms for this exact goal and returns a signed, time-boxed quote.</p>
+          <div className="border border-line rounded-[18px_9px_20px_10px] overflow-hidden mb-6 bg-paper"><div className="flex justify-between items-center px-5 py-3 dash-b"><span className="font-mono text-[9px] uppercase text-[#8a8477]">marketplace_quotes</span><span className={`inline-block font-mono text-[9.5px] px-2.5 py-1 rounded-lg ${quote.quote.status === "accepted" ? "status-green" : "status-brass"}`}>{human(quote.quote.status)}</span></div><div className="grid sm:grid-cols-2 gap-4 p-5"><Info title="Quoted price" value={`${quote.quote.price} ${quote.quote.currency}`} mono /><Info title="Provider signature" value={quote.signature_present ? "Present ✓" : "Not present"} green /><Info title="Quote hash" value={compact(quote.quote.quote_hash)} mono /><Info title="Expires" value={ttl > 0 ? `in ${mins}:${secs}` : "expired"} /></div><div className="px-5 py-3 dash-t text-[10.5px] text-inksoft">Endpoint negotiation: <code className="font-mono text-[10.5px] bg-paperhi px-1 rounded">POST /erc8183/negotiate</code> · provider quote only</div></div>
+          <div className="flex gap-3"><button type="button" disabled={quoteLoading || ttl <= 0 || quote.quote.status === "accepted"} onClick={() => void acceptQuote()} className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">{quoteLoading ? "Accepting…" : quote.quote.status === "accepted" ? "Quote accepted" : "Accept quote →"}</button><button type="button" onClick={() => setStep(2)} className="font-bold text-[12px] px-4 py-3 text-inksoft">← Back</button></div>
         </>}
 
-        {step === 4 && prepared && <>
-          <span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-brass mb-3"><span className="w-1.5 h-1.5 rounded-full bg-brass" />Step 4 / 4 · Wallet signing</span>
-          <h2 className="font-display text-[24px] font-bold tracking-tight mb-1">Sign the real Testnet job.</h2>
-          <p className="text-[13px] text-inksoft mb-5 max-w-[560px]">Nothing is custodied. Each required transaction is a real wallet transaction, confirmed on BSC Testnet before the next dependent step unlocks.</p>
-          <div className="border border-line rounded-[18px_9px_20px_10px] overflow-hidden mb-4">
-            {plan.map((item, index) => { const skipped = item.id === "approve" && !item.transaction; const done = Boolean(confirmed[item.id]) || skipped; return <div key={item.id} className={`flex items-center gap-3 p-4 ${index < plan.length - 1 ? "dash-b" : ""} bg-paper`}><span className={`w-5 h-5 rounded-full border-2 shrink-0 flex items-center justify-center ${done ? "bg-green border-green text-white" : "border-line"}`}>{done ? "✓" : ""}</span><div><strong className="block font-mono text-[12px] font-medium">{item.label}</strong><span className="block text-[10.5px] text-inksoft">{stepDescriptions[item.id] || item.description}</span>{skipped && <small className="block mt-1 font-mono text-[8.5px] uppercase text-green">Already covered · no wallet prompt</small>}{confirmed[item.id] && confirmed[item.id].hash !== "skipped" && <small className="block mt-1 font-mono text-[8.5px] text-[#8a8477]">Confirmed on BSC Testnet · {compact(confirmed[item.id].hash)}</small>}</div></div>; })}
+        {step === 4 && mission && quote && <>
+          <span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-brass mb-3"><span className="w-1.5 h-1.5 rounded-full bg-brass" />Step 4 / 6 · Mission</span>
+          <h2 className="font-display text-[24px] font-bold tracking-tight mb-1">Mission created.</h2>
+          <p className="text-[13px] text-inksoft mb-5 max-w-[560px]">Recorded in the Supabase workflow layer. The budget below isn't a new number — it's the accepted quote, carried forward.</p>
+          <div className="border border-line rounded-[18px_9px_20px_10px] p-5 mb-6 bg-paper"><div className="grid sm:grid-cols-2 gap-4 mb-4"><Info title="Title" value={mission.mission.title || `${selected?.agent.name || "Agent"} mission`} /><Info title="Category" value={human(mission.mission.category || intent.category)} /><Info title="Assigned agent" value={selected?.agent.name || "Provider"} /><Info title="Budget (from accepted quote)" value={`${quote.quote.price} ${quote.quote.currency}`} mono /></div><div className="flex justify-between items-end pt-4 dash-t"><div><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1">Status</small><span className="inline-block font-mono text-[9.5px] px-2.5 py-1 rounded-lg status-brass">Open — not yet funded</span></div><span className="font-mono text-[9.5px] text-[#9aa3b1]">quote_id: {compact(quote.quote.quote_id)}</span></div></div>
+          <div className="flex gap-3"><button type="button" onClick={() => void prepare()} disabled={prepareLoading || quote.quote.status !== "accepted"} className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">{prepareLoading ? "Preparing…" : "Prepare ERC-8183 job →"}</button><button type="button" onClick={() => setStep(3)} className="font-bold text-[12px] px-4 py-3 text-inksoft">← Back</button></div>
+        </>}
+
+        {step === 5 && prepared && <>
+          <span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-brass mb-3"><span className="w-1.5 h-1.5 rounded-full bg-brass" />Step 5 / 6 · ERC-8183 preparation</span>
+          <h2 className="font-display text-[24px] font-bold tracking-tight mb-1">Your wallet signs five steps.</h2>
+          <p className="text-[13px] text-inksoft mb-5 max-w-[560px]">Nothing is custodied. Each line is a real wallet transaction, confirmed on BSC Testnet before the next dependent step unlocks.</p>
+          <div className="border border-line rounded-[18px_9px_20px_10px] overflow-hidden mb-6">
+            {plan.map((item, index) => { const skipped = item.id === "approve" && !item.transaction; const done = Boolean(confirmed[item.id]) || skipped; return <div key={item.id} className={`flex items-center gap-3 p-4 ${index < plan.length - 1 ? "dash-b" : ""} bg-paper`}><span className={`w-5 h-5 rounded-full border-2 shrink-0 flex items-center justify-center ${done ? "bg-green border-green text-white" : "border-line"}`}>{done ? "✓" : ""}</span><div><strong className="block font-mono text-[12px] font-medium">{item.label}</strong><span className="block text-[10.5px] text-inksoft">{stepDescriptions[item.id] || item.description}</span>{skipped && <small className="block mt-1 font-mono text-[8.5px] uppercase text-green">Already covered · no wallet prompt</small>}</div></div>; })}
           </div>
           {signError && <div className="mb-4 border border-[#cfad9f] bg-rustsoft text-rust rounded-[14px_8px_15px_9px] px-4 py-3 text-[11px]">{signError}</div>}
-          <div className="flex gap-3"><button type="button" onClick={() => void signNextStep()} disabled={signing || complete} className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">{signing ? "Signing in wallet…" : complete ? "Job funded · view mission →" : "Sign next transaction →"}</button><button type="button" onClick={() => setStep(3)} className="font-bold text-[12px] px-4 py-3 text-inksoft">← Back</button></div>
-          {complete && <div className="mt-4 border border-[#b9d2c3] bg-greensoft text-green rounded-[14px_8px_15px_9px] px-4 py-3 text-[11px]">All required receipts are confirmed. The ERC-8183 job is now ready to track from Missions.</div>}
-          {complete && <div className="mt-4"><button type="button" onClick={() => location.assign(`/mission?job=${encodeURIComponent(mission?.job.id || "")}`)} className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">Watch provider progress →</button></div>}
+          <div className="flex gap-3"><button type="button" onClick={() => void signNextStep()} disabled={signing || complete} className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">{signing ? "Signing in wallet…" : complete ? "Continue →" : "Sign in wallet →"}</button><button type="button" onClick={() => setStep(4)} className="font-bold text-[12px] px-4 py-3 text-inksoft">← Back</button></div>
+        </>}
+
+        {step === 6 && <>
+          <span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-green mb-3"><span className="w-1.5 h-1.5 rounded-full bg-green" />Step 6 / 6 · Chain receipt</span>
+          <h2 className="font-display text-[24px] font-bold tracking-tight mb-1">Funded, on-chain.</h2>
+          <p className="text-[13px] text-inksoft mb-5 max-w-[560px]">The receipt was confirmed before the mission moved into Fund. The application now follows the real ERC-8183 job state.</p>
+          <div className="border border-line rounded-[18px_9px_20px_10px] p-5 mb-6 bg-paper grid sm:grid-cols-2 gap-4"><Info title="Chain job ID" value={chainJobId ? `#${chainJobId}` : "Confirmed"} mono /><Info title="Status" value="Funded" green /><Info title="Network" value="BSC Testnet · Chain 97" /><Info title="Notified" value={selected?.agent.name || "Provider agent"} /></div>
+          <p className="text-[11.5px] text-inksoft mb-4 max-w-[520px]">From here the job lives in the provider's hands. Track its progress on the mission's own page — the same one you'd open from Missions.</p>
+          <div className="flex gap-3"><button type="button" onClick={() => location.assign(`/missions`)} className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">Go to Missions →</button><button type="button" onClick={() => location.assign(`/mission?job=${encodeURIComponent(mission?.job.id || "")}`)} className="font-bold text-[12px] px-4 py-3 text-inksoft">Watch provider progress</button></div>
         </>}
       </div>
     </main>
