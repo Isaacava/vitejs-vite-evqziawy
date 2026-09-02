@@ -1,0 +1,87 @@
+/* The supplied demo is the landing visual authority. Keep the existing content/behavior, but enforce its scale, restraint and geometry. */
+.landing .land-nav {
+  width: min(1240px, calc(100% - 48px));
+  padding: 16px 0;
+  border-bottom: 1px solid #d5cfbf;
+}
+
+.landing .land-brand { font-size: 16px; }
+.landing .land-nav-links { gap: 28px; font-family: "DM Mono", monospace; font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; }
+.landing .land-nav-cta,
+.landing .primary-btn { border-radius: 14px 8px 16px 9px; }
+
+.landing .hero-band { min-height: 650px; padding: 72px 0 92px; }
+.landing .hero-shell {
+  width: min(1240px, calc(100% - 48px));
+  grid-template-columns: minmax(0, 1fr) minmax(360px, .82fr);
+  gap: 58px;
+}
+.landing .hero-copy { padding: 18px 0 28px; }
+.landing .eyebrow { margin-bottom: 16px; font-size: 9.5px; }
+.landing .hero-copy h1 {
+  max-width: 520px;
+  margin-bottom: 16px;
+  font-size: clamp(38px, 4.5vw, 48px);
+  line-height: 1.02;
+  letter-spacing: -.045em;
+}
+.landing .hero-copy p { max-width: 500px; font-size: 13px; line-height: 1.62; }
+.landing .hero-actions { gap: 14px; margin: 24px 0 28px; }
+.landing .primary-btn { min-width: 0; padding: 12px 16px; font-size: 12px; }
+.landing .text-btn { font-size: 11.5px; }
+.landing .micro-proof { gap: 9px; padding-top: 14px; }
+.landing .micro-proof span { font-size: 8px; }
+.landing .micro-proof b { font-size: 12px; }
+
+.landing .match-instrument {
+  border-radius: 26px 10px 28px 13px;
+  transform: rotate(1deg);
+}
+.landing .instrument-top,
+.landing .instrument-foot { padding: 11px 16px; font-size: 8.5px; }
+.landing .goal-field { padding: 18px 17px 14px; }
+.landing .goal-value { min-height: 44px; font-size: 16px; }
+.landing .match-highlight { padding: 15px 17px; }
+.landing .match-highlight strong { font-size: 21px; }
+.landing .score-ring b { font-size: 34px; }
+.landing .signal-list { padding: 4px 17px; }
+.landing .signal { padding: 10px 0 9px; gap: 8px; }
+.landing .signal > span { font-size: 10.5px; }
+.landing .signal > b { font-size: 10px; }
+
+.landing .section { padding: 84px 0; }
+.landing .section-shell { width: min(1240px, calc(100% - 48px)); }
+.landing .section-intro h2,
+.landing .builder-head h2 { max-width: 620px; font-size: clamp(30px, 3.4vw, 42px); line-height: 1.04; letter-spacing: -.04em; }
+.landing .section-intro p,
+.landing .builder-head > p { max-width: 520px; font-size: 13px; line-height: 1.65; }
+.landing .editorial-pair { gap: 16px; margin-top: 40px; }
+.landing .editor-card { min-height: 250px; padding: 22px; border-radius: 26px 10px 28px 13px; }
+.landing .editor-card h3 { margin: 22px 0 10px; font-size: 22px; }
+.landing .editor-card p { font-size: 12px; }
+.landing .workflow-track { margin-top: 38px; }
+.landing .workflow-step { min-height: 180px; padding: 18px 14px 22px; }
+.landing .workflow-step h3 { margin: 34px 0 8px; font-size: 15px; }
+.landing .workflow-step p { font-size: 10.5px; }
+.landing .two-col { gap: 58px; }
+.landing .custody-diagram { min-height: 390px; }
+.landing .builder-ribbon { margin-top: 38px; padding: 18px; border-radius: 20px 9px 22px 10px; }
+.landing .builder-ribbon strong { font-size: 17px; }
+.landing .builder-ribbon small { font-size: 10px; }
+
+@media (max-width: 1020px) {
+  .landing .hero-shell { grid-template-columns: 1fr; }
+  .landing .match-instrument { max-width: 620px; width: 100%; margin-left: auto; }
+  .landing .hero-band { min-height: auto; }
+}
+
+@media (max-width: 760px) {
+  .landing .land-nav,
+  .landing .section-shell,
+  .landing .hero-shell { width: calc(100% - 28px); }
+  .landing .hero-band { padding-top: 42px; padding-bottom: 72px; }
+  .landing .hero-copy h1 { font-size: clamp(38px, 12vw, 48px); }
+  .landing .section { padding: 68px 0; }
+  .landing .editor-card { min-height: 220px; }
+  .landing .match-instrument { transform: none; }
+}
