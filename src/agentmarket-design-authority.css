@@ -1,0 +1,148 @@
+:root {
+  --am-paper: #eeeade;
+  --am-paper-hi: #fbfaf5;
+  --am-ink: #171714;
+  --am-ink-soft: #6d6a61;
+  --am-line: #d5cfbf;
+  --am-line-soft: #e2ddcf;
+  --am-brass: #9d7428;
+  --am-brass-light: #d2b05e;
+  --am-brass-soft: #f7ecd3;
+  --am-green: #2d6b4f;
+  --am-green-soft: #e7efe9;
+  --am-rust: #9b4733;
+  --am-rust-soft: #f3e6e1;
+  --am-deep: #191a17;
+  --am-max: 1240px;
+}
+
+html, body {
+  background: var(--am-paper) !important;
+  color: var(--am-ink);
+  font-family: Manrope, sans-serif;
+}
+
+body {
+  min-width: 320px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button, a, input, textarea, select { -webkit-tap-highlight-color: transparent; }
+
+::selection { background: var(--am-brass-soft); color: var(--am-ink); }
+
+:focus-visible {
+  outline: 2px solid var(--am-brass) !important;
+  outline-offset: 2px;
+}
+
+/* Exact system geometry used throughout the demo. */
+.am-card,
+.card-asym { border-radius: 20px 9px 22px 10px; }
+.am-card-lg,
+.card-asym-lg { border-radius: 26px 10px 28px 13px; }
+.am-button,
+.btn-asym { border-radius: 14px 8px 16px 9px; }
+.am-card-sm { border-radius: 14px 8px 15px 9px; }
+.am-status { border-radius: 8px 5px 9px 5px; }
+
+.am-label,
+.font-mono {
+  font-family: "DM Mono", monospace;
+}
+
+/* Normalize the hard-coded legacy utilities to the canonical palette. */
+[class*="bg-[#fbfaf5]"],
+[class*="bg-white/50"] { background-color: var(--am-paper-hi) !important; }
+[class*="bg-[#eeeade]"] { background-color: var(--am-paper) !important; }
+[class*="bg-[#171714]"] { background-color: var(--am-ink) !important; }
+[class*="bg-[#191a17]"] { background-color: var(--am-deep) !important; }
+[class*="bg-[#f7ecd3]"] { background-color: var(--am-brass-soft) !important; }
+[class*="bg-[#e7efe9]"] { background-color: var(--am-green-soft) !important; }
+[class*="bg-[#f3e6e1]"] { background-color: var(--am-rust-soft) !important; }
+
+[class*="text-[#171714]"],
+[class*="text-ink"] { color: var(--am-ink) !important; }
+[class*="text-[#6d6a61]"],
+[class*="text-inksoft"] { color: var(--am-ink-soft) !important; }
+[class*="text-[#8a8477]"] { color: #8a8477 !important; }
+[class*="text-[#9d7428]"],
+[class*="text-brass"] { color: var(--am-brass) !important; }
+[class*="text-[#2d6b4f]"],
+[class*="text-green"] { color: var(--am-green) !important; }
+[class*="text-[#9b4733]"],
+[class*="text-rust"] { color: var(--am-rust) !important; }
+
+[class*="border-[#d5cfbf]"],
+[class*="border-line"] { border-color: var(--am-line) !important; }
+[class*="border-[#e2ddcf]"],
+[class*="border-linesoft"] { border-color: var(--am-line-soft) !important; }
+
+/* The demo deliberately uses compact, technical status treatments. */
+.status-brass { background: var(--am-brass-soft) !important; color: var(--am-brass) !important; }
+.status-green { background: var(--am-green-soft) !important; color: var(--am-green) !important; }
+.status-rust { background: var(--am-rust-soft) !important; color: var(--am-rust) !important; }
+
+/* Reduce generic SaaS rounding while preserving circles where semantically required. */
+button.rounded-full,
+a.rounded-full,
+span.rounded-full {
+  border-radius: 8px 5px 9px 5px;
+}
+
+/* Technical dividers. */
+[class*="border-dashed"] { border-style: dashed !important; }
+
+/* Shared content frame. */
+.workspace-content,
+.page-shell,
+.dashboard-shell {
+  width: min(var(--am-max), calc(100% - 48px));
+  margin-inline: auto;
+}
+
+/* Editorial interaction: quiet movement, never playful. */
+button, a {
+  transition: background-color .18s ease, border-color .18s ease, color .18s ease, box-shadow .18s ease, transform .18s ease, opacity .18s ease;
+}
+
+button:not(:disabled):hover,
+a:hover { }
+
+button:not(:disabled):active,
+a:active { transform: translateY(1px); }
+
+/* Inputs follow the paper-document character. */
+input, textarea, select {
+  color: var(--am-ink);
+}
+
+input::placeholder,
+textarea::placeholder { color: #999387; opacity: 1; }
+
+/* Dense operational lists: thin editorial separators. */
+.am-row { border-bottom: 1px solid var(--am-line-soft); }
+.am-row:last-child { border-bottom: 0; }
+
+/* Advanced protocol details. */
+details > summary { font-family: "DM Mono", monospace; }
+
+@media (max-width: 900px) {
+  .workspace-content,
+  .page-shell,
+  .dashboard-shell { width: min(var(--am-max), calc(100% - 32px)); }
+}
+
+@media (max-width: 640px) {
+  .workspace-content,
+  .page-shell,
+  .dashboard-shell { width: calc(100% - 28px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+  }
+}
