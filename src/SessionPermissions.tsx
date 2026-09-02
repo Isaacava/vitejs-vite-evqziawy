@@ -1,63 +1,84 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./session-permissions.css";
+import { revokeAltanaExecutionSession } from "./lib/altanaSession";
+import { bscExplorerUrl } from "./lib/erc8183Adapter";
 
-type Permission = {
+type Session = {
   id: string;
-  wallet_address: string;
-  allowed_tokens: string[];
-  allowed_protocols: string[];
-  max_total_value: number;
-  max_single_action_value: number;
-  starts_at: string;
-  expires_at: string;
+  job_id: string;
+  agent_id: string | null;
+  session_key_id: string | null;
+  capital_requested: string | null;
+  capital_authorized: string | null;
+  capital_token: string;
+  spend_cap: string | null;
+  session_expires_at: string | null;
+  status: "requested" | "authorized" | "active" | "exit_pending" | "settled" | "revoked" | "expired";
+  authorization_verified_at: string | null;
+  session_grant_tx_hash: string | null;
+  session_revoke_tx_hash: string | null;
   revoked_at: string | null;
-  status: "active" | "expired" | "revoked";
-  created_at: string;
+  agent: { id: string; agent_id: string; name: string | null } | null;
 };
 
-const compact = (value: string) => `${value.slice(0, 8)}…${value.slice(-6)}`;
-const statusClass = (status: Permission["status"]) => status === "active" ? "green" : status === "expired" ? "brass" : "rust";
+const compact = (value?: string | null) => value ? `${value.slice(0, 8)}…${value.slice(-6)}` : "—";
+function timeLeft(value?: string | null) {
+  if (!value) return "No expiry";
+  const seconds = Math.floor((new Date(value).getTime() - Date.now()) / 1000);
+  if (seconds <= 0) return "Expired";
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return hours ? `${hours}h remaining` : `${Math.max(1, minutes)}m remaining`;
+}
 
 export default function SessionPermissions() {
-  const [permissions, setPermissions] = useState<Permission[]>([]);
+  const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState("");
+  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
   async function load() {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch("/api/session-permissions", { credentials: "include" });
+      const response = await fetch("/api/session-permissions", { credentials: "include", cache: "no-store" });
       if (response.status === 401) {
-        window.location.href = "/dashboard";
+        window.location.assign("/dashboard");
         return;
       }
-      const body = await response.json();
-      if (!response.ok) throw new Error(body?.error || "Unable to load permissions");
-      setPermissions(body.permissions || []);
+      const body = await response.json() as { sessions?: Session[]; error?: string };
+      if (!response.ok) throw new Error(body.error || "Unable to load sessions");
+      setSessions(Array.isArray(body.sessions) ? body.sessions : []);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to load permissions");
+      setError(cause instanceof Error ? cause.message : "Unable to load sessions");
     } finally {
       setLoading(false);
     }
   }
 
-  async function revoke(id: string) {
-    setWorking(id);
+  async function revoke(session: Session) {
+    if (!session.session_key_id) {
+      setError("This session has no verified Altana session key.");
+      return;
+    }
+    setWorking(session.id);
+    setMessage("");
     setError("");
     try {
+      const txHash = await revokeAltanaExecutionSession(session.session_key_id);
       const response = await fetch("/api/session-permissions", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "revoke", id }),
+        body: JSON.stringify({ action: "revoke", id: session.id, tx_hash: txHash }),
       });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body?.error || "Unable to revoke permission");
+      const body = await response.json() as { ok?: boolean; error?: string };
+      if (!response.ok) throw new Error(body.error || "The on-chain revoke succeeded, but AgentMarket could not record it.");
+      setMessage("Session revoked. The agent can no longer use this authorization.");
       await load();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to revoke permission");
+      setError(cause instanceof Error ? cause.message : "Unable to revoke session");
     } finally {
       setWorking("");
     }
@@ -65,71 +86,65 @@ export default function SessionPermissions() {
 
   useEffect(() => { void load(); }, []);
 
+  const active = useMemo(() => sessions.filter((session) => session.status === "authorized" || session.status === "active"), [sessions]);
+  const history = useMemo(() => sessions.filter((session) => !active.includes(session)), [sessions, active]);
+
   return (
-    <main className="permissions-page">
-      <div className="permissions-curve permissions-curve-a" aria-hidden="true" />
-      <div className="permissions-curve permissions-curve-b" aria-hidden="true" />
-      <div className="permissions-shell">
-        <header className="permissions-nav">
-          <a href="/" className="permissions-brand">AgentMarket</a>
-          <span>USER / PERMISSIONS</span>
-          <a href="/dashboard">Dashboard →</a>
-        </header>
-
-        {error && <div className="permissions-alert">{error}</div>}
-
-        <section className="permissions-hero">
-          <div>
-            <span className="permissions-kicker">EXECUTION CONTROL / 01</span>
-            <h1>Make the boundary<br /><em>visible.</em></h1>
-            <p>Permissions describe what a future execution session may be allowed to do. They are scoped by wallet, token, protocol, value cap and expiry. AgentMarket never stores your private key.</p>
-          </div>
-          <div className="permissions-instrument">
-            <small>CONTROL MODEL</small>
-            <strong>NON-CUSTODIAL</strong>
-            <span>Private keys stored</span><b>NO</b>
-            <span>Revocable</span><b>YES</b>
-            <span>Token allowlist</span><b>YES</b>
-            <span>Expiry</span><b>REQUIRED</b>
-          </div>
-        </section>
-
-        <section className="permissions-rule">
-          <div><span>WALLET</span><strong>Scoped session</strong></div>
-          <i>+</i>
-          <div><span>ASSETS</span><strong>Token allowlist</strong></div>
-          <i>+</i>
-          <div><span>PROTOCOLS</span><strong>Approved venues</strong></div>
-          <i>+</i>
-          <div><span>LIMITS</span><strong>Caps + expiry</strong></div>
-        </section>
-
-        <section className="permissions-card">
-          <div className="permissions-card-head"><span>02 / YOUR PERMISSIONS</span><b>{permissions.length} RECORDS</b></div>
-          {loading ? <div className="permissions-empty">Loading permission records…</div> : permissions.length === 0 ? (
-            <div className="permissions-empty"><strong>No execution permissions yet.</strong><p>When you authorize an agent for a specific strategy, its scope will appear here.</p></div>
-          ) : permissions.map((permission) => (
-            <article className="permission-row" key={permission.id}>
-              <div className="permission-main">
-                <div className="permission-title"><span className={`permission-dot ${statusClass(permission.status)}`} /> <strong>{permission.status.toUpperCase()}</strong><small>{compact(permission.wallet_address)}</small></div>
-                <div className="permission-scope">
-                  <div><span>Tokens</span><b>{permission.allowed_tokens.length ? permission.allowed_tokens.join(", ") : "None specified"}</b></div>
-                  <div><span>Protocols</span><b>{permission.allowed_protocols.length ? permission.allowed_protocols.join(", ") : "None specified"}</b></div>
-                  <div><span>Total cap</span><b>{permission.max_total_value}</b></div>
-                  <div><span>Single-action cap</span><b>{permission.max_single_action_value}</b></div>
-                  <div><span>Expires</span><b>{new Date(permission.expires_at).toLocaleString()}</b></div>
-                </div>
-              </div>
-              {permission.status === "active" && <button className="permission-revoke" onClick={() => void revoke(permission.id)} disabled={working === permission.id}>{working === permission.id ? "Revoking…" : "Revoke access"}</button>}
-            </article>
-          ))}
-        </section>
-
-        <section className="permissions-note">
-          <span className="permissions-kicker">IMPORTANT</span>
-          <p>Creating a permission record does not itself grant a smart contract, exchange, or DeFi protocol authority. The actual execution layer must enforce these limits before a transaction is signed.</p>
-        </section>
+    <main className="mx-auto max-w-[1240px] px-6 py-8 md:px-8 font-body text-ink">
+      <div className="mb-6 flex items-end justify-between gap-4">
+        <div>
+          <span className="block font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477] mb-2">Manage / Permissions</span>
+          <h1 className="font-display text-[28px] font-bold tracking-tight md:text-[34px]">Session permissions</h1>
+          <p className="mt-1.5 text-[12px] text-inksoft">Active Altana execution sessions.</p>
+        </div>
+        <a href="/dashboard" className="text-[11px] font-bold text-inksoft no-underline">← Dashboard</a>
       </div>
+
+      {error && <div className="mb-4 rounded-[14px_8px_15px_9px] border border-[#cfad9f] bg-rustsoft px-4 py-3 text-[11px] text-rust">{error}</div>}
+      {message && <div className="mb-4 rounded-[14px_8px_15px_9px] border border-[#b9d2c3] bg-greensoft px-4 py-3 text-[11px] text-green">{message}</div>}
+
+      <section className="card-asym-lg border border-line bg-paperhi overflow-hidden">
+        <div className="flex items-center justify-between gap-3 border-b border-dashed border-[#c8c0af] px-5 py-4">
+          <div>
+            <strong className="font-display text-[16px] font-bold">Active</strong>
+            <span className="block text-[10.5px] text-inksoft mt-0.5">Revoke a live session from here.</span>
+          </div>
+          <span className="font-mono text-[9px] text-[#8a8477]">{active.length} active</span>
+        </div>
+
+        {loading ? <div className="p-5 text-[12px] text-inksoft">Loading…</div> : active.length === 0 ? (
+          <div className="p-5">
+            <strong className="font-display text-[17px]">No active Altana sessions</strong>
+            <p className="mt-1 text-[11px] text-inksoft">An authorized execution session will appear here.</p>
+          </div>
+        ) : active.map((session) => {
+          const name = session.agent?.name || (session.agent?.agent_id ? `Agent #${session.agent.agent_id}` : "Agent");
+          return <article key={session.id} className="flex flex-col gap-4 border-b border-linesoft p-5 last:border-b-0 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-green" />
+                <strong className="text-[14px] font-bold">{name}</strong>
+                <span className="rounded-lg bg-greensoft px-2 py-1 font-mono text-[9px] text-green">{session.status}</span>
+              </div>
+              <div className="mt-2 grid gap-1 text-[10.5px] text-inksoft sm:grid-cols-3 sm:gap-x-5">
+                <span>{session.capital_authorized || session.capital_requested || "—"} authorized</span>
+                <span>{timeLeft(session.session_expires_at)}</span>
+                <span>Session {compact(session.session_key_id)}</span>
+              </div>
+            </div>
+            <button type="button" disabled={working === session.id} onClick={() => void revoke(session)} className="btn-asym shrink-0 border border-rust px-4 py-2.5 font-display text-[11px] font-bold text-rust">
+              {working === session.id ? "Revoking…" : "Revoke session"}
+            </button>
+          </article>;
+        })}
+      </section>
+
+      {history.length > 0 && <section className="mt-4 border-t border-line pt-5">
+        <div className="mb-3 flex items-center justify-between"><span className="font-mono text-[9px] uppercase tracking-wide text-[#8a8477]">History</span><span className="font-mono text-[9px] text-[#8a8477]">{history.length}</span></div>
+        <div className="overflow-hidden rounded-[16px_8px_18px_9px] border border-line bg-paperhi">
+          {history.slice(0, 8).map((session) => <div key={session.id} className="flex flex-col gap-1 border-b border-linesoft p-4 last:border-b-0 sm:flex-row sm:items-center sm:justify-between"><div><strong className="text-[12px] font-bold">{session.agent?.name || "Agent"}</strong><div className="font-mono text-[9px] text-[#8a8477]">{session.status} · {session.session_revoke_tx_hash ? <a href={bscExplorerUrl(session.session_revoke_tx_hash as `0x${string}`)} target="_blank" rel="noreferrer" className="text-brass underline">revoke tx ↗</a> : session.revoked_at ? new Date(session.revoked_at).toLocaleString() : "—"}</div></div><span className="font-mono text-[9px] text-[#8a8477]">{compact(session.session_key_id)}</span></div>)}
+        </div>
+      </section>}
     </main>
   );
 }
