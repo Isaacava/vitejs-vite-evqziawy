@@ -27,9 +27,7 @@ export type AltanaSessionGrantInput = {
   agentSessionAddress: Address;
   agentSessionPublicKey: Hex;
   allowedCalls: readonly Address[];
-  /** Exact ERC-20 token address the agent capability requested. Required. */
   capitalToken: Address;
-  /** Human-readable execution amount. The controlled proof is exactly 1 token unit. */
   capitalAmount: bigint;
   purpose: string;
   expiry: number;
@@ -132,4 +130,27 @@ export async function grantAltanaExecutionSession(input: AltanaSessionGrantInput
     permissions: { calls, spend: spendPermissions },
     ...(transactionHash ? { transactionHash } : {}),
   };
+}
+
+/** Revoke the on-chain Altana session key owned by the connected user wallet. */
+export async function revokeAltanaExecutionSession(sessionKeyId: string): Promise<Hex> {
+  if (!isHex(sessionKeyId) || sessionKeyId.length !== 66) throw new Error("Active Altana session identifier is invalid.");
+
+  const resolved = ensureAltanaWallet();
+  const client = createClient({ chains: [BNB_TESTNET] });
+  const revokeSession = (client as typeof client & {
+    revokeSession?: (input: { wallet: typeof resolved.wallet; signer: typeof resolved.signer; sessionKeyId: Hex; chainId: number }) => Promise<{ transactionHash?: Hex; hash?: Hex }>;
+  }).revokeSession;
+
+  if (!revokeSession) throw new Error("The installed Altana SDK does not expose session revocation.");
+
+  const result = await revokeSession.call(client, {
+    wallet: resolved.wallet,
+    signer: resolved.signer,
+    sessionKeyId: sessionKeyId as Hex,
+    chainId: 97,
+  });
+  const transactionHash = result.transactionHash || result.hash;
+  if (!transactionHash) throw new Error("Altana did not return a revoke transaction hash.");
+  return transactionHash;
 }
