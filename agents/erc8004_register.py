@@ -23,6 +23,7 @@ DESCRIPTION = (
 ENDPOINT = (os.getenv("ERC8004_AGENT_ENDPOINT") or os.getenv("ERC8183_AGENT_URL") or "").rstrip("/")
 PASSWORD = os.environ["WALLET_PASSWORD"]
 PRIVATE_KEY = os.getenv("PRIVATE_KEY")
+REGISTRATION_DELAY = max(0, int(os.getenv("ERC8004_REGISTRATION_DELAY_SECONDS", "0")))
 
 
 def _endpoint() -> AgentEndpoint:
@@ -68,6 +69,10 @@ def _repair_existing_registration(sdk: ERC8004Agent, existing: dict) -> dict:
         )
         return existing
 
+    if REGISTRATION_DELAY:
+        logger.info("ERC-8004 incomplete identity detected name=%s agent_id=%s; waiting %ss before repair", NAME, agent_id, REGISTRATION_DELAY)
+        time.sleep(REGISTRATION_DELAY)
+
     final_uri = _generated_uri(sdk, agent_id=agent_id)
     last_error: Exception | None = None
     for attempt in range(1, 5):
@@ -98,6 +103,10 @@ def ensure_registration() -> dict:
     existing = sdk.get_local_agent_info(NAME)
     if existing is not None:
         return _repair_existing_registration(sdk, existing)
+
+    if REGISTRATION_DELAY:
+        logger.info("ERC-8004 new identity registration name=%s; waiting %ss before mint", NAME, REGISTRATION_DELAY)
+        time.sleep(REGISTRATION_DELAY)
 
     uri = _generated_uri(sdk)
     result = sdk.register_agent(agent_uri=uri, metadata=_metadata())
