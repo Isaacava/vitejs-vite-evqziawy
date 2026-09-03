@@ -77,6 +77,18 @@ async function resolveRegistration(uri: string): Promise<RegistrationFile> {
     return JSON.parse(text) as RegistrationFile;
   } finally { clearTimeout(timer); }
 }
+
+function protocolFromService(value: JsonRecord) {
+  const explicit = cleanString(value.protocol || value.transport || value.type || value.protocol_version);
+  if (explicit) return explicit.toLowerCase();
+  const name = cleanString(value.name || value.id || value.capability || value.skill).toLowerCase();
+  if (/erc.?8183/.test(name)) return "erc8183";
+  if (/a2a|agent.?card/.test(name)) return "a2a";
+  if (/mcp|model.?context/.test(name)) return "mcp";
+  if (/health|status/.test(name)) return "http-health";
+  return "http";
+}
+
 function extractEndpoints(registration: RegistrationFile): Endpoint[] {
   const objects = [registration.services, registration.endpoints].flatMap((value) => Array.isArray(value) ? value : []);
   const result: Endpoint[] = [];
@@ -84,11 +96,13 @@ function extractEndpoints(registration: RegistrationFile): Endpoint[] {
     const r = record(item);
     const url = [r.serviceEndpoint, r.endpoint, r.url, r.uri].find((v): v is string => typeof v === "string" && /^https?:\/\//i.test(v));
     if (!url) continue;
-    result.push({ url, protocol: cleanString(r.protocol) || cleanString(r.name) || "erc8183", ...(cleanString(r.version) ? { version: cleanString(r.version) } : {}), metadata: r });
+    result.push({ url, protocol: protocolFromService(r), ...(cleanString(r.version) ? { version: cleanString(r.version) } : {}), metadata: r });
   }
-  for (const value of [...strings(registration.services), ...strings(registration.endpoints)]) if (/^https?:\/\//i.test(value)) result.push({ url: value, protocol: "erc8183" });
+  for (const value of strings(registration.services)) if (/^https?:\/\//i.test(value)) result.push({ url: value, protocol: "http" });
+  for (const value of strings(registration.endpoints)) if (/^https?:\/\//i.test(value)) result.push({ url: value, protocol: "http" });
   return [...new Map(result.map((e) => [`${e.protocol}:${e.url}`, e])).values()];
 }
+
 function unwrapList(value: unknown): JsonRecord[] {
   if (Array.isArray(value)) return value.map(record);
   const root = record(value);
@@ -107,7 +121,7 @@ function isBscTestnetAgent(a: JsonRecord) {
   const chainId = numberValue(a.chainId ?? a.chain_id ?? chain.chainId ?? chain.chain_id);
   if (chainId === CHAIN_ID) return true;
   const registrations = Array.isArray(a.registrations) ? a.registrations : [];
-  return registrations.some((entry) => cleanString(record(entry).agentRegistry).includes(`eip155:${CHAIN_ID}:`));
+  return registrations.some((entry) => cleanString(record(entry).agentRegistry).toLowerCase().includes(`eip155:${CHAIN_ID}:`));
 }
 function normalize8004(a: JsonRecord): ExternalAgent | null {
   if (!isBscTestnetAgent(a)) return null;
@@ -118,14 +132,43 @@ function normalize8004(a: JsonRecord): ExternalAgent | null {
   const category = inferCategory({ name: cleanString(a.name), description: cleanString(a.description), capabilities: a.capabilities, skills: a.skills, services });
   return { agentId, owner: cleanString(a.owner ?? a.owner_address ?? a.ownerAddress) || null, uri: cleanString(a.agentURI ?? a.agent_uri ?? a.uri) || null, name: cleanString(a.name) || null, description: cleanString(a.description) || null, image: cleanString(a.image) || null, category, services, registrations, reputationScore: numberValue(a.reputationScore ?? a.reputation_score ?? a.score), feedbackCount: numberValue(a.feedbackCount ?? a.feedback_count ?? a.feedbacks), raw: a };
 }
+
+function mergeRegistrationServices(registration: RegistrationFile, services: unknown[]): RegistrationFile {
+  const existingServices = Array.isArray(registration.services) ? registration.services : [];
+  return {
+    ...registration,
+    services: [...existingServices, ...services],
+  };
+}
+
 async function upsertAgent(input: { agentId: string; owner: string | null; uri: string | null; name?: string | null; description?: string | null; image?: string | null; category?: string; source: string; metadata?: JsonRecord; registration?: RegistrationFile }) {
   const now = new Date().toISOString();
-  const { data: existing, error } = await supabase.from("agents").select("id,metadata,is_first_party,source,category,indexed_at").eq("agent_id", input.agentId).maybeSingle();
+  const { data: existing, error } = await supabase
+    .from("agents")
+    .select("id,metadata,is_first_party,source,category,indexed_at")
+    .eq("agent_id", input.agentId)
+    .eq("chain", NETWORK)
+    .maybeSingle();
   if (error) throw new Error(error.message);
   if (existing?.is_first_party) return { skippedFirstParty: true, id: existing.id };
   const registration = input.registration || {};
   const capabilityStrings = [...new Set([input.category || inferCategory(registration), ...strings(registration.capabilities), ...strings(registration.skills), ...strings(registration.services)].map((v) => v.trim()).filter(Boolean))];
-  const row: Record<string, unknown> = { agent_id: input.agentId, owner: input.owner || null, uri: input.uri || "", name: input.name || null, description: input.description || null, image: input.image || null, chain: NETWORK, category: input.category || inferCategory(registration), source: existing?.source && existing.source !== "indexed" ? existing.source : "indexed", status: "unknown", is_first_party: false, indexed_at: existing?.indexed_at || now, last_indexed_at: now, metadata: { ...(existing?.metadata && typeof existing.metadata === "object" ? existing.metadata : {}), ...(input.metadata || {}), indexer: "agentmarket-testnet-indexer", network: NETWORK, chain_id: CHAIN_ID, last_source: input.source, last_indexed_at: now, ...(Object.keys(registration).length ? { registration } : {}) } };
+  const row: Record<string, unknown> = {
+    agent_id: input.agentId,
+    owner: input.owner || null,
+    uri: input.uri || "",
+    name: input.name || null,
+    description: input.description || null,
+    image: input.image || null,
+    chain: NETWORK,
+    category: input.category || inferCategory(registration),
+    source: existing?.source && existing.source !== "indexed" ? existing.source : "indexed",
+    status: "unknown",
+    is_first_party: false,
+    indexed_at: existing?.indexed_at || now,
+    last_indexed_at: now,
+    metadata: { ...(existing?.metadata && typeof existing.metadata === "object" ? existing.metadata : {}), ...(input.metadata || {}), indexer: "agentmarket-testnet-indexer", network: NETWORK, chain_id: CHAIN_ID, last_source: input.source, last_indexed_at: now, ...(Object.keys(registration).length ? { registration } : {}) },
+  };
   if (!existing || existing.source === "indexed") row.verification_status = "indexed";
   let dbId: string;
   if (existing) {
@@ -147,15 +190,37 @@ async function upsertAgent(input: { agentId: string; owner: string | null; uri: 
   }
   return { skippedFirstParty: false, id: dbId, capabilities: capabilityStrings.length };
 }
+
 async function enrichExternalAgent(agent: ExternalAgent) {
   let registration: RegistrationFile = {};
   if (agent.uri) {
     try { registration = await resolveRegistration(agent.uri); } catch (error) { registration = { metadata: { resolution_error: error instanceof Error ? error.message : String(error) } }; }
   }
-  const inferred = inferCategory(registration, `${agent.name || ""} ${agent.description || ""}`);
+  const merged = mergeRegistrationServices(registration, agent.services);
+  const inferred = inferCategory(merged, `${agent.name || ""} ${agent.description || ""}`);
   const category = inferred === "other" ? agent.category : inferred;
-  return await upsertAgent({ agentId: agent.agentId, owner: agent.owner, uri: agent.uri, name: agent.name || cleanString(registration.name) || null, description: agent.description || cleanString(registration.description) || null, image: agent.image || cleanString(registration.image) || null, category, source: "8004scan", metadata: { "8004scan": { reputation_score: agent.reputationScore, feedback_count: agent.feedbackCount, raw: agent.raw } }, registration });
+  return await upsertAgent({
+    agentId: agent.agentId,
+    owner: agent.owner,
+    uri: agent.uri,
+    name: agent.name || cleanString(merged.name) || null,
+    description: agent.description || cleanString(merged.description) || null,
+    image: agent.image || cleanString(merged.image) || null,
+    category,
+    source: "8004scan",
+    metadata: {
+      "8004scan": {
+        reputation_score: agent.reputationScore,
+        feedback_count: agent.feedbackCount,
+        registrations: agent.registrations,
+        services: agent.services,
+        raw: agent.raw,
+      },
+    },
+    registration: merged,
+  });
 }
+
 async function sync8004scan() {
   const apiKey = Deno.env.get("EIGHT004SCAN_API_KEY") || Deno.env.get("ERC8004SCAN_API_KEY") || "";
   let requests = 0, accepted = 0, upserted = 0, skipped = 0, failed = 0;
@@ -185,6 +250,7 @@ async function sync8004scan() {
   }
   return { requests, accepted, upserted, skipped_first_party: skipped, failed, errors: errors.slice(0, 25) };
 }
+
 async function syncChain() {
   const latest = await client.getBlockNumber();
   const { data: last, error } = await supabase.from("agent_registry_syncs").select("to_block").eq("network", NETWORK).eq("status", "completed").order("completed_at", { ascending: false }).limit(1).maybeSingle();
