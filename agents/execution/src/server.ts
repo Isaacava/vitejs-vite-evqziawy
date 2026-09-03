@@ -126,12 +126,37 @@ async function preflight(body: Record<string, unknown>) {
   const calls = buildSwapCalls(body, d);
   return { broadcast: false, agent: AGENT, network: NETWORK, chain_id: CHAIN_ID, job_id: jobId, targets: calls.map(c => c.to), selectors: calls.map(c => c.data.slice(0, 10)), recipient: walletAddress };
 }
+function capabilityDescriptor(jobId: number) {
+  const d = descriptor(jobId, (process.env.ALTANA_CAPABILITY_WALLET || process.env.ALTANA_SESSION_WALLET || process.env.ALTANA_SESSION_ADDRESS || "0x0000000000000000000000000000000000000000"));
+  return {
+    type: "agent-execution-capability-v1",
+    agent: AGENT,
+    execution: "altana-scoped-session",
+    wallet_provider: "altana",
+    authorization_model: "scoped_session",
+    network: NETWORK,
+    chain_id: CHAIN_ID,
+    protocol: "pancake-v3-swap",
+    preflight_path: "/preflight",
+    session_key_address: d.sessionAddress,
+    session_key_public_key: d.sessionPublicKey,
+    allowed_targets: d.allowedCalls,
+    allowed_selectors: d.allowedSelectors,
+    selectors_required: true,
+    private_key_exposed: false,
+    session_expiry: d.expiry,
+  };
+}
 function response(res: any, status: number, body: unknown) { const raw = JSON.stringify(body); res.writeHead(status, { "content-type": "application/json", "content-length": Buffer.byteLength(raw) }); res.end(raw); }
 const server = await import("node:http").then(({ createServer }) => createServer(async (req, res) => {
   try {
     const url = new URL(req.url || "/", "http://" + (req.headers.host || "127.0.0.1:" + PORT));
     if (req.method === "GET" && url.pathname === "/health") return response(res, 200, { status: "ok", agent: AGENT, network: NETWORK, chain_id: CHAIN_ID });
-    if (req.method === "GET" && url.pathname === "/execution-capabilities") return response(res, 200, { execution: "altana-scoped-session", wallet_provider: "altana", authorization_model: "scoped_session", protocol: "pancake-v3-swap", chain_id: CHAIN_ID, network: NETWORK, allowed_targets: addresses("ALTANA_ALLOWED_TARGETS"), allowed_selectors: selectors("ALTANA_ALLOWED_SELECTORS"), private_key_exposed: false });
+    if (req.method === "GET" && (url.pathname === "/execution-capabilities" || url.pathname === "/erc8183/execution-capabilities")) {
+      const requestedJobId = Number(url.searchParams.get("job_id") || url.searchParams.get("jobId") || 0);
+      if (!Number.isSafeInteger(requestedJobId) || requestedJobId <= 0) return response(res, 400, { error: "job_id is required" });
+      return response(res, 200, capabilityDescriptor(requestedJobId));
+    }
     if ((req.method === "POST" && (url.pathname === "/preflight" || url.pathname === "/execute-swap"))) {
       const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(Buffer.from(chunk));
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
