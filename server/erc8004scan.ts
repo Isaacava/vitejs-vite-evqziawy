@@ -24,24 +24,15 @@ type ExternalAgent = {
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" ? value as JsonRecord : {};
 }
-
 function stringValue(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
-
 function numberValue(value: unknown): number | null {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
-
-function booleanValue(value: unknown): boolean | null {
-  return typeof value === "boolean" ? value : null;
-}
-
-function arrayValue(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
+function booleanValue(value: unknown): boolean | null { return typeof value === "boolean" ? value : null; }
+function arrayValue(value: unknown): unknown[] { return Array.isArray(value) ? value : []; }
 function unwrapResults(body: unknown): unknown[] {
   if (Array.isArray(body)) return body;
   const root = record(body);
@@ -50,31 +41,20 @@ function unwrapResults(body: unknown): unknown[] {
     if (Array.isArray(nested)) return nested;
     if (nested && typeof nested === "object") {
       const deeper = record(nested);
-      for (const nestedKey of ["agents", "items", "results"]) {
-        if (Array.isArray(deeper[nestedKey])) return deeper[nestedKey] as unknown[];
-      }
+      for (const nestedKey of ["agents", "items", "results"]) if (Array.isArray(deeper[nestedKey])) return deeper[nestedKey] as unknown[];
     }
   }
   return [];
 }
-
 function normalizeService(value: unknown) {
   const service = record(value);
-  const endpoint = [service.endpoint, service.serviceEndpoint, service.url, service.uri]
-    .find((candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0) || "";
-  return {
-    name: stringValue(service.name, "unknown"),
-    endpoint,
-    ...(typeof service.version === "string" ? { version: service.version } : {}),
-    metadata: service,
-  };
+  const endpoint = [service.endpoint, service.serviceEndpoint, service.url, service.uri].find((candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0) || "";
+  return { name: stringValue(service.name, "unknown"), endpoint, ...(typeof service.version === "string" ? { version: service.version } : {}), metadata: service };
 }
-
 function normalizeAgent(value: unknown, index: number): ExternalAgent {
   const a = record(value);
   const chain = record(a.chain);
-  const rawRegistrations = arrayValue(a.registrations);
-  const registrations = rawRegistrations.flatMap((entry) => {
+  const registrations = arrayValue(a.registrations).flatMap((entry) => {
     const item = record(entry);
     const agentId = item.agentId ?? item.agent_id;
     const agentRegistry = stringValue(item.agentRegistry, stringValue(item.agent_registry, ""));
@@ -100,35 +80,37 @@ function normalizeAgent(value: unknown, index: number): ExternalAgent {
     source: "8004scan",
   };
 }
-
-export async function search8004scan(query: string, limit = 8): Promise<ExternalAgent[]> {
-  const q = query.trim();
-  if (!q) return [];
-
+async function request8004scan(path: string, params: Record<string, string>) {
   const apiKey = process.env.EIGHT004SCAN_API_KEY || process.env.ERC8004SCAN_API_KEY || "";
-  const url = new URL(`${BASE_URL}/agents/search/semantic`);
-  url.searchParams.set("q", q);
-  url.searchParams.set("limit", String(Math.min(Math.max(limit, 1), 24)));
-
+  const url = new URL(`${BASE_URL}${path}`);
+  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
   const headers: Record<string, string> = { Accept: "application/json" };
   if (apiKey) headers["X-API-Key"] = apiKey;
-
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 7000);
   try {
     const response = await fetch(url, { headers, signal: controller.signal });
     const text = await response.text();
     let body: unknown;
-    try {
-      body = JSON.parse(text);
-    } catch {
-      body = { raw: text };
-    }
-    if (!response.ok) throw new Error(`8004scan semantic search returned ${response.status}`);
-    return unwrapResults(body).map(normalizeAgent);
-  } finally {
-    clearTimeout(timer);
-  }
+    try { body = JSON.parse(text); } catch { body = { raw: text }; }
+    if (!response.ok) throw new Error(`8004scan returned ${response.status}`);
+    return body;
+  } finally { clearTimeout(timer); }
 }
-
+export async function search8004scan(query: string, limit = 8, chainId = 97): Promise<ExternalAgent[]> {
+  const q = query.trim();
+  if (!q) return [];
+  const body = await request8004scan("/agents/search/semantic", { q, limit: String(Math.min(Math.max(limit, 1), 24)), chainId: String(chainId) });
+  return unwrapResults(body).map(normalizeAgent).filter((agent) => agent.chain_id === null || agent.chain_id === chainId);
+}
+export async function get8004scanAgent(chainId: number, tokenId: string | number): Promise<ExternalAgent | null> {
+  const body = await request8004scan(`/agents/${encodeURIComponent(String(chainId))}/${encodeURIComponent(String(tokenId))}`, {});
+  const values = unwrapResults(body);
+  const normalized = normalizeAgent(values[0] ?? body, Number(tokenId));
+  return normalized.chain_id === null || normalized.chain_id === chainId ? normalized : null;
+}
+export async function list8004scanAgents(chainId = 97, page = 1, limit = 100): Promise<ExternalAgent[]> {
+  const body = await request8004scan("/agents", { chainId: String(chainId), page: String(Math.max(page, 1)), limit: String(Math.min(Math.max(limit, 1), 100)) });
+  return unwrapResults(body).map(normalizeAgent).filter((agent) => agent.chain_id === null || agent.chain_id === chainId);
+}
 export type { ExternalAgent };
