@@ -18,7 +18,8 @@ def payment_token()->str|None:
     try:return str(_ops.erc8183_client.payment_token)
     except Exception:return None
 def pending_path(job_id:int)->Path:return STORAGE_DIR/f"erc8183-pending-submission-{job_id}.json"
-def save_pending(job_id:int,deliverable:str,metadata:dict[str,Any])->None:STORAGE_DIR.mkdir(parents=True,exist_ok=True);pending_path(job_id).write_text(json.dumps({"job_id":job_id,"deliverable":deliverable,"metadata":metadata},separators=(",",":")),encoding="utf-8")
+def save_pending(job_id:int,deliverable:str,metadata:dict[str,Any])->None:
+    STORAGE_DIR.mkdir(parents=True,exist_ok=True);pending_path(job_id).write_text(json.dumps({"job_id":job_id,"deliverable":deliverable,"metadata":metadata},separators=(",",":")),encoding="utf-8")
 def load_pending(job_id:int):
     try:payload=json.loads(pending_path(job_id).read_text(encoding="utf-8"))
     except (FileNotFoundError,OSError,json.JSONDecodeError):return None
@@ -42,7 +43,7 @@ def _job_params(job:dict[str,Any])->dict[str,Any]:
     return merged
 def _job_matches_agent(job:dict[str,Any],has_pending:bool=False)->bool:
     if has_pending:return True
-    p=_job_params(job); marker=str(p.get("agent_kind") or p.get("task_kind") or p.get("agent") or p.get("strategy") or "").strip().lower()
+    p=_job_params(job);marker=str(p.get("agent_kind") or p.get("task_kind") or p.get("agent") or p.get("strategy") or "").strip().lower()
     if marker and marker not in {KIND,"yield","yield_optimisation","yield_optimization","agentmarket-yield-optimisation-test"}:return False
     opportunities=p.get("opportunities")
     return isinstance(opportunities,list) and len(opportunities)>0
@@ -85,16 +86,16 @@ app=FastAPI(title=f"{DISPLAY_NAME} Agent",lifespan=lifespan)
 @app.get("/health")
 async def health():return {"status":"ok","agent":KIND,"network":NETWORK,"chain_id":CHAIN_ID}
 @app.get("/erc8183")
-async def root():return {"status":"ok","service":f"{DISPLAY_NAME} ERC-8183 provider","agent_kind":KIND,"network":NETWORK,"chain_id":CHAIN_ID,"agent_address":provider_address(),"endpoints":{"health":"/erc8183/health","status":"/erc8183/status","runtime_status":"/erc8183/runtime-status","negotiate":"/erc8183/negotiate","execution_capabilities":"/execution-capabilities","preflight":"/preflight"}}
+async def root():return {"status":"ok","service":f"{DISPLAY_NAME} ERC-8183 provider","agent_kind":KIND,"network":NETWORK,"chain_id":CHAIN_ID,"agent_address":provider_address(),"endpoints":{"health":"/erc8183/health","status":"/erc8183/status","runtime_status":"/erc8183/runtime-status","negotiate":"/erc8183/negotiate","execution_capabilities":"/erc8183/execution-capabilities","preflight":"/erc8183/preflight"}}
 @app.get("/erc8183/health")
 async def erc_health():return {"status":"ok","service":DISPLAY_NAME,"network":NETWORK,"chain_id":CHAIN_ID}
 @app.get("/erc8183/status")
 async def status():return {"status":"ok","agent_kind":KIND,"agent_address":provider_address(),"commerce_address":str(_ops.erc8183_client.commerce.address),"router_address":str(_ops.erc8183_client.router.address),"policy_address":str(_ops.erc8183_client.policy.address),"service_price":SERVICE_PRICE,"payment_token":payment_token(),"poll_interval":POLL_INTERVAL,"execution_service":EXECUTION_URL}
 @app.get("/erc8183/runtime-status")
 async def runtime():return {"status":"ok","agent_kind":KIND,"agent_address":provider_address(),"last_funded_job":_runtime["last_funded_job"],"last_execution":_runtime["last_execution"],"last_submission":_runtime["last_submission"],"last_error":_runtime["last_error"]}
-@app.get("/execution-capabilities")
+@app.get("/erc8183/execution-capabilities")
 async def execution_capabilities():return proxy_get("/execution-capabilities")
-@app.post("/preflight")
+@app.post("/erc8183/preflight")
 async def preflight(request:Request):
     try:body=await request.json()
     except Exception as exc:raise HTTPException(status_code=400,detail="Invalid JSON") from exc
