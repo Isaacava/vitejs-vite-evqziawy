@@ -5,7 +5,6 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 from urllib.request import Request as UrlRequest, urlopen
-from fastapi import FastAPI, HTTPException, Request
 from bnbagent import EVMWalletProvider
 from bnbagent.erc8183 import ERC8183JobOps, funded_job_watcher
 from bnbagent.storage import LocalStorageProvider
@@ -28,25 +27,17 @@ def load_pending(job_id:int):
 def clear_pending(job_id:int)->None:
     try:pending_path(job_id).unlink()
     except FileNotFoundError:pass
-def _obj(value:Any)->dict[str,Any]:
-    if isinstance(value,dict):return value
-    if isinstance(value,str) and value.strip():
-        try:
-            parsed=json.loads(value)
-            return parsed if isinstance(parsed,dict) else {}
-        except json.JSONDecodeError:return {}
-    return {}
-def _job_params(job:dict[str,Any])->dict[str,Any]:
-    merged={**_obj(job.get("metadata")),**_obj(job.get("description"))}
-    nested=merged.get("params")
-    if isinstance(nested,dict):merged={**merged,**nested}
-    return merged
+def _job_provider(job:dict[str,Any])->str:
+    for key in ("provider","providerAddress","provider_address"):
+        value=job.get(key)
+        if value is not None and str(value).strip():return str(value).strip()
+    return ""
 def _job_matches_agent(job:dict[str,Any],has_pending:bool=False)->bool:
     if has_pending:return True
-    p=_job_params(job);marker=str(p.get("agent_kind") or p.get("task_kind") or p.get("agent") or p.get("strategy") or "").strip().lower()
-    if marker and marker not in {KIND,"yield","yield_optimisation","yield_optimization","agentmarket-yield-optimisation-test"}:return False
-    opportunities=p.get("opportunities")
-    return isinstance(opportunities,list) and len(opportunities)>0
+    assigned=_job_provider(job)
+    if not assigned:
+        logging.warning("%s funded job=%s has no provider assignment in watcher payload; refusing to execute",DISPLAY_NAME,job.get("jobId")); return False
+    return assigned.lower()==provider_address().lower()
 async def submit(job_id:int,deliverable:str,metadata:dict[str,Any]):
     save_pending(job_id,deliverable,metadata);result=await _ops.submit_result(job_id,deliverable);tx_hash=getattr(result,"hash",None)
     if tx_hash is None and isinstance(result,dict):tx_hash=result.get("hash") or result.get("tx_hash")
@@ -55,11 +46,9 @@ async def submit(job_id:int,deliverable:str,metadata:dict[str,Any]):
 async def on_funded(job:dict[str,Any])->None:
     try:job_id=int(job.get("jobId"))
     except (TypeError,ValueError):return
-    _runtime["last_funded_job"]={"timestamp":int(time.time()),"job_id":job_id}
-    pending=load_pending(job_id)
+    _runtime["last_funded_job"]={"timestamp":int(time.time()),"job_id":job_id};pending=load_pending(job_id)
     if not _job_matches_agent(job,has_pending=pending is not None):
-        logging.info("%s ignoring unrelated funded job=%s",DISPLAY_NAME,job_id)
-        return
+        logging.info("%s ignoring funded job=%s because on-chain provider does not match this agent",DISPLAY_NAME,job_id);return
     if pending is not None:deliverable,metadata=pending
     else:module=importlib.import_module("app.agent.main");deliverable,metadata=await asyncio.to_thread(module.fulfill_job,job)
     status=str(metadata.get("execution_status") or "").lower()
