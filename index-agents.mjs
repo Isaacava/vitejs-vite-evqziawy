@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { createPublicClient, http } from "viem";
-import { bsc } from "viem/chains";
+import { bscTestnet } from "viem/chains";
 import zlib from "node:zlib";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -14,7 +14,7 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const IDENTITY_REGISTRY_ADDRESS = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432";
+const IDENTITY_REGISTRY_ADDRESS = "0x8004A818BFB912233c491871b3d84c89A494BD9e";
 
 const IDENTITY_REGISTRY_ABI = [
   { inputs: [], name: "totalSupply", outputs: [{ internalType: "uint256", name: "", type: "uint256" }], stateMutability: "view", type: "function" },
@@ -23,8 +23,8 @@ const IDENTITY_REGISTRY_ABI = [
 ];
 
 const client = createPublicClient({
-  chain: bsc,
-  transport: http("https://bsc.publicnode.com"),
+  chain: bscTestnet,
+  transport: http("https://bsc-testnet-rpc.publicnode.com"),
   batch: { multicall: true },
 });
 
@@ -237,7 +237,7 @@ async function processAgent(id) {
       name: meta.name || null,
       description: meta.description || null,
       image: meta.image || null,
-      chain: "bsc",
+      chain: "bsc-testnet",
       category,
     });
 
@@ -258,7 +258,7 @@ async function main() {
   const endId = parseInt(process.env.END_ID || "2000", 10);
   const concurrency = parseInt(process.env.CONCURRENCY || "8", 10);
 
-  console.log(`Indexing agent IDs ${startId}–${endId} (concurrency: ${concurrency})`);
+  console.log(`Indexing BSC Testnet agent IDs ${startId}–${endId} (concurrency: ${concurrency})`);
   console.log(`Registry: ${IDENTITY_REGISTRY_ADDRESS}`);
 
   let indexed = 0;
