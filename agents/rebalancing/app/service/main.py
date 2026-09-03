@@ -28,6 +28,24 @@ def load_pending(job_id:int):
 def clear_pending(job_id:int)->None:
     try:pending_path(job_id).unlink()
     except FileNotFoundError:pass
+def _obj(value:Any)->dict[str,Any]:
+    if isinstance(value,dict):return value
+    if isinstance(value,str) and value.strip():
+        try:
+            parsed=json.loads(value)
+            return parsed if isinstance(parsed,dict) else {}
+        except json.JSONDecodeError:return {}
+    return {}
+def _job_params(job:dict[str,Any])->dict[str,Any]:
+    merged={**_obj(job.get("metadata")),**_obj(job.get("description"))}
+    nested=merged.get("params")
+    if isinstance(nested,dict):merged={**merged,**nested}
+    return merged
+def _job_matches_agent(job:dict[str,Any],has_pending:bool=False)->bool:
+    if has_pending:return True
+    p=_job_params(job); marker=str(p.get("agent_kind") or p.get("task_kind") or p.get("agent") or p.get("strategy") or "").strip().lower()
+    if marker and marker not in {KIND,"rebalancing","rebalancing_agent","agentmarket-rebalancing-test"}:return False
+    return all(k in p for k in ("current_tick","tick_lower","tick_upper"))
 async def submit(job_id:int,deliverable:str,metadata:dict[str,Any]):
     save_pending(job_id,deliverable,metadata); result=await _ops.submit_result(job_id,deliverable); tx_hash=getattr(result,"hash",None)
     if tx_hash is None and isinstance(result,dict):tx_hash=result.get("hash") or result.get("tx_hash")
@@ -37,16 +55,16 @@ async def on_funded(job:dict[str,Any])->None:
     try:job_id=int(job.get("jobId"))
     except (TypeError,ValueError):logging.warning("%s funded callback missing valid jobId",DISPLAY_NAME);return
     _runtime["last_funded_job"]={"timestamp":int(time.time()),"job_id":job_id}
-    try:
-        pending=load_pending(job_id)
-        if pending is not None:deliverable,metadata=pending
-        else:
-            module=importlib.import_module("app.agent.main"); deliverable,metadata=await asyncio.to_thread(module.fulfill_job,job)
-        status=str(metadata.get("execution_status") or "").lower()
-        if status not in {"observed","evaluated","planned","executed"}:raise RuntimeError("Agent did not produce an accepted execution status")
-        _runtime["last_execution"]={"timestamp":int(time.time()),"job_id":job_id,"status":status,"tx_hash":metadata.get("transaction_hash")}; tx_hash=await submit(job_id,deliverable,metadata); _runtime["last_submission"]={"timestamp":int(time.time()),"job_id":job_id,"tx_hash":tx_hash}; _runtime["last_error"]=None
-    except Exception as exc:_runtime["last_error"]=str(exc); logging.exception("%s funded job processing failed job=%s",DISPLAY_NAME,job_id); raise
-
+    pending=load_pending(job_id)
+    if not _job_matches_agent(job,has_pending=pending is not None):
+        logging.info("%s ignoring unrelated funded job=%s",DISPLAY_NAME,job_id)
+        return
+    if pending is not None:deliverable,metadata=pending
+    else:
+        module=importlib.import_module("app.agent.main"); deliverable,metadata=await asyncio.to_thread(module.fulfill_job,job)
+    status=str(metadata.get("execution_status") or "").lower()
+    if status not in {"observed","evaluated","planned","executed"}:raise RuntimeError("Agent did not produce an accepted execution status")
+    _runtime["last_execution"]={"timestamp":int(time.time()),"job_id":job_id,"status":status,"tx_hash":metadata.get("transaction_hash")}; tx_hash=await submit(job_id,deliverable,metadata); _runtime["last_submission"]={"timestamp":int(time.time()),"job_id":job_id,"tx_hash":tx_hash}; _runtime["last_error"]=None
 def proxy_get(path:str)->dict[str,Any]:
     with urlopen(EXECUTION_URL+path,timeout=float(os.getenv("ALTANA_EXECUTION_TIMEOUT","10"))) as response:payload=json.loads(response.read().decode("utf-8"))
     if not isinstance(payload,dict):raise RuntimeError("Altana execution service returned invalid capability response")
