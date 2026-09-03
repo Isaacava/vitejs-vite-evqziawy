@@ -37,3 +37,5 @@ jobs:
       - name: Compile ${{ matrix.agent }} runtime
         working-directory: agents/${{ matrix.agent }}
         run: python -m compileall -q app
+      - name: Build ${{ matrix.agent }} container exactly like Railway
+        run: docker build --pull -f agents/${{ matrix.agent }}/Dockerfile .

@@ -11,5 +11,8 @@ COPY agents/health/ ./agents/health/
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONPATH=/app/agents/health
+ENV PORT=8000
 
-CMD ["python", "-m", "uvicorn", "app.service.main:app", "--host", "0.0.0.0", "--port", "8080"]
+EXPOSE 8000
+
+CMD ["sh", "-c", "exec python -m uvicorn app.service.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

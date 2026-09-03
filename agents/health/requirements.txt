@@ -1,4 +1,4 @@
-bnbagent[server]
+bnbagent==0.4.0
 fastapi
 uvicorn
 pytest
