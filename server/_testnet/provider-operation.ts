@@ -72,7 +72,7 @@ function urlIsHttp(value: unknown): value is string {
 function normalizeOperation(action: ProviderOperation["action"], value: Record<string, unknown>): ProviderOperation | null {
   const endpoint = typeof value.endpoint === "string" ? value.endpoint.trim() : "";
   if (!urlIsHttp(endpoint)) return null;
-  const transport = typeof value.transport === "string" ? value.transport : "http";
+  const transport = typeof value.transport === "string" ? value.transport.toLowerCase() : "http";
   const declaredMethods = methods(value.methods);
   const method = declaredMethods.find((candidate) => ["GET", "POST", "PUT", "PATCH"].includes(candidate)) || (transport === "mcp" ? "POST" : "POST");
   return {
@@ -87,12 +87,8 @@ function normalizeOperation(action: ProviderOperation["action"], value: Record<s
 }
 
 function explicitOperations(metadata: Record<string, unknown>, action: ProviderOperation["action"]) {
-  const values = [
-    metadata.operations,
-    metadata.provider_operations,
-    metadata.actions,
-    metadata.services,
-  ].flatMap((candidate) => Array.isArray(candidate) ? candidate : []);
+  const values = [metadata.operations, metadata.provider_operations, metadata.actions, metadata.services]
+    .flatMap((candidate) => Array.isArray(candidate) ? candidate : []);
   return values.flatMap((candidate) => {
     if (!candidate || typeof candidate !== "object") return [];
     const value = candidate as Record<string, unknown>;
@@ -117,21 +113,16 @@ export async function resolveProviderOperation(endpoint: EndpointRecord, action:
     .find(Boolean) as ProviderOperation | undefined;
   if (direct) return direct;
 
-  const snapshot = await discoverAgentCapabilities({
-    id: "runtime",
-    agent_id: "runtime",
-    metadata: endpointMetadata,
-  }, [endpoint as Record<string, unknown>]);
-
+  const snapshot = await discoverAgentCapabilities({ id: "runtime", agent_id: "runtime", metadata: endpointMetadata }, [endpoint as Record<string, unknown>]);
   const discovered = snapshot.capabilities
     .filter((capability) => actionMatches(action, capability as unknown as Record<string, unknown>))
     .map((capability) => normalizeOperation(action, capability as unknown as Record<string, unknown>))
     .find(Boolean) as ProviderOperation | undefined;
-
   if (discovered) return discovered;
 
-  // ERC-8183 remains a standards-based fallback for providers that explicitly
-  // advertise an ERC-8183 service but do not publish a separate operation card.
+  // ERC-8183 remains a standards-based fallback only when the provider explicitly
+  // advertises that protocol. AgentMarket never assumes a provider is ERC-8183 from
+  // its name, category, or identity alone.
   if (endpoint.protocol.toLowerCase() === "erc8183") {
     const base = endpoint.endpoint_url.replace(/\/+$/, "");
     if (action === "quote") return {
@@ -144,35 +135,49 @@ export async function resolveProviderOperation(endpoint: EndpointRecord, action:
       metadata: { fallback: "erc8183" },
     };
   }
-
   return null;
 }
 
 function selectBody(action: ProviderOperation["action"], body: Record<string, unknown>) {
-  return {
-    action,
-    ...body,
-    request: body,
-  };
+  return { action, ...body, request: body };
+}
+
+function responseBodyEnvelope(body: unknown) {
+  const root = object(body);
+  for (const key of ["data", "result", "response", "quote", "output", "job", "operation_result"]) {
+    if (root[key] && typeof root[key] === "object") return root[key];
+  }
+  return body;
 }
 
 async function requestJson(operation: ProviderOperation, body: Record<string, unknown>): Promise<OperationResponse> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    const response = await fetch(operation.endpoint, {
+    let endpoint = operation.endpoint;
+    let requestBody: string | undefined;
+    if (operation.method === "GET") {
+      const url = new URL(endpoint);
+      for (const [key, value] of Object.entries(body)) {
+        if (value === undefined || value === null) continue;
+        if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+          url.searchParams.set(key, String(value));
+        }
+      }
+      endpoint = url.toString();
+    } else {
+      requestBody = JSON.stringify(selectBody(operation.action, body));
+    }
+    const response = await fetch(endpoint, {
       method: operation.method,
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-      body: operation.method === "GET" ? undefined : JSON.stringify(selectBody(operation.action, body)),
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: requestBody,
       signal: controller.signal,
     });
     const raw = await response.text();
     let parsed: unknown = {};
     try { parsed = raw ? JSON.parse(raw) : {}; } catch { parsed = { raw }; }
-    return { status: response.status, body: parsed, endpoint: operation.endpoint, method: operation.method, transport: operation.transport };
+    return { status: response.status, body: parsed, endpoint, method: operation.method, transport: operation.transport };
   } finally {
     clearTimeout(timer);
   }
@@ -181,22 +186,12 @@ async function requestJson(operation: ProviderOperation, body: Record<string, un
 async function requestMcp(operation: ProviderOperation, body: Record<string, unknown>): Promise<OperationResponse> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  const toolName = typeof object(operation.metadata).tool_name === "string"
-    ? String(object(operation.metadata).tool_name)
-    : operation.name;
+  const toolName = typeof object(operation.metadata).tool_name === "string" ? String(object(operation.metadata).tool_name) : operation.name;
   try {
     const response = await fetch(operation.endpoint, {
       method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: `agentmarket-${Date.now()}`,
-        method: "tools/call",
-        params: { name: toolName, arguments: selectBody(operation.action, body) },
-      }),
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: `agentmarket-${Date.now()}`, method: "tools/call", params: { name: toolName, arguments: selectBody(operation.action, body) } }),
       signal: controller.signal,
     });
     const raw = await response.text();
@@ -209,11 +204,7 @@ async function requestMcp(operation: ProviderOperation, body: Record<string, unk
 }
 
 export async function invokeProviderOperation(operation: ProviderOperation, body: Record<string, unknown>): Promise<OperationResponse> {
-  const result = operation.transport === "mcp"
-    ? await requestMcp(operation, body)
-    : await requestJson(operation, body);
-  if (result.status < 200 || result.status >= 300) {
-    throw new Error(`Provider ${operation.action} returned HTTP ${result.status} from ${result.endpoint}`);
-  }
-  return result;
+  const result = operation.transport === "mcp" ? await requestMcp(operation, body) : await requestJson(operation, body);
+  if (result.status < 200 || result.status >= 300) throw new Error(`Provider ${operation.action} returned HTTP ${result.status} from ${result.endpoint}`);
+  return { ...result, body: responseBodyEnvelope(result.body) };
 }
