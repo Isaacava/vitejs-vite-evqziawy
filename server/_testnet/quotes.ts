@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { createPublicClient, formatUnits, http, keccak256, stringToHex, type Address } from "viem";
 import { bscTestnet } from "viem/chains";
 import { getAuthenticatedUser } from "../../src/server/authHandlers.js";
-import { invokeProviderOperation, resolveProviderOperation } from "../../server/_testnet/provider-operation.js";
+import { invokeProviderOperation, resolveProviderOperation } from "./provider-operation.js";
 
 const TESTNET_CHAIN_ID = 97;
 const TESTNET_ENVIRONMENT = "testnet";
@@ -77,9 +77,7 @@ async function paymentContext(wallet: Address) {
 
 async function discoverQuoteOperation(endpoint: StoredEndpoint) {
   const operation = await resolveProviderOperation(endpoint, "quote");
-  if (!operation) {
-    throw new Error(`Provider does not advertise a quote operation for ${endpoint.endpoint_url}. AgentMarket will not guess an execution contract for this provider.`);
-  }
+  if (!operation) throw new Error(`Provider does not advertise a quote operation for ${endpoint.endpoint_url}. AgentMarket will not guess an execution contract for this provider.`);
   return operation;
 }
 
@@ -93,9 +91,7 @@ async function requestProviderQuote(endpoint: StoredEndpoint, taskDescription: s
     network: "bsc-testnet",
     environment: TESTNET_ENVIRONMENT,
   });
-  if (!result.body || typeof result.body !== "object") {
-    throw new Error(`Provider quote endpoint ${operation.endpoint} returned a non-JSON response`);
-  }
+  if (!result.body || typeof result.body !== "object") throw new Error(`Provider quote endpoint ${operation.endpoint} returned a non-JSON response`);
   return { quote: result.body as ProviderQuote, operation };
 }
 
