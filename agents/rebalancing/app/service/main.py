@@ -65,8 +65,12 @@ async def on_funded(job:dict[str,Any])->None:
     status=str(metadata.get("execution_status") or "").lower()
     if status not in {"observed","evaluated","planned","executed"}:raise RuntimeError("Agent did not produce an accepted execution status")
     _runtime["last_execution"]={"timestamp":int(time.time()),"job_id":job_id,"status":status,"tx_hash":metadata.get("transaction_hash")}; tx_hash=await submit(job_id,deliverable,metadata); _runtime["last_submission"]={"timestamp":int(time.time()),"job_id":job_id,"tx_hash":tx_hash}; _runtime["last_error"]=None
-def proxy_get(path:str)->dict[str,Any]:
-    with urlopen(EXECUTION_URL+path,timeout=float(os.getenv("ALTANA_EXECUTION_TIMEOUT","10"))) as response:payload=json.loads(response.read().decode("utf-8"))
+def proxy_get(path:str,query:dict[str,str]|None=None)->dict[str,Any]:
+    url=EXECUTION_URL+path
+    if query:
+        from urllib.parse import urlencode
+        url += ("&" if "?" in url else "?") + urlencode({k:v for k,v in query.items() if v})
+    with urlopen(url,timeout=float(os.getenv("ALTANA_EXECUTION_TIMEOUT","10"))) as response:payload=json.loads(response.read().decode("utf-8"))
     if not isinstance(payload,dict):raise RuntimeError("Altana execution service returned invalid capability response")
     return payload
 def proxy_post(path:str,body:dict[str,Any])->dict[str,Any]:
@@ -94,7 +98,11 @@ async def status():return {"status":"ok","agent_kind":KIND,"agent_address":provi
 @app.get("/erc8183/runtime-status")
 async def runtime():return {"status":"ok","agent_kind":KIND,"agent_address":provider_address(),"watcher":{"created":_watcher_task is not None,"running":bool(_watcher_task and not _watcher_task.done()),"started_at":_runtime["watcher_started_at"],"poll_interval_seconds":POLL_INTERVAL},"last_funded_job":_runtime["last_funded_job"],"last_execution":_runtime["last_execution"],"last_submission":_runtime["last_submission"],"last_error":_runtime["last_error"]}
 @app.get("/erc8183/execution-capabilities")
-async def execution_capabilities():return proxy_get("/execution-capabilities")
+async def execution_capabilities(request:Request):
+    job_id=request.query_params.get("job_id") or request.query_params.get("jobId")
+    if not job_id:return JSONResponse({"error":"job_id is required"},status_code=400)
+    try:return proxy_get("/execution-capabilities",{"job_id":job_id})
+    except Exception as exc:raise HTTPException(status_code=502,detail=str(exc)) from exc
 @app.post("/erc8183/preflight")
 async def preflight(request:Request):
     try:body=await request.json()
