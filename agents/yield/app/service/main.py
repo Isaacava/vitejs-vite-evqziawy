@@ -10,7 +10,6 @@ from bnbagent import EVMWalletProvider
 from bnbagent.erc8183 import ERC8183JobOps, funded_job_watcher
 from bnbagent.storage import LocalStorageProvider
 from app.service.config import validate_runtime_config
-# Runtime structure mirrors the Rebalancing provider and exposes the same ERC-8183 + Altana contract.
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 KIND=os.getenv("AGENT_KIND","defi_agent").strip().lower(); DISPLAY_NAME=os.getenv("AGENT_DISPLAY_NAME",KIND.replace("_"," ").title()); config=validate_runtime_config(); NETWORK=config["network"]; CHAIN_ID=97; SERVICE_PRICE=config["service_price"]; POLL_INTERVAL=config["poll_interval"]; STORAGE_DIR=Path(os.getenv("STORAGE_LOCAL_PATH") or ".agent-data"); EXECUTION_URL=os.getenv("ALTANA_EXECUTION_INTERNAL_URL","http://127.0.0.1:8788").rstrip("/")
 _wallet=EVMWalletProvider(password=os.environ["WALLET_PASSWORD"],private_key=os.environ.get("PRIVATE_KEY")); _storage=LocalStorageProvider(base_dir=str(STORAGE_DIR)); _ops=ERC8183JobOps(_wallet,network=NETWORK,storage_provider=_storage,service_price=SERVICE_PRICE,agent_url=config["endpoint"]); _runtime:dict[str,Any]={"watcher_started_at":None,"last_funded_job":None,"last_execution":None,"last_submission":None,"last_error":None}
@@ -28,6 +27,25 @@ def load_pending(job_id:int):
 def clear_pending(job_id:int)->None:
     try:pending_path(job_id).unlink()
     except FileNotFoundError:pass
+def _obj(value:Any)->dict[str,Any]:
+    if isinstance(value,dict):return value
+    if isinstance(value,str) and value.strip():
+        try:
+            parsed=json.loads(value)
+            return parsed if isinstance(parsed,dict) else {}
+        except json.JSONDecodeError:return {}
+    return {}
+def _job_params(job:dict[str,Any])->dict[str,Any]:
+    merged={**_obj(job.get("metadata")),**_obj(job.get("description"))}
+    nested=merged.get("params")
+    if isinstance(nested,dict):merged={**merged,**nested}
+    return merged
+def _job_matches_agent(job:dict[str,Any],has_pending:bool=False)->bool:
+    if has_pending:return True
+    p=_job_params(job); marker=str(p.get("agent_kind") or p.get("task_kind") or p.get("agent") or p.get("strategy") or "").strip().lower()
+    if marker and marker not in {KIND,"yield","yield_optimisation","yield_optimization","agentmarket-yield-optimisation-test"}:return False
+    opportunities=p.get("opportunities")
+    return isinstance(opportunities,list) and len(opportunities)>0
 async def submit(job_id:int,deliverable:str,metadata:dict[str,Any]):
     save_pending(job_id,deliverable,metadata);result=await _ops.submit_result(job_id,deliverable);tx_hash=getattr(result,"hash",None)
     if tx_hash is None and isinstance(result,dict):tx_hash=result.get("hash") or result.get("tx_hash")
@@ -38,19 +56,21 @@ async def on_funded(job:dict[str,Any])->None:
     except (TypeError,ValueError):return
     _runtime["last_funded_job"]={"timestamp":int(time.time()),"job_id":job_id}
     pending=load_pending(job_id)
+    if not _job_matches_agent(job,has_pending=pending is not None):
+        logging.info("%s ignoring unrelated funded job=%s",DISPLAY_NAME,job_id)
+        return
     if pending is not None:deliverable,metadata=pending
-    else:
-        module=importlib.import_module("app.agent.main");deliverable,metadata=await asyncio.to_thread(module.fulfill_job,job)
+    else:module=importlib.import_module("app.agent.main");deliverable,metadata=await asyncio.to_thread(module.fulfill_job,job)
     status=str(metadata.get("execution_status") or "").lower()
     if status not in {"observed","evaluated","planned","executed"}:raise RuntimeError("Agent did not produce an accepted execution status")
-    _runtime["last_execution"]={"timestamp":int(time.time()),"job_id":job_id,"status":status,"tx_hash":metadata.get("transaction_hash")};tx_hash=await submit(job_id,deliverable,metadata);_runtime["last_submission"]={"timestamp":int(time.time()),"job_id":job_id,"tx_hash":tx_hash}
+    _runtime["last_execution"]={"timestamp":int(time.time()),"job_id":job_id,"status":status,"tx_hash":metadata.get("transaction_hash")};tx_hash=await submit(job_id,deliverable,metadata);_runtime["last_submission"]={"timestamp":int(time.time()),"job_id":job_id,"tx_hash":tx_hash};_runtime["last_error"]=None
 def proxy_get(path:str)->dict[str,Any]:
-    with urlopen(EXECUTION_URL+path,timeout=10) as response:payload=json.loads(response.read().decode())
+    with urlopen(EXECUTION_URL+path,timeout=float(os.getenv("ALTANA_EXECUTION_TIMEOUT","10"))) as response:payload=json.loads(response.read().decode("utf-8"))
     if not isinstance(payload,dict):raise RuntimeError("invalid execution response")
     return payload
 def proxy_post(path:str,body:dict[str,Any])->dict[str,Any]:
-    request=UrlRequest(EXECUTION_URL+path,data=json.dumps(body).encode(),headers={"content-type":"application/json"},method="POST")
-    with urlopen(request,timeout=30) as response:payload=json.loads(response.read().decode())
+    request=UrlRequest(EXECUTION_URL+path,data=json.dumps(body).encode("utf-8"),headers={"content-type":"application/json"},method="POST")
+    with urlopen(request,timeout=float(os.getenv("ALTANA_EXECUTION_TIMEOUT","30"))) as response:payload=json.loads(response.read().decode("utf-8"))
     if not isinstance(payload,dict):raise RuntimeError("invalid execution response")
     if payload.get("error"):raise RuntimeError(str(payload["error"]))
     return payload
@@ -65,7 +85,7 @@ app=FastAPI(title=f"{DISPLAY_NAME} Agent",lifespan=lifespan)
 @app.get("/health")
 async def health():return {"status":"ok","agent":KIND,"network":NETWORK,"chain_id":CHAIN_ID}
 @app.get("/erc8183")
-async def root():return {"status":"ok","service":f"{DISPLAY_NAME} ERC-8183 provider","agent_kind":KIND,"network":NETWORK,"chain_id":CHAIN_ID,"agent_address":provider_address(),"endpoints":{"execution_capabilities":"/execution-capabilities","preflight":"/preflight"}}
+async def root():return {"status":"ok","service":f"{DISPLAY_NAME} ERC-8183 provider","agent_kind":KIND,"network":NETWORK,"chain_id":CHAIN_ID,"agent_address":provider_address(),"endpoints":{"health":"/erc8183/health","status":"/erc8183/status","runtime_status":"/erc8183/runtime-status","negotiate":"/erc8183/negotiate","execution_capabilities":"/execution-capabilities","preflight":"/preflight"}}
 @app.get("/erc8183/health")
 async def erc_health():return {"status":"ok","service":DISPLAY_NAME,"network":NETWORK,"chain_id":CHAIN_ID}
 @app.get("/erc8183/status")
@@ -76,12 +96,14 @@ async def runtime():return {"status":"ok","agent_kind":KIND,"agent_address":prov
 async def execution_capabilities():return proxy_get("/execution-capabilities")
 @app.post("/preflight")
 async def preflight(request:Request):
-    body=await request.json()
+    try:body=await request.json()
+    except Exception as exc:raise HTTPException(status_code=400,detail="Invalid JSON") from exc
     if not isinstance(body,dict):raise HTTPException(status_code=400,detail="Request body must be an object")
     try:return proxy_post("/preflight",body)
     except Exception as exc:raise HTTPException(status_code=409,detail=str(exc)) from exc
 @app.post("/erc8183/negotiate")
 async def negotiate(request:Request):
-    data=await request.json();
+    try:data=await request.json()
+    except Exception as exc:raise HTTPException(status_code=400,detail="Invalid JSON") from exc
     if not isinstance(data,dict):raise HTTPException(status_code=400,detail="Request body must be an object")
     return {"accepted":True,"quote_id":f"{KIND}-{int(time.time())}","price":str(SERVICE_PRICE),"currency":payment_token() or "testnet-settlement-token","quote_expires_at":int(time.time())+300,"chain_id":CHAIN_ID,"network":NETWORK,"environment":"testnet","provider_address":provider_address(),"task_description":data.get("task_description") or ""}
