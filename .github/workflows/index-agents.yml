@@ -4,15 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       start_id:
-        description: "Start agent ID"
+        description: "Start BSC Testnet agent ID"
         required: false
         default: "1"
       end_id:
-        description: "End agent ID"
+        description: "End BSC Testnet agent ID"
         required: false
         default: "2000"
-  schedule:
-    - cron: "0 4 * * *"
 
 jobs:
   index:
@@ -28,7 +26,7 @@ jobs:
       - name: Install dependencies
         run: npm install @supabase/supabase-js viem
 
-      - name: Run indexer
+      - name: Run BSC Testnet indexer
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
