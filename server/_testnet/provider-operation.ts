@@ -55,8 +55,11 @@ function actionMatches(action: ProviderOperation["action"], capability: Record<s
 }
 
 function methods(value: unknown) {
+  if (typeof value === "string") return [value.trim().toUpperCase()];
   if (!Array.isArray(value)) return [] as string[];
-  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.toUpperCase());
+  return value
+    .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    .map((item) => item.toUpperCase());
 }
 
 function urlIsHttp(value: unknown): value is string {
@@ -70,29 +73,42 @@ function urlIsHttp(value: unknown): value is string {
 }
 
 function normalizeOperation(action: ProviderOperation["action"], value: Record<string, unknown>): ProviderOperation | null {
-  const endpoint = typeof value.endpoint === "string" ? value.endpoint.trim() : "";
-  if (!urlIsHttp(endpoint)) return null;
-  const transport = typeof value.transport === "string" ? value.transport.toLowerCase() : "http";
-  const declaredMethods = methods(value.methods);
-  const method = declaredMethods.find((candidate) => ["GET", "POST", "PUT", "PATCH"].includes(candidate)) || (transport === "mcp" ? "POST" : "POST");
+  const endpoint = [value.endpoint, value.endpoint_url, value.url, value.serviceEndpoint, value.service_endpoint, value.uri]
+    .find((candidate): candidate is string => urlIsHttp(candidate)) || "";
+  if (!endpoint) return null;
+
+  const transport = typeof value.transport === "string"
+    ? value.transport.trim().toLowerCase()
+    : typeof value.protocol === "string"
+      ? value.protocol.trim().toLowerCase()
+      : "http";
+  const declaredMethods = methods(value.methods ?? value.method);
+  const method = declaredMethods.find((candidate) => ["GET", "POST", "PUT", "PATCH", "DELETE"].includes(candidate)) || (transport === "mcp" ? "POST" : "POST");
+  const inputSchema = value.input_schema ?? value.inputSchema ?? value.request_schema ?? value.requestSchema ?? null;
+
   return {
     action,
     endpoint,
     method,
     transport,
     name: typeof value.name === "string" && value.name.trim() ? value.name.trim() : action,
-    inputSchema: value.input_schema && typeof value.input_schema === "object" ? value.input_schema as Record<string, unknown> : null,
+    inputSchema: inputSchema && typeof inputSchema === "object" ? inputSchema as Record<string, unknown> : null,
     metadata: value.metadata && typeof value.metadata === "object" ? value.metadata as Record<string, unknown> : {},
   };
 }
 
 function explicitOperations(metadata: Record<string, unknown>, action: ProviderOperation["action"]) {
-  const values = [metadata.operations, metadata.provider_operations, metadata.actions, metadata.services]
-    .flatMap((candidate) => Array.isArray(candidate) ? candidate : []);
+  const values = [
+    metadata.operations,
+    metadata.provider_operations,
+    metadata.providerOperations,
+    metadata.actions,
+    metadata.services,
+  ].flatMap((candidate) => Array.isArray(candidate) ? candidate : []);
   return values.flatMap((candidate) => {
     if (!candidate || typeof candidate !== "object") return [];
     const value = candidate as Record<string, unknown>;
-    const declaredAction = text(value.action || value.operation || value.name || value.kind);
+    const declaredAction = text(value.action || value.operation || value.name || value.kind || value.capability || value.skill);
     const actionMatch = action === "quote"
       ? /(quote|pricing|price|estimate|negotiate|cost)/i.test(declaredAction)
       : action === "execute"
