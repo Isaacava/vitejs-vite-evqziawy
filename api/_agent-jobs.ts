@@ -8,6 +8,7 @@ const TRANSITIONS: Record<string, Record<string, string>> = {
   accepted: { start: "in_progress" },
   in_progress: { submit: "submitted" },
 };
+const TESTNET_CHAIN = "bsc-testnet";
 
 function serverClient() {
   const url = process.env.SUPABASE_URL;
@@ -31,9 +32,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (req.method === "GET") {
       if (!agentId) return res.status(400).json({ error: "agent_id is required" });
-      const { data: agent, error: agentError } = await supabase.from("agents").select("id,agent_id,name,status,verification_status").eq("agent_id", agentId).maybeSingle();
+      const { data: agent, error: agentError } = await supabase
+        .from("agents")
+        .select("id,agent_id,name,status,verification_status,chain")
+        .eq("agent_id", agentId)
+        .eq("chain", TESTNET_CHAIN)
+        .maybeSingle();
       if (agentError) throw new Error(agentError.message);
-      if (!agent) return res.status(404).json({ error: "Agent not found" });
+      if (!agent) return res.status(404).json({ error: "Testnet agent not found" });
 
       const { data: jobs, error: jobsError } = await supabase
         .from("jobs")
@@ -43,7 +49,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .order("created_at", { ascending: false });
       if (jobsError) throw new Error(jobsError.message);
 
-      return res.status(200).json({ agent, jobs: jobs || [] });
+      return res.status(200).json({ network: TESTNET_CHAIN, agent, jobs: jobs || [] });
     }
 
     if (req.method !== "POST") {
@@ -59,14 +65,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!jobId) return res.status(400).json({ error: "job_id is required" });
     if (!ACTIONS.has(action)) return res.status(400).json({ error: "Unsupported agent action" });
 
-    const { data: agent, error: agentError } = await supabase.from("agents").select("id,agent_id,name").eq("agent_id", agentId).maybeSingle();
+    const { data: agent, error: agentError } = await supabase
+      .from("agents")
+      .select("id,agent_id,name,chain")
+      .eq("agent_id", agentId)
+      .eq("chain", TESTNET_CHAIN)
+      .maybeSingle();
     if (agentError) throw new Error(agentError.message);
-    if (!agent) return res.status(404).json({ error: "Agent not found" });
+    if (!agent) return res.status(404).json({ error: "Testnet agent not found" });
 
-    const { data: job, error: jobError } = await supabase.from("jobs").select("id,mission_task_id,provider_agent_id,status,description,budget,chain_job_id").eq("id", jobId).maybeSingle();
+    const { data: job, error: jobError } = await supabase
+      .from("jobs")
+      .select("id,mission_task_id,provider_agent_id,status,description,budget,chain_job_id")
+      .eq("id", jobId)
+      .maybeSingle();
     if (jobError) throw new Error(jobError.message);
     if (!job) return res.status(404).json({ error: "Job not found" });
-    if (job.provider_agent_id !== agent.id) return res.status(403).json({ error: "Agent is not the assigned provider for this job" });
+    if (job.provider_agent_id !== agent.id) return res.status(403).json({ error: "Agent is not the assigned Testnet provider for this job" });
 
     if (action === "progress" || action === "message") {
       if (!message) return res.status(400).json({ error: `${action} requires message` });
@@ -77,7 +92,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         body: message,
         created_at: new Date().toISOString(),
       });
-      return res.status(200).json({ ok: true, action, job_id: job.id, message_recorded: true });
+      return res.status(200).json({ ok: true, network: TESTNET_CHAIN, action, job_id: job.id, message_recorded: true });
     }
 
     if (action === "submit" && !deliverable) return res.status(400).json({ error: "deliverable is required for submit" });
@@ -105,7 +120,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       await supabase.from("evaluations").upsert({
         job_id: job.id,
         verdict: "pending",
-        evidence: { source: "agent_runtime", deliverable, agent_id: agent.agent_id, submitted_at: now },
+        evidence: { source: "agent_runtime", deliverable, agent_id: agent.agent_id, network: TESTNET_CHAIN, submitted_at: now },
         updated_at: now,
       }, { onConflict: "job_id" });
     }
@@ -115,10 +130,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       recipient: job.provider_agent_id,
       kind: `agent_${action}`,
       title: `Agent ${action}`,
-      body: message || `Agent ${agent.agent_id} moved job ${job.id} to ${nextStatus}.`,
+      body: message || `Agent ${agent.agent_id} moved Testnet job ${job.id} to ${nextStatus}.`,
     });
 
-    return res.status(200).json({ ok: true, agent: agent.agent_id, job: updated, state: nextStatus });
+    return res.status(200).json({ ok: true, network: TESTNET_CHAIN, agent: agent.agent_id, job: updated, state: nextStatus });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Agent runtime request failed" });
   }
