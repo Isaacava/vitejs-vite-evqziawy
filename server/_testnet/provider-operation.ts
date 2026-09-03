@@ -37,21 +37,23 @@ function text(value: unknown) {
 }
 
 function actionMatches(action: ProviderOperation["action"], capability: Record<string, unknown>) {
+  const metadata = object(capability.metadata);
   const haystack = [
     capability.name,
     capability.description,
     capability.kind,
-    object(capability.metadata).operation,
-    object(capability.metadata).action,
-    object(capability.metadata).capability,
-    object(capability.metadata).skill_id,
+    metadata.operation,
+    metadata.action,
+    metadata.capability,
+    metadata.skill_id,
+    metadata.task,
   ].map(text).filter(Boolean).join(" ");
 
   if (action === "quote") return /(quote|pricing|price|estimate|negotiate|cost)/i.test(haystack);
-  if (action === "execute") return /(execute|execution|run|submit|start|invoke)/i.test(haystack);
-  if (action === "preflight") return /(preflight|preview|validate|check)/i.test(haystack);
-  if (action === "result") return /(result|status|retrieve|job|output|deliver)/i.test(haystack);
-  return /(health|ready|readiness)/i.test(haystack);
+  if (action === "execute") return /(execute|execution|run|submit|start|invoke|task)/i.test(haystack);
+  if (action === "preflight") return /(preflight|preview|validate|check|dry.?run)/i.test(haystack);
+  if (action === "result") return /(result|status|retrieve|job|output|deliver|artifact)/i.test(haystack);
+  return /(health|ready|readiness|ping)/i.test(haystack);
 }
 
 function methods(value: unknown) {
@@ -83,7 +85,7 @@ function normalizeOperation(action: ProviderOperation["action"], value: Record<s
       ? value.protocol.trim().toLowerCase()
       : "http";
   const declaredMethods = methods(value.methods ?? value.method);
-  const method = declaredMethods.find((candidate) => ["GET", "POST", "PUT", "PATCH", "DELETE"].includes(candidate)) || (transport === "mcp" ? "POST" : "POST");
+  const method = declaredMethods.find((candidate) => ["GET", "POST", "PUT", "PATCH", "DELETE"].includes(candidate)) || "POST";
   const inputSchema = value.input_schema ?? value.inputSchema ?? value.request_schema ?? value.requestSchema ?? null;
 
   return {
@@ -108,16 +110,16 @@ function explicitOperations(metadata: Record<string, unknown>, action: ProviderO
   return values.flatMap((candidate) => {
     if (!candidate || typeof candidate !== "object") return [];
     const value = candidate as Record<string, unknown>;
-    const declaredAction = text(value.action || value.operation || value.name || value.kind || value.capability || value.skill);
+    const declaredAction = text(value.action || value.operation || value.name || value.kind || value.capability || value.skill || value.task);
     const actionMatch = action === "quote"
       ? /(quote|pricing|price|estimate|negotiate|cost)/i.test(declaredAction)
       : action === "execute"
-        ? /(execute|execution|run|submit|start|invoke)/i.test(declaredAction)
+        ? /(execute|execution|run|submit|start|invoke|task)/i.test(declaredAction)
         : action === "preflight"
-          ? /(preflight|preview|validate|check)/i.test(declaredAction)
+          ? /(preflight|preview|validate|check|dry.?run)/i.test(declaredAction)
           : action === "result"
-            ? /(result|status|retrieve|job|output|deliver)/i.test(declaredAction)
-            : /(health|ready|readiness)/i.test(declaredAction);
+            ? /(result|status|retrieve|job|output|deliver|artifact)/i.test(declaredAction)
+            : /(health|ready|readiness|ping)/i.test(declaredAction);
     return actionMatch ? [value] : [];
   });
 }
@@ -199,10 +201,40 @@ async function requestJson(operation: ProviderOperation, body: Record<string, un
   }
 }
 
+async function requestA2A(operation: ProviderOperation, body: Record<string, unknown>): Promise<OperationResponse> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const metadata = object(operation.metadata);
+  const rpcMethod = typeof metadata.rpc_method === "string" && metadata.rpc_method.trim()
+    ? metadata.rpc_method.trim()
+    : "message/send";
+  const envelope = metadata.request_envelope && typeof metadata.request_envelope === "object"
+    ? object(metadata.request_envelope)
+    : null;
+  const requestPayload = envelope
+    ? { ...envelope, ...body }
+    : { method: rpcMethod, action: operation.action, ...body };
+  try {
+    const response = await fetch(operation.endpoint, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify(requestPayload),
+      signal: controller.signal,
+    });
+    const raw = await response.text();
+    let parsed: unknown = {};
+    try { parsed = raw ? JSON.parse(raw) : {}; } catch { parsed = { raw }; }
+    return { status: response.status, body: parsed, endpoint: operation.endpoint, method: "POST", transport: "a2a" };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function requestMcp(operation: ProviderOperation, body: Record<string, unknown>): Promise<OperationResponse> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  const toolName = typeof object(operation.metadata).tool_name === "string" ? String(object(operation.metadata).tool_name) : operation.name;
+  const metadata = object(operation.metadata);
+  const toolName = typeof metadata.tool_name === "string" ? metadata.tool_name : operation.name;
   try {
     const response = await fetch(operation.endpoint, {
       method: "POST",
@@ -220,7 +252,11 @@ async function requestMcp(operation: ProviderOperation, body: Record<string, unk
 }
 
 export async function invokeProviderOperation(operation: ProviderOperation, body: Record<string, unknown>): Promise<OperationResponse> {
-  const result = operation.transport === "mcp" ? await requestMcp(operation, body) : await requestJson(operation, body);
+  const result = operation.transport === "mcp"
+    ? await requestMcp(operation, body)
+    : operation.transport === "a2a"
+      ? await requestA2A(operation, body)
+      : await requestJson(operation, body);
   if (result.status < 200 || result.status >= 300) throw new Error(`Provider ${operation.action} returned HTTP ${result.status} from ${result.endpoint}`);
   return { ...result, body: responseBodyEnvelope(result.body) };
 }
