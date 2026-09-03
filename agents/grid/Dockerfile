@@ -20,6 +20,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY agents/grid/app ./app
 COPY agents/erc8004_register.py ./erc8004_register.py
+COPY agents/start_agent.sh ./start_agent.sh
+RUN chmod +x /app/start_agent.sh
 
 COPY --from=execution-build /execution/package.json /execution/package.json
 COPY --from=execution-build /execution/package-lock.json /execution/package-lock.json
@@ -31,8 +33,9 @@ RUN mkdir -p /execution/node_modules \
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PORT=8000
+ENV AGENT_APP_MODULE=app.service.main:app
 ENV GRID_EXECUTION_INTERNAL_URL=http://127.0.0.1:8788
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "python /app/erc8004_register.py || exit $?; node --enable-source-maps /execution/dist/server.js & exec python -c \"import os, uvicorn; uvicorn.run('app.service.main:app', host='0.0.0.0', port=int(os.environ.get('PORT', 8000)))\""]
+CMD ["/app/start_agent.sh"]
