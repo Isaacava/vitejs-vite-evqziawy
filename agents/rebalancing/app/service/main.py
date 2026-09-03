@@ -5,7 +5,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 from urllib.request import Request as UrlRequest, urlopen
+from urllib.parse import urlencode
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from bnbagent import EVMWalletProvider
 from bnbagent.erc8183 import ERC8183JobOps, funded_job_watcher
 from bnbagent.storage import LocalStorageProvider
@@ -67,9 +69,7 @@ async def on_funded(job:dict[str,Any])->None:
     _runtime["last_execution"]={"timestamp":int(time.time()),"job_id":job_id,"status":status,"tx_hash":metadata.get("transaction_hash")}; tx_hash=await submit(job_id,deliverable,metadata); _runtime["last_submission"]={"timestamp":int(time.time()),"job_id":job_id,"tx_hash":tx_hash}; _runtime["last_error"]=None
 def proxy_get(path:str,query:dict[str,str]|None=None)->dict[str,Any]:
     url=EXECUTION_URL+path
-    if query:
-        from urllib.parse import urlencode
-        url += ("&" if "?" in url else "?") + urlencode({k:v for k,v in query.items() if v})
+    if query:url += ("&" if "?" in url else "?") + urlencode({k:v for k,v in query.items() if v})
     with urlopen(url,timeout=float(os.getenv("ALTANA_EXECUTION_TIMEOUT","10"))) as response:payload=json.loads(response.read().decode("utf-8"))
     if not isinstance(payload,dict):raise RuntimeError("Altana execution service returned invalid capability response")
     return payload
