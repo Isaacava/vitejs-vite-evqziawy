@@ -1,11 +1,7 @@
 """Idempotent ERC-8004 registration for first-party AgentMarket providers.
 
-This script is intended to run inside an agent container at startup. It uses the
-same EVM wallet already used by the agent's ERC-8183 provider, checks whether an
-ERC-8004 registration already exists for the configured name, and registers it
-only when necessary.
-
-Testnet only. No private key is stored in source control.
+Startup behavior is deliberately testnet-only. The process never stores a private
+key in source control; Railway injects it as an environment secret.
 """
 from __future__ import annotations
 
@@ -29,6 +25,66 @@ PASSWORD = os.environ["WALLET_PASSWORD"]
 PRIVATE_KEY = os.getenv("PRIVATE_KEY")
 
 
+def _endpoint() -> AgentEndpoint:
+    return AgentEndpoint(
+        name="ERC-8183",
+        endpoint=f"{ENDPOINT}/erc8183/status",
+        version="0.1.0",
+    )
+
+
+def _metadata() -> list[dict[str, str]]:
+    return [
+        {"key": "protocol", "value": "ERC-8183"},
+        {"key": "network", "value": "bsc-testnet"},
+        {"key": "provider", "value": "AgentMarket"},
+    ]
+
+
+def _generated_uri(sdk: ERC8004Agent, agent_id: int | None = None) -> str:
+    return sdk.generate_agent_uri(
+        name=NAME,
+        description=DESCRIPTION,
+        endpoints=[_endpoint()],
+        agent_id=agent_id,
+        supported_trust=["reputation"],
+    )
+
+
+def _repair_existing_registration(sdk: ERC8004Agent, existing: dict) -> dict:
+    agent_id = int(existing["agent_id"])
+    current_uri = str(existing.get("agent_uri") or "")
+    parsed = sdk.parse_agent_uri(current_uri) if current_uri else None
+    registrations = parsed.get("registrations") if isinstance(parsed, dict) else None
+    has_completion = bool(registrations)
+    expected_endpoint = f"{ENDPOINT}/erc8183/status"
+
+    if has_completion and expected_endpoint in current_uri:
+        logger.info(
+            "ERC-8004 identity already complete name=%s agent_id=%s owner=%s",
+            NAME,
+            agent_id,
+            existing.get("owner_address"),
+        )
+        return existing
+
+    final_uri = _generated_uri(sdk, agent_id=agent_id)
+    last_error: Exception | None = None
+    for attempt in range(1, 5):
+        try:
+            sdk.contract.set_agent_uri(agent_id, final_uri)
+            logger.info("ERC-8004 repaired agent URI name=%s agent_id=%s", NAME, agent_id)
+            return {
+                **existing,
+                "agent_uri": final_uri,
+            }
+        except Exception as exc:
+            last_error = exc
+            logger.warning("ERC-8004 URI repair attempt %s/4 failed agent_id=%s: %s", attempt, agent_id, exc)
+            time.sleep(3 * attempt)
+    raise RuntimeError(f"Unable to complete ERC-8004 URI for agent_id={agent_id}") from last_error
+
+
 def ensure_registration() -> dict:
     if NETWORK != "bsc-testnet":
         raise RuntimeError(f"ERC-8004 registration is restricted to bsc-testnet; got {NETWORK!r}")
@@ -41,35 +97,10 @@ def ensure_registration() -> dict:
     sdk = ERC8004Agent(wallet_provider=wallet, network=NETWORK, debug=False)
     existing = sdk.get_local_agent_info(NAME)
     if existing is not None:
-        logger.info(
-            "ERC-8004 identity already registered name=%s agent_id=%s owner=%s",
-            NAME,
-            existing.get("agent_id"),
-            existing.get("owner_address"),
-        )
-        return existing
+        return _repair_existing_registration(sdk, existing)
 
-    uri = sdk.generate_agent_uri(
-        name=NAME,
-        description=DESCRIPTION,
-        endpoints=[
-            AgentEndpoint(
-                name="ERC-8183",
-                endpoint=f"{ENDPOINT}/erc8183/status",
-                version="0.1.0",
-            )
-        ],
-        supported_trust=["reputation"],
-    )
-
-    result = sdk.register_agent(
-        agent_uri=uri,
-        metadata=[
-            {"key": "protocol", "value": "ERC-8183"},
-            {"key": "network", "value": "bsc-testnet"},
-            {"key": "provider", "value": "AgentMarket"},
-        ],
-    )
+    uri = _generated_uri(sdk)
+    result = sdk.register_agent(agent_uri=uri, metadata=_metadata())
     logger.info(
         "ERC-8004 identity registered name=%s agent_id=%s tx=%s owner=%s",
         NAME,
@@ -88,16 +119,16 @@ def ensure_registration() -> dict:
 
 def main() -> int:
     last_error: Exception | None = None
-    for attempt in range(1, 4):
+    for attempt in range(1, 6):
         try:
             ensure_registration()
             return 0
         except Exception as exc:
             last_error = exc
-            logger.error("ERC-8004 registration attempt %s/3 failed: %s", attempt, exc)
-            if attempt < 3:
+            logger.error("ERC-8004 registration attempt %s/5 failed: %s", attempt, exc)
+            if attempt < 5:
                 time.sleep(5 * attempt)
-    raise RuntimeError("ERC-8004 registration failed after 3 attempts") from last_error
+    raise RuntimeError("ERC-8004 registration failed after 5 attempts") from last_error
 
 
 if __name__ == "__main__":
