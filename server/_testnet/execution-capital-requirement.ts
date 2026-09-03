@@ -3,6 +3,7 @@ import { createPublicClient, http, type Address, type Hex } from "viem";
 import { publicKeyToAddress } from "viem/accounts";
 import { bscTestnet } from "viem/chains";
 import { getAuthenticatedUser, serverClient } from "../_auth.js";
+import { discoverUniversalAgentInterop, pickOperation } from "./universal-agent-interop.js";
 
 const COMMERCE = "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address;
 const KEYSTORE_ABI = [{ type: "function", name: "isValidKey", stateMutability: "view", inputs: [{ name: "wallet", type: "address" }, { name: "keyId", type: "bytes32" }], outputs: [{ name: "valid", type: "bool" }] }] as const;
@@ -104,23 +105,35 @@ function metadataCapabilityUrls(agent: Record<string, unknown>) {
 }
 
 async function loadCapability(supabase: ReturnType<typeof serverClient>, agent: Record<string, unknown>, chainJobId: string) {
-  const { data: endpoints, error } = await supabase.from("agent_endpoints").select("endpoint_url,metadata").eq("agent_id", String(agent.id || "")).limit(20);
+  const { data: endpoints, error } = await supabase.from("agent_endpoints").select("endpoint_url,protocol,version,metadata").eq("agent_id", String(agent.id || "")).limit(20);
   if (error) throw new Error(error.message);
-  const bases = [
-    ...metadataCapabilityUrls(agent),
-    ...(endpoints || []).map((endpoint) => `${String(endpoint.endpoint_url).replace(/\/+$/, "")}/execution-capabilities`),
-  ];
-  const candidates = [...new Set(bases)].map((base) => {
-    const url = new URL(base);
-    url.searchParams.set("job_id", chainJobId);
-    return url.toString();
-  });
+
+  const interop = await discoverUniversalAgentInterop(agent, endpoints || []);
+  const explicitCapabilityUrls = metadataCapabilityUrls(agent);
+  const capabilityOperation = pickOperation(interop, "capability");
+  const candidates = [...new Set([
+    ...explicitCapabilityUrls,
+    capabilityOperation?.endpoint || "",
+  ].filter(Boolean))];
+
   const failures: string[] = [];
-  for (const candidate of candidates) {
-    try { return { capability: await fetchCapability(candidate), endpointUrl: candidate }; }
-    catch (error) { failures.push(`${candidate}: ${error instanceof Error ? error.message : "capability fetch failed"}`); }
+  for (const base of candidates) {
+    try {
+      const url = new URL(base);
+      url.searchParams.set("job_id", chainJobId);
+      return { capability: await fetchCapability(url.toString()), endpointUrl: url.toString(), interop };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "capability fetch failed";
+      failures.push(`${base}: ${message}`);
+    }
   }
-  throw new Error(`Provider execution capability could not be independently verified. ${failures.join(" | ")}`);
+
+  const executionOperation = pickOperation(interop, "execute");
+  if (executionOperation) {
+    throw new Error(`Provider execution operation discovered at ${executionOperation.endpoint}, but no independently verifiable Altana execution-authorization document was exposed. ${failures.join(" | ")}`);
+  }
+
+  throw new Error(`No independently verifiable execution authorization was discovered for this provider. A missing or unsupported capability route is not itself treated as proof that the provider is offline. ${failures.join(" | ")}`);
 }
 
 async function loadOwnedFundedJob(supabase: ReturnType<typeof serverClient>, jobId: string, userId: string, wallet: string | null) {
@@ -168,7 +181,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const supabase = serverClient();
     const { job, agent, chainJob } = await loadOwnedFundedJob(supabase, jobId, auth.user.id, auth.user.wallet_address);
-    const { capability, endpointUrl } = await loadCapability(supabase, agent as Record<string, unknown>, String(job.chain_job_id));
+    const { capability, endpointUrl, interop } = await loadCapability(supabase, agent as Record<string, unknown>, String(job.chain_job_id));
     const { request, warning } = await loadAuthorizationRecord(supabase, jobId);
 
     let sessionVerified = false;
@@ -233,7 +246,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         detection_source: "altana_session_authorization",
         exact_trade_amount: storedAmount ? "marketplace_recorded" : "not_observed",
         warning,
-        note: "Altana authorizes permitted spend/calls. A per-trade amount is reported only when present in an AgentMarket authorization record or later execution evidence; it is never inferred from Grid source code.",
+        discovered_operations: interop.operations.map((operation) => ({ kind: operation.kind, protocol: operation.protocol, endpoint: operation.endpoint, method: operation.method, name: operation.name, evidence: operation.evidence })),
+        note: "Execution authorization is verified independently of the provider implementation. Quote and execution endpoints may differ and are discovered from registered/protocol-described services; no single AgentMarket endpoint is required.",
       },
     });
   } catch (error) {
