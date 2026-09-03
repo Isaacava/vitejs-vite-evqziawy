@@ -20,25 +20,47 @@ def payment_token()->str|None:
 def pending_path(job_id:int)->Path:return STORAGE_DIR/f"erc8183-pending-submission-{job_id}.json"
 def save_pending(job_id:int,deliverable:str,metadata:dict[str,Any])->None:STORAGE_DIR.mkdir(parents=True,exist_ok=True);pending_path(job_id).write_text(json.dumps({"job_id":job_id,"deliverable":deliverable,"metadata":metadata},separators=(",",":")),encoding="utf-8")
 def load_pending(job_id:int):
-    try:payload=json.loads(pending_path(job_id).read_text())
+    try:payload=json.loads(pending_path(job_id).read_text(encoding="utf-8"))
     except (FileNotFoundError,OSError,json.JSONDecodeError):return None
     if not isinstance(payload,dict) or int(payload.get("job_id",-1))!=job_id:return None
     d,m=payload.get("deliverable"),payload.get("metadata");return (d,m) if isinstance(d,str) and isinstance(m,dict) else None
 def clear_pending(job_id:int)->None:
     try:pending_path(job_id).unlink()
     except FileNotFoundError:pass
+def _obj(value:Any)->dict[str,Any]:
+    if isinstance(value,dict):return value
+    if isinstance(value,str) and value.strip():
+        try:
+            parsed=json.loads(value)
+            return parsed if isinstance(parsed,dict) else {}
+        except json.JSONDecodeError:return {}
+    return {}
+def _job_params(job:dict[str,Any])->dict[str,Any]:
+    merged={**_obj(job.get("metadata")),**_obj(job.get("description"))};nested=merged.get("params")
+    if isinstance(nested,dict):merged={**merged,**nested}
+    return merged
+def _job_matches_agent(job:dict[str,Any],has_pending:bool=False)->bool:
+    if has_pending:return True
+    p=_job_params(job);marker=str(p.get("agent_kind") or p.get("task_kind") or p.get("agent") or p.get("strategy") or "").strip().lower()
+    if marker and marker not in {KIND,"health","health_factor_guardian","risk_guardian","health-factor-guardian","agentmarket-health-guardian-test"}:return False
+    try:return "health_factor" in p
+    except Exception:return False
 async def submit(job_id:int,deliverable:str,metadata:dict[str,Any]):
     save_pending(job_id,deliverable,metadata);result=await _ops.submit_result(job_id,deliverable);tx_hash=getattr(result,"hash",None)
     if tx_hash is None and isinstance(result,dict):tx_hash=result.get("hash") or result.get("tx_hash")
     if tx_hash is None and isinstance(result,str):tx_hash=result
     clear_pending(job_id);return str(tx_hash) if tx_hash else None
 async def on_funded(job:dict[str,Any])->None:
-    job_id=int(job.get("jobId"));_runtime["last_funded_job"]={"timestamp":int(time.time()),"job_id":job_id};pending=load_pending(job_id)
+    try:job_id=int(job.get("jobId"))
+    except (TypeError,ValueError):return
+    _runtime["last_funded_job"]={"timestamp":int(time.time()),"job_id":job_id};pending=load_pending(job_id)
+    if not _job_matches_agent(job,has_pending=pending is not None):
+        logging.info("%s ignoring unrelated funded job=%s",DISPLAY_NAME,job_id);return
     if pending is not None:deliverable,metadata=pending
     else:module=importlib.import_module("app.agent.main");deliverable,metadata=await asyncio.to_thread(module.fulfill_job,job)
     status=str(metadata.get("execution_status") or "").lower()
     if status not in {"observed","evaluated","planned","executed"}:raise RuntimeError("Agent did not produce an accepted execution status")
-    _runtime["last_execution"]={"timestamp":int(time.time()),"job_id":job_id,"status":status,"tx_hash":metadata.get("transaction_hash")};tx_hash=await submit(job_id,deliverable,metadata);_runtime["last_submission"]={"timestamp":int(time.time()),"job_id":job_id,"tx_hash":tx_hash}
+    _runtime["last_execution"]={"timestamp":int(time.time()),"job_id":job_id,"status":status,"tx_hash":metadata.get("transaction_hash")};tx_hash=await submit(job_id,deliverable,metadata);_runtime["last_submission"]={"timestamp":int(time.time()),"job_id":job_id,"tx_hash":tx_hash};_runtime["last_error"]=None
 def proxy_get(path:str)->dict[str,Any]:
     with urlopen(EXECUTION_URL+path,timeout=10) as response:payload=json.loads(response.read().decode())
     if not isinstance(payload,dict):raise RuntimeError("invalid execution response")
@@ -67,7 +89,7 @@ async def status():return {"status":"ok","agent_kind":KIND,"agent_address":provi
 async def execution_capabilities():return proxy_get("/execution-capabilities")
 @app.post("/preflight")
 async def preflight(request:Request):
-    body=await request.json();
+    body=await request.json()
     if not isinstance(body,dict):raise HTTPException(status_code=400,detail="Request body must be an object")
     try:return proxy_post("/preflight",body)
     except Exception as exc:raise HTTPException(status_code=409,detail=str(exc)) from exc
