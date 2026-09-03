@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 import json
+import os
 from typing import Any
+
+from app.agent.execution import execute_testnet_swap
 
 
 def _obj(value: Any) -> dict[str, Any]:
@@ -39,12 +42,29 @@ def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     center = (tick_lower + tick_upper) / 2
     target_lower = current_tick - width / 2 if action != "hold" else tick_lower
     target_upper = current_tick + width / 2 if action != "hold" else tick_upper
+
+    execution = None
+    execution_status = "planned"
+    transaction_hash = None
+    if str(p.get("execute", "")).lower() in {"1", "true", "yes"}:
+        if action == "hold": raise ValueError("Rebalancing execution requested but the strategy decision is hold")
+        wallet = str(p.get("execution_wallet") or p.get("user_altana_wallet") or "").strip()
+        token_in = str(p.get("token_in") or os.getenv("ALTANA_SESSION_SPEND_TOKEN") or "").strip()
+        token_out = str(p.get("token_out") or os.getenv("ALTANA_SWAP_TOKEN_OUT") or "").strip()
+        amount_in = str(p.get("amount_in") or "").strip()
+        minimum_out = str(p.get("amount_out_minimum") or "0").strip()
+        if not wallet or not token_in or not token_out or not amount_in:
+            raise ValueError("Executing Rebalancing jobs require execution_wallet, token_in, token_out and amount_in")
+        execution = execute_testnet_swap(job_id=int(job.get("jobId", job.get("id", 0))), wallet_address=wallet, token_in=token_in, token_out=token_out, amount_in=amount_in, amount_out_minimum=minimum_out, fee=int(p.get("fee", 2500)))
+        execution_status = "executed"
+        transaction_hash = execution.get("transaction_hash")
+
     payload = {
         "agent": "agentmarket-rebalancing-test", "job_id": str(job.get("jobId", job.get("id", ""))),
         "network": "bsc-testnet", "task": "rebalancing",
         "observation": {"current_tick": current_tick, "tick_lower": tick_lower, "tick_upper": tick_upper, "range_width": width, "distance_to_center": abs(current_tick-center), "edge_ratio": max(0.0, edge_ratio)},
         "decision": {"action": action, "target_lower": target_lower, "target_upper": target_upper},
-        "execution": "observation_and_plan",
-        "note": "The agent determines the LP range action from the job position state. State-changing execution requires an explicitly allowlisted target and scoped Testnet session.",
+        "execution": execution or "observation_and_plan",
+        "note": "State-changing execution is permitted only through the agent's allowlisted Altana scoped Testnet session.",
     }
-    return json.dumps(payload, separators=(",", ":")), {"execution_status": "observed", "transaction_hash": None, "decision": action}
+    return json.dumps(payload, separators=(",", ":")), {"execution_status": execution_status, "transaction_hash": transaction_hash, "decision": action}
