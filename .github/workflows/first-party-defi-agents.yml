@@ -4,19 +4,35 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - "agents/execution/**"
+      - "agents/execution_client.py"
       - "agents/rebalancing/**"
       - "agents/yield/**"
       - "agents/health/**"
   push:
     branches: [main, marketplace-testnet]
     paths:
+      - "agents/execution/**"
+      - "agents/execution_client.py"
       - "agents/rebalancing/**"
       - "agents/yield/**"
       - "agents/health/**"
 
 jobs:
+  execution-sidecar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Build shared Altana execution sidecar
+        working-directory: agents/execution
+        run: npm install --no-audit --no-fund && npm run build
+
   test:
     runs-on: ubuntu-latest
+    needs: execution-sidecar
     strategy:
       fail-fast: false
       matrix:

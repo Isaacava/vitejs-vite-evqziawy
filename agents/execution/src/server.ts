@@ -1,7 +1,8 @@
 import { createHmac } from "node:crypto";
 import { BNB_TESTNET, createClient, signerFromPrivateKey } from "@altananetwork/sdk";
 import type { Address, Hex } from "viem";
-import { encodeFunctionData, privateKeyToAccount, publicKeyToAddress } from "viem";
+import { encodeFunctionData } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 
 const PORT = Number(process.env.EXECUTION_PORT || 8788);
 const AGENT = (process.env.EXECUTION_AGENT_KIND || "defi-agent").trim().toLowerCase();
@@ -128,7 +129,7 @@ async function preflight(body: Record<string, unknown>) {
 function response(res: any, status: number, body: unknown) { const raw = JSON.stringify(body); res.writeHead(status, { "content-type": "application/json", "content-length": Buffer.byteLength(raw) }); res.end(raw); }
 const server = await import("node:http").then(({ createServer }) => createServer(async (req, res) => {
   try {
-    const url = new URL(req.url || "/", `http://${req.headers.host || "127.0.0.1:${PORT}"}`);
+    const url = new URL(req.url || "/", "http://" + (req.headers.host || "127.0.0.1:" + PORT));
     if (req.method === "GET" && url.pathname === "/health") return response(res, 200, { status: "ok", agent: AGENT, network: NETWORK, chain_id: CHAIN_ID });
     if (req.method === "GET" && url.pathname === "/execution-capabilities") return response(res, 200, { execution: "altana-scoped-session", wallet_provider: "altana", authorization_model: "scoped_session", protocol: "pancake-v3-swap", chain_id: CHAIN_ID, network: NETWORK, allowed_targets: addresses("ALTANA_ALLOWED_TARGETS"), allowed_selectors: selectors("ALTANA_ALLOWED_SELECTORS"), private_key_exposed: false });
     if ((req.method === "POST" && (url.pathname === "/preflight" || url.pathname === "/execute-swap"))) {
