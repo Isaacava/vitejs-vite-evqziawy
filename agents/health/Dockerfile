@@ -12,6 +12,8 @@ RUN python -m pip install --no-cache-dir --upgrade pip && python -m pip install 
 COPY agents/health/ ./agents/health/
 COPY agents/execution_client.py ./agents/execution_client.py
 COPY agents/erc8004_register.py ./erc8004_register.py
+COPY agents/start_agent.sh ./start_agent.sh
+RUN chmod +x /app/start_agent.sh
 COPY --from=execution-build /execution/package.json /execution/package.json
 COPY --from=execution-build /execution/package-lock.json /execution/package-lock.json
 COPY --from=execution-build /execution/dist /execution/dist
@@ -22,6 +24,7 @@ ENV PYTHONPATH=/app/agents:/app/agents/health:/app
 ENV PORT=8000
 ENV EXECUTION_PORT=8788
 ENV EXECUTION_AGENT_KIND=health
+ENV AGENT_APP_MODULE=app.service.main:app
 ENV ALTANA_EXECUTION_INTERNAL_URL=http://127.0.0.1:8788
 EXPOSE 8000
-CMD ["sh", "-c", "python /app/erc8004_register.py || exit $?; node --enable-source-maps /execution/dist/server.js & exec python -c \"import os, uvicorn; uvicorn.run('app.service.main:app', host='0.0.0.0', port=int(os.environ.get('PORT', 8000)))\""]
+CMD ["/app/start_agent.sh"]
