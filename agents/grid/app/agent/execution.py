@@ -18,6 +18,7 @@ DEFAULT_ROUTER = "0x9a489505a00cE272eAa5e07Dba6491314CaE3796"
 DEFAULT_TOKEN_IN = "0x8d008B313C1d6C7fE2982F62d32Da7507cF43551"
 DEFAULT_TOKEN_OUT = "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd"
 DEFAULT_FEE = 2500
+APPROVE_SELECTOR = "0x095ea7b3"
 
 
 def _env(name: str, default: str | None = None) -> str | None:
@@ -120,7 +121,10 @@ async def execute_grid_trade(job: dict[str, Any]) -> dict[str, Any]:
                 "amountOutMinimum": amount_out_minimum,
             },
         )
-        preflight_body = preflight_response.json()
+        try:
+            preflight_body = preflight_response.json()
+        except ValueError as exc:
+            raise RuntimeError("Grid execution preflight returned invalid JSON") from exc
         if preflight_response.status_code >= 400 or not preflight_body.get("ok"):
             raise RuntimeError(preflight_body.get("error") or "Grid execution preflight failed")
 
@@ -137,15 +141,37 @@ async def execute_grid_trade(job: dict[str, Any]) -> dict[str, Any]:
         if checked_recipient.lower() != wallet_address.lower():
             raise RuntimeError(f"Grid preflight recipient {checked_recipient} does not match the job-bound Altana wallet {wallet_address}")
 
-        call = result.get("call")
-        if not isinstance(call, dict) or not call.get("to") or not call.get("data"):
-            raise RuntimeError("Grid execution preflight did not return executable calldata")
+        checks = result.get("checks") if isinstance(result.get("checks"), dict) else {}
+        if checks.get("token_in_balance_ok") is False:
+            raise RuntimeError(f"Grid execution preflight rejected the job because the wallet balance is below amountIn")
+
+        swap_call = result.get("call")
+        if not isinstance(swap_call, dict) or not swap_call.get("to") or not swap_call.get("data"):
+            raise RuntimeError("Grid execution preflight did not return executable swap calldata")
+
+        calls: list[dict[str, Any]] = []
+        if result.get("requires_approval"):
+            approval_call = result.get("approval_call")
+            if not isinstance(approval_call, dict) or not approval_call.get("to") or not approval_call.get("data"):
+                raise RuntimeError("Grid preflight requires approval but did not return approval calldata")
+            if str(approval_call.get("to")).lower() != token_in.lower():
+                raise RuntimeError("Grid approval target does not match tokenIn")
+            if str(approval_call.get("data"))[:10].lower() != APPROVE_SELECTOR:
+                raise RuntimeError("Grid approval calldata is not the ERC-20 approve selector")
+            calls.append(approval_call)
+
+        calls.append(swap_call)
+        if len(calls) > 2:
+            raise RuntimeError("Grid execution produced too many calls for the bounded approval + swap flow")
 
         execute_response = await client.post(
             f"{base_url}/execute-configured",
-            json={"job_id": job_id, "wallet_address": wallet_address, "calls": [call]},
+            json={"job_id": job_id, "wallet_address": wallet_address, "calls": calls},
         )
-        execute_body = execute_response.json()
+        try:
+            execute_body = execute_response.json()
+        except ValueError as exc:
+            raise RuntimeError("Grid Altana execution returned invalid JSON") from exc
         if execute_response.status_code >= 400 or not execute_body.get("ok"):
             raise RuntimeError(execute_body.get("error") or "Grid Altana execution failed")
 
@@ -155,7 +181,10 @@ async def execute_grid_trade(job: dict[str, Any]) -> dict[str, Any]:
             raise RuntimeError("Grid Altana execution returned no transaction hash")
 
         receipt_response = await client.get(f"{base_url}/receipt/{transaction_hash}")
-        receipt_body = receipt_response.json()
+        try:
+            receipt_body = receipt_response.json()
+        except ValueError as exc:
+            raise RuntimeError("Grid receipt observer returned invalid JSON") from exc
         if receipt_response.status_code >= 400 or not receipt_body.get("ok"):
             raise RuntimeError(receipt_body.get("error") or "Grid could not independently observe the Testnet receipt")
 
