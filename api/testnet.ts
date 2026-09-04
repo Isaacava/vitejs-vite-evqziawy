@@ -13,6 +13,7 @@ async function loadHandler(route: string): Promise<Handler | null> {
     case "execution-capital-verify-passkey": return (await import("../server/_testnet/execution-capital-verify-passkey.js")).default as Handler;
     case "execution-capital-preflight": return (await import("../server/_testnet/execution-capital-preflight.js")).default as Handler;
     case "execution-capital-requirement": return (await import("../server/_testnet/execution-capital-requirement.js")).default as Handler;
+    case "execution-capital-state": return (await import("../server/_testnet/execution-capital-state.js")).default as Handler;
     case "execution-evidence": return (await import("../server/_testnet/execution-evidence.js")).default as Handler;
     case "execution-authorization-prepare": return (await import("../server/_testnet/execution-authorization-prepare.js")).default as Handler;
     case "execution-authorization-status": return (await import("../server/_testnet/execution-authorization-status.js")).default as Handler;
