@@ -7,7 +7,7 @@ from typing import Any
 from urllib.request import Request as UrlRequest, urlopen
 from urllib.parse import urlencode
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from bnbagent import EVMWalletProvider
 from bnbagent.erc8183 import ERC8183JobOps, funded_job_watcher
 from bnbagent.storage import LocalStorageProvider
@@ -20,6 +20,7 @@ def payment_token()->str|None:
     try:return str(_ops.erc8183_client.payment_token)
     except Exception:return None
 def pending_path(job_id:int)->Path:return STORAGE_DIR/f"erc8183-pending-submission-{job_id}.json"
+def response_path(job_id:int)->Path:return STORAGE_DIR/f"erc8183-job-{job_id}.json"
 def save_pending(job_id:int,deliverable:str,metadata:dict[str,Any])->None:
     STORAGE_DIR.mkdir(parents=True,exist_ok=True); pending_path(job_id).write_text(json.dumps({"job_id":job_id,"deliverable":deliverable,"metadata":metadata},separators=(",",":")),encoding="utf-8")
 def load_pending(job_id:int):
@@ -92,7 +93,7 @@ app=FastAPI(title=f"{DISPLAY_NAME} Agent",description=f"Standalone Testnet-only 
 @app.get("/health")
 async def health():return {"status":"ok","agent":KIND,"network":NETWORK,"chain_id":CHAIN_ID}
 @app.get("/erc8183")
-async def root():return {"status":"ok","service":f"{DISPLAY_NAME} ERC-8183 provider","agent_kind":KIND,"network":NETWORK,"chain_id":CHAIN_ID,"agent_address":provider_address(),"endpoints":{"health":"/erc8183/health","status":"/erc8183/status","runtime_status":"/erc8183/runtime-status","negotiate":"/erc8183/negotiate","execution_capabilities":"/erc8183/execution-capabilities","preflight":"/erc8183/preflight"}}
+async def root():return {"status":"ok","service":f"{DISPLAY_NAME} ERC-8183 provider","agent_kind":KIND,"network":NETWORK,"chain_id":CHAIN_ID,"agent_address":provider_address(),"endpoints":{"health":"/erc8183/health","status":"/erc8183/status","runtime_status":"/erc8183/runtime-status","negotiate":"/erc8183/negotiate","execution_capabilities":"/erc8183/execution-capabilities","preflight":"/erc8183/preflight","job_response":"/erc8183/job/{job_id}/response"}}
 @app.get("/erc8183/health")
 async def erc_health():return {"status":"ok","service":DISPLAY_NAME,"network":NETWORK,"chain_id":CHAIN_ID}
 @app.get("/erc8183/status")
@@ -105,6 +106,16 @@ async def execution_capabilities(request:Request):
     if not job_id:return JSONResponse({"error":"job_id is required"},status_code=400)
     try:return proxy_get("/execution-capabilities",{"job_id":job_id})
     except Exception as exc:raise HTTPException(status_code=502,detail=str(exc)) from exc
+@app.get("/erc8183/job/{job_id}/response")
+async def job_response(job_id:int):
+    path=response_path(job_id)
+    try:
+        body=path.read_bytes()
+    except FileNotFoundError:
+        return JSONResponse({"error":"submitted response not found","job_id":job_id},status_code=404)
+    except OSError as exc:
+        return JSONResponse({"error":f"unable to read submitted response: {exc}","job_id":job_id},status_code=500)
+    return Response(content=body,media_type="application/json",headers={"cache-control":"no-store"})
 @app.post("/erc8183/preflight")
 async def preflight(request:Request):
     try:body=await request.json()
