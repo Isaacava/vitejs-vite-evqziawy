@@ -32,7 +32,7 @@ function compactHex(value: string) { return value.length > 14 ? `${value.slice(0
 
 export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProps) {
   const [reviewed, setReviewed] = useState(false);
-  const [status, setStatus] = useState<"idle" | "checking" | "funding_capital" | "approving_allowance" | "signing" | "verifying" | "authorized" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "checking" | "signing" | "verifying" | "funding_capital" | "approving_allowance" | "authorized" | "error">("idle");
   const [error, setError] = useState("");
   const [sessionKeyId, setSessionKeyId] = useState("");
   const [walletAddress, setWalletAddress] = useState("");
@@ -46,13 +46,6 @@ export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProp
     setCapitalTxHash("");
     setAllowanceTxHash("");
     try {
-      /*
-       * The server creates and validates the capability for the selected ERC-8183
-       * chain job before it reaches this component. Do not re-fetch the public
-       * endpoint here: doing so loses the job_id query parameter and can resolve
-       * the provider's default/unscoped capability instead of the capability
-       * already verified and stored for this request.
-       */
       const executionWallet = ensureAltanaWallet();
       if (!/^0x[a-fA-F0-9]{40}$/.test(props.capitalToken)) throw new Error("The agent did not provide a valid execution-capital token address. Authorization cannot continue.");
       const decimals = props.capitalDecimals ?? 18;
@@ -67,16 +60,8 @@ export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProp
       setFeeReadiness(readiness);
       if (!readiness.sufficientForRegistration) throw new Error(`Altana wallet ${readiness.walletAddress} has ${readiness.nativeBalanceFormatted} tBNB. This first-time session grant needs at least ${readiness.minimumRegistrationValueFormatted} tBNB for KeyStore registration fees, plus any relay/gas costs.`);
 
-      setStatus("funding_capital");
-      const capitalFunding = await fundAltanaTradingCapital(executionWallet.walletAddress, props.capitalToken, rawCapitalAmount);
-      if (capitalFunding.token.toLowerCase() !== props.capitalToken.toLowerCase()) throw new Error("The funding helper returned a different token address than the execution-capital request.");
-      if (capitalFunding.transactionHash) setCapitalTxHash(capitalFunding.transactionHash);
-
-      setStatus("approving_allowance");
-      const allowance = await ensureAltanaTokenAllowance(props.capitalToken, approvalSpender, rawCapitalAmount);
-      if (allowance.token.toLowerCase() !== props.capitalToken.toLowerCase()) throw new Error("The allowance helper returned a different token address than the execution-capital request.");
-      if (allowance.transactionHash) setAllowanceTxHash(allowance.transactionHash);
-
+      // IMPORTANT: the user grants the scoped session BEFORE any execution capital
+      // funding. AgentMarket verifies the grant on-chain before the flow proceeds.
       setStatus("signing");
       const expiry = Math.floor(Date.now() / 1000) + props.durationSeconds;
       const granted = await grantAltanaExecutionSession({
@@ -104,13 +89,25 @@ export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProp
           session_grant_tx_hash: granted.transactionHash,
           capital_token: props.capitalToken,
           capital_amount_raw: rawCapitalAmount.toString(),
-          capital_funding_tx_hash: capitalFunding.transactionHash || null,
-          allowance_tx_hash: allowance.transactionHash || null,
+          capital_funding_tx_hash: null,
+          allowance_tx_hash: null,
           allowance_spender: approvalSpender,
         }),
       });
       const body = await response.json() as { ok?: boolean; authorized?: boolean; error?: string };
       if (!response.ok || !body.authorized) throw new Error(body.error || "AgentMarket could not independently verify the Altana session.");
+
+      // Only after on-chain verification succeeds do we fund the execution wallet
+      // and create the allowance required by the agent's local execution layer.
+      setStatus("funding_capital");
+      const capitalFunding = await fundAltanaTradingCapital(executionWallet.walletAddress, props.capitalToken, rawCapitalAmount);
+      if (capitalFunding.token.toLowerCase() !== props.capitalToken.toLowerCase()) throw new Error("The funding helper returned a different token address than the execution-capital request.");
+      if (capitalFunding.transactionHash) setCapitalTxHash(capitalFunding.transactionHash);
+
+      setStatus("approving_allowance");
+      const allowance = await ensureAltanaTokenAllowance(props.capitalToken, approvalSpender, rawCapitalAmount);
+      if (allowance.token.toLowerCase() !== props.capitalToken.toLowerCase()) throw new Error("The allowance helper returned a different token address than the execution-capital request.");
+      if (allowance.transactionHash) setAllowanceTxHash(allowance.transactionHash);
 
       setWalletAddress(granted.walletAddress);
       setSessionKeyId(granted.sessionKeyId);
@@ -124,11 +121,11 @@ export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProp
   }
 
   const symbol = props.capitalSymbol || "execution token";
-  const statusText = status === "checking" ? "Checking request-scoped Testnet session and fee readiness…" : status === "funding_capital" ? `Fund ${props.capitalAmount.toString()} ${symbol} to your Altana execution wallet…` : status === "approving_allowance" ? `Approve ${props.capitalAmount.toString()} ${symbol} router allowance in your Altana wallet…` : status === "signing" ? "Waiting for Passkey approval…" : status === "verifying" ? "Verifying onchain authority…" : status === "authorized" ? "Authorized and independently verified ✓" : props.renewal ? `Authorize a fresh ${symbol} session for this job` : `Approve the agent's ${symbol} trading authority`;
+  const statusText = status === "checking" ? "Checking request-scoped Testnet session and fee readiness…" : status === "signing" ? "Waiting for Passkey approval…" : status === "verifying" ? "AgentMarket is verifying the Altana grant on-chain…" : status === "funding_capital" ? `Fund ${props.capitalAmount.toString()} ${symbol} to your Altana execution wallet…` : status === "approving_allowance" ? `Approve ${props.capitalAmount.toString()} ${symbol} router allowance in your Altana wallet…` : status === "authorized" ? "Authorized and independently verified ✓" : props.renewal ? `Authorize a fresh ${symbol} session for this job` : `Approve the agent's ${symbol} trading authority`;
 
   return (
     <section className="border border-line rounded-[16px_8px_18px_9px] bg-paper p-5">
-      <div className="flex items-start justify-between gap-4"><div><small className="block font-mono text-[8.5px] uppercase tracking-widest text-brass mb-1.5">Execution Capital · Altana Session</small><h3 className="font-display text-[18px] font-bold m-0">{props.renewal ? "Renew the job's trading authority" : "Approve the agent's trading authority"}</h3><p className="text-[11px] text-inksoft mt-1.5 max-w-[600px]">The execution token below is the exact token declared by the selected agent for this request. AgentMarket funds only that token, checks only that token, and grants spend permission only for that token.</p></div><span className={`font-mono text-[9px] px-2.5 py-1 rounded-lg ${status === "authorized" ? "status-green" : "status-brass"}`}>BSC TESTNET</span></div>
+      <div className="flex items-start justify-between gap-4"><div><small className="block font-mono text-[8.5px] uppercase tracking-widest text-brass mb-1.5">Execution Capital · Altana Session</small><h3 className="font-display text-[18px] font-bold m-0">{props.renewal ? "Renew the job's trading authority" : "Approve the agent's trading authority"}</h3><p className="text-[11px] text-inksoft mt-1.5 max-w-[600px]">The execution token below is the exact token declared by the selected agent for this request. AgentMarket funds only that token after the Altana grant has been verified.</p></div><span className={`font-mono text-[9px] px-2.5 py-1 rounded-lg ${status === "authorized" ? "status-green" : "status-brass"}`}>BSC TESTNET</span></div>
       <div className="grid sm:grid-cols-2 gap-3 mt-5">
         <div className="border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-3.5"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Execution capital required</small><strong className="font-mono text-[11px]">{props.capitalAmount.toString()} {symbol}</strong></div>
         <div className="border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-3.5"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Exact token</small><strong className="font-mono text-[10px] break-all">{props.capitalToken}</strong></div>
@@ -136,14 +133,14 @@ export default function AltanaSessionGrantGate(props: AltanaSessionGrantGateProp
         <div className="border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-3.5"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Session key</small><strong className="font-mono text-[11px]">{compact(props.agentSessionAddress)}</strong></div>
       </div>
       {feeReadiness && <div className={`mt-4 border rounded-[12px_7px_13px_8px] px-4 py-3 text-[10.5px] ${feeReadiness.sufficientForRegistration ? "border-green/30 bg-green/5" : "border-[#cfad9f] bg-rustsoft text-rust"}`}><strong className="block mb-1">Testnet registration fee check</strong><div>Altana wallet: <span className="font-mono">{compact(feeReadiness.walletAddress)}</span></div><div>Native tBNB balance: <span className="font-mono">{feeReadiness.nativeBalanceFormatted}</span></div><div>KeyStore fee per registration: <span className="font-mono">{feeReadiness.registrationFeeFormatted} tBNB</span></div><div>Minimum for first admin + session registration: <span className="font-mono">{feeReadiness.minimumRegistrationValueFormatted} tBNB</span></div></div>}
-      <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-4"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-2">Execution funding</small><div className="text-[10.5px] text-inksoft leading-5">Only the exact token address shown above is funded. The user's connected wallet signs the ERC-20 transfer to the user's own Altana execution wallet. No alternate settlement token is substituted.</div>{capitalTxHash && <a className="inline-block mt-2 text-[9px] font-mono text-brass break-all" href={`https://testnet.bscscan.com/tx/${capitalTxHash}`} target="_blank" rel="noreferrer">Execution-capital transfer ↗</a>}</div>
-      <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-4"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-2">Router allowance</small><div className="text-[10.5px] text-inksoft leading-5">After funding, the Altana wallet approves the declared execution spender for exactly the requested amount of the same token address.</div>{props.approvalSpender && <div className="mt-2 font-mono text-[9px] break-all">Spender: {props.approvalSpender}</div>}{allowanceTxHash && <a className="inline-block mt-2 text-[9px] font-mono text-brass break-all" href={`https://testnet.bscscan.com/tx/${allowanceTxHash}`} target="_blank" rel="noreferrer">Router allowance approval ↗</a>}</div>
+      <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-4"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-2">Authorization sequence</small><div className="text-[10.5px] text-inksoft leading-5">1. User signs the scoped Altana session. 2. AgentMarket verifies the session on-chain. 3. Only then is execution capital funded and the execution allowance created.</div>{capitalTxHash && <a className="inline-block mt-2 text-[9px] font-mono text-brass break-all" href={`https://testnet.bscscan.com/tx/${capitalTxHash}`} target="_blank" rel="noreferrer">Execution-capital transfer ↗</a>}</div>
+      <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-4"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-2">Router allowance</small><div className="text-[10.5px] text-inksoft leading-5">After the grant is verified, the Altana wallet approves the declared execution spender for exactly the requested amount of the same token address.</div>{props.approvalSpender && <div className="mt-2 font-mono text-[9px] break-all">Spender: {props.approvalSpender}</div>}{allowanceTxHash && <a className="inline-block mt-2 text-[9px] font-mono text-brass break-all" href={`https://testnet.bscscan.com/tx/${allowanceTxHash}`} target="_blank" rel="noreferrer">Router allowance approval ↗</a>}</div>
       <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-4"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-2">Contract allowlist</small><div className="flex flex-wrap gap-2">{props.allowedCalls.map((address) => <span key={address} className="font-mono text-[9px] px-2 py-1 rounded-md border border-line">{compact(address)}</span>)}</div><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-2 mt-4">Function selector allowlist</small><div className="flex flex-wrap gap-2">{props.allowedSelectors.map((value) => <span key={value} className="font-mono text-[9px] px-2 py-1 rounded-md border border-line">{compactHex(value)}</span>)}</div></div>
       {!reviewed && status === "idle" && <div className="mt-4 border border-brasslt/60 bg-[#fbf4db]/40 rounded-[12px_7px_13px_8px] p-4"><strong className="block font-display text-[13px] mb-2">This is what the agent is asking for — review before signing</strong><div className="flex flex-wrap gap-2 mb-3"><GrantPill label="Spend cap"/><GrantPill label="Call allowlist"/><GrantPill label="Expiry"/><GrantPill label="Revocation"/></div><p className="text-[10.5px] text-inksoft leading-5">Nothing is authorized yet. The exact token, spend amount, contract allowlist, and expiry shown above are the terms your wallet will sign.</p><button type="button" onClick={() => setReviewed(true)} className="mt-4 font-display font-bold text-[12px] px-5 py-3 border border-ink bg-paperhi text-ink btn-asym">I've reviewed this scope →</button></div>}
       {props.capabilitySource && <div className="mt-4 text-[9px] font-mono text-inksoft break-all">Capability source: {props.capabilitySource}</div>}
       {walletAddress && sessionKeyId && <div className="mt-4 border border-green/30 bg-green/5 rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]"><strong className="text-green">{statusText}</strong><div className="mt-1 font-mono text-[9px]">Altana wallet {compact(walletAddress)} · Agent key {compact(sessionKeyId)}</div></div>}
       {error && <div className="mt-4 border border-[#cfad9f] bg-rustsoft text-rust rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]">{error}</div>}
-      {(reviewed || status !== "idle") && <button type="button" onClick={() => void grant()} disabled={status === "checking" || status === "funding_capital" || status === "approving_allowance" || status === "signing" || status === "verifying" || status === "authorized"} className="mt-5 font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">{statusText} →</button>}
+      {(reviewed || status !== "idle") && <button type="button" onClick={() => void grant()} disabled={status === "checking" || status === "signing" || status === "verifying" || status === "funding_capital" || status === "approving_allowance" || status === "authorized"} className="mt-5 font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">{statusText} →</button>}
       <p className="mt-3 text-[10px] text-inksoft">AgentMarket never receives a private key or custody of execution capital. Token transfers and Altana approvals require explicit user-controlled wallet/Passkey signatures.</p>
     </section>
   );
