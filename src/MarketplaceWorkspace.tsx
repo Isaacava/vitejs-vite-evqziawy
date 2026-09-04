@@ -3,291 +3,41 @@ import { buildErc8183Plan, type Erc8183PlanStep, type Erc8183PreparedResponse } 
 import { getTestnetConnectedProvider, connectTestnetWallet } from "./lib/testnetWalletAuth";
 import { parseMarketplaceIntent } from "./lib/intent";
 
-type Agent = { id?: string; agent_id: string; name: string | null; description: string | null; category: string; status?: string | null; verification_status?: string | null };
-type Match = { agent: Agent; score: number; breakdown: Record<string, number>; scoreConfidence?: "high" | "medium" | "low"; evidence?: { reputationAvailable?: boolean; completionAvailable?: boolean; livenessAvailable?: boolean }; hireability?: { status: "ready" | "degraded" | "discoverable_only"; canCreateJob: boolean; reason: string }; reasons?: string[] };
-type MatchResponse = { intent: ReturnType<typeof parseMarketplaceIntent>; bestMatch: Match | null; bestHireableMatch?: Match | null; alternatives: Match[] };
-type MissionResponse = { mission: { id: string; title?: string; category?: string; budget?: number }; task: { id: string }; job: { id: string; status: string } };
-type QuoteResponse = { ok: boolean; quote: { quote_id: string; price: string; currency: string; quote_hash: string | null; status: string; expires_at: string }; provider?: { agent_id: string; name: string | null; endpoint: string; status: string | null }; signature_present?: boolean };
-type PreparedResponse = Erc8183PreparedResponse & { ok: boolean; quote: { quote_id: string; price: string; currency: string; quote_hash: string; expires_at: string; status: string }; agent: { agent_id: string; name: string | null; provider: string }; job_description: string };
-type Receipt = { hash: string; blockNumber: string; logs: Array<{ address: string; topics: readonly `0x${string}`[]; data: `0x${string}` }> };
-
-type TxBody = { to: string; data?: string; value?: string };
-
-const examples = ["Manage my BNB portfolio conservatively", "Find a safe yield strategy for my idle assets", "Monitor my lending health factor and liquidation risk", "Run a controlled grid strategy"];
-const human = (v: string) => v.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
-const compact = (v?: string | null) => v ? `${v.slice(0, 6)}…${v.slice(-4)}` : "—";
-const read = async (r: Response) => { const raw = await r.text(); let body: any = null; try { body = raw ? JSON.parse(raw) : null; } catch { throw new Error(`${r.status}: ${raw.replace(/\s+/g, " ").slice(0, 240)}`); } if (!r.ok) throw new Error(body?.error || "Request failed"); return body; };
-const categoryLabel = (v: string) => human(v);
-const gridParams = (category: string) => category === "grid_trading" ? { category, lower_price: 600, upper_price: 700, grid_levels: 12, notional: 100, max_slippage_bps: 50 } : { category };
-
-const walletTimeout = <T,>(promise: Promise<T>, ms: number, message: string) => new Promise<T>((resolve, reject) => {
-  const timer = window.setTimeout(() => reject(new Error(message)), ms);
-  promise.then((value) => { window.clearTimeout(timer); resolve(value); }, (error) => { window.clearTimeout(timer); reject(error); });
-});
-
-function normalizeChain(value: unknown) {
-  const raw = String(value ?? "").trim().toLowerCase();
-  if (raw.startsWith("0x")) return Number.parseInt(raw.slice(2), 16);
-  return Number(raw || 0);
-}
-
-async function sendAndConfirm(tx: TxBody): Promise<Receipt> {
-  if (!/^0x[a-fA-F0-9]{40}$/.test(tx.to)) throw new Error("Testnet transaction target is invalid.");
-  const provider = getTestnetConnectedProvider();
-  const chain = normalizeChain(await walletTimeout(provider.request({ method: "eth_chainId" }), 15000, "Wallet did not return the Testnet chain."));
-  if (chain !== 97) throw new Error("Wallet must remain on BSC Testnet (chain 97).");
-  const accounts = await walletTimeout(provider.request({ method: "eth_accounts" }), 15000, "Wallet did not return an account.") as string[];
-  const from = accounts?.[0];
-  if (!/^0x[a-fA-F0-9]{40}$/.test(from || "")) throw new Error("No valid Testnet wallet account is available.");
-  const balance = BigInt(String(await walletTimeout(provider.request({ method: "eth_getBalance", params: [from, "latest"] }), 15000, "Wallet did not return its BNB balance.")));
-  if (balance < 1000000000000000n) throw new Error("At least 0.001 BNB is required for BSC Testnet gas.");
-  const request = { from, to: tx.to, ...(tx.data ? { data: tx.data } : {}), ...(tx.value ? { value: tx.value } : {}) };
-  await walletTimeout(provider.request({ method: "eth_estimateGas", params: [request] }), 20000, "Testnet transaction preflight failed.");
-  const hash = String(await walletTimeout(provider.request({ method: "eth_sendTransaction", params: [request] }), 60000, "Wallet did not return the transaction hash."));
-  const started = Date.now();
-  while (Date.now() - started < 180000) {
-    const receipt = await walletTimeout(provider.request({ method: "eth_getTransactionReceipt", params: [hash] }), 15000, "Testnet RPC did not return the receipt.") as null | { status?: string; blockNumber?: string; logs?: Array<{ address?: string; topics?: string[]; data?: string }> };
-    if (receipt) {
-      if (String(receipt.status || "").toLowerCase() !== "0x1") throw new Error("The Testnet transaction reverted.");
-      if (!receipt.blockNumber) throw new Error("Confirmed Testnet transaction has no block number.");
-      return { hash, blockNumber: BigInt(receipt.blockNumber).toString(), logs: (receipt.logs || []).map((log) => ({ address: log.address || "", topics: (log.topics || []) as readonly `0x${string}`[], data: (log.data || "0x") as `0x${string}` })) };
-    }
-    await new Promise((resolve) => window.setTimeout(resolve, 2500));
-  }
-  throw new Error("Testnet transaction confirmation timed out.");
-}
-
-function Info({ title, value, mono = false, green = false }: { title: string; value: string; mono?: boolean; green?: boolean }) {
-  return <div className="border border-line rounded-[12px_7px_13px_8px] bg-paper p-3.5"><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1.5">{title}</small><strong className={`${mono ? "font-mono text-[11px] leading-relaxed" : "font-display text-[15px]"} ${green ? "text-green" : ""}`}>{value}</strong></div>;
-}
-
-const stepDescriptions: Record<string, string> = {
-  create: "Registers the escrow job. The confirmed receipt supplies the real job ID.",
-  register: "Registers the confirmed job against the Testnet policy.",
-  set_budget: "Applies the accepted provider quote as the job budget.",
-  approve: "Approves the payment token only when the existing allowance is insufficient.",
-  fund: "Moves the same accepted quote amount into escrow and makes the job FUNDED.",
-};
-
-export default function MarketplaceWorkspace() {
-  const [goal, setGoal] = useState(examples[0]);
-  const [result, setResult] = useState<MatchResponse | null>(null);
-  const [selected, setSelected] = useState<Match | null>(null);
-  const [mission, setMission] = useState<MissionResponse | null>(null);
-  const [quote, setQuote] = useState<QuoteResponse | null>(null);
-  const [prepared, setPrepared] = useState<PreparedResponse | null>(null);
-  const [step, setStep] = useState(1);
-  const [loading, setLoading] = useState(false);
-  const [quoteLoading, setQuoteLoading] = useState(false);
-  const [prepareLoading, setPrepareLoading] = useState(false);
-  const [signing, setSigning] = useState(false);
-  const [error, setError] = useState("");
-  const [ttl, setTtl] = useState(0);
-  const [chainJobId, setChainJobId] = useState("");
-  const [confirmed, setConfirmed] = useState<Record<string, Receipt>>({});
-  const [signError, setSignError] = useState("");
-
-  const intent = useMemo(() => parseMarketplaceIntent(goal), [goal]);
-  const best = selected || result?.bestHireableMatch || result?.bestMatch;
-  const plan = useMemo(() => prepared ? buildErc8183Plan(prepared, chainJobId || undefined) : [], [prepared, chainJobId]);
-  const pendingPlan = useMemo(() => plan.filter((item) => item.id === "approve" ? Boolean(item.transaction) && !confirmed[item.id] : Boolean(item.transaction) && !confirmed[item.id]), [plan, confirmed]);
-  const requiredPlan = useMemo(() => plan.filter((item) => item.transaction || item.id === "approve"), [plan]);
-  const complete = useMemo(() => requiredPlan.every((item) => item.id === "approve" && !item.transaction ? true : Boolean(confirmed[item.id])), [requiredPlan, confirmed]);
-
-  useEffect(() => {
-    if (!quote?.quote.expires_at) return;
-    const tick = () => setTtl(Math.max(0, Math.floor((new Date(quote.quote.expires_at).getTime() - Date.now()) / 1000)));
-    tick();
-    const id = window.setInterval(tick, 1000);
-    return () => window.clearInterval(id);
-  }, [quote?.quote.expires_at]);
-
-  useEffect(() => {
-    if (new URLSearchParams(location.search).get("funded") === "1") setStep(6);
-  }, []);
-
-  async function findAgent() {
-    setLoading(true); setError("");
-    try {
-      const next = await read(await fetch("/api/testnet/match", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal }) })) as MatchResponse;
-      setResult(next);
-      setSelected(next.bestHireableMatch || next.bestMatch);
-      setStep(2);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to find a Testnet agent");
-      setResult(null);
-      setSelected(null);
-    } finally { setLoading(false); }
-  }
-
-  async function hire() {
-    if (!best) return;
-    if (!best.hireability?.canCreateJob) { setError(best.hireability?.reason || "This provider is not ready to accept jobs."); return; }
-    setLoading(true); setError("");
-    try {
-      const authBody = await read(await fetch("/api/auth/me", { credentials: "include" }));
-      if (!authBody?.user) { setError("Connect and sign in with your Testnet wallet first."); return; }
-      const created = await read(await fetch("/api/missions", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal, agent_id: best.agent.agent_id, budget: 0 }) })) as MissionResponse;
-      setMission(created);
-      if (!best.agent.id) throw new Error("Selected provider is missing its marketplace database id");
-      const quoted = await read(await fetch("/api/testnet/quotes", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal, agent_id: best.agent.id, parameters: gridParams(best.agent.category), mission_id: created.mission.id }) })) as QuoteResponse;
-      setQuote(quoted);
-      setStep(3);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Mission creation failed"); }
-    finally { setLoading(false); }
-  }
-
-  async function acceptQuote() {
-    if (!quote?.quote.quote_id) return;
-    setQuoteLoading(true); setError("");
-    try {
-      const next = await read(await fetch("/api/testnet/quotes", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "accept", quote_id: quote.quote.quote_id }) })) as QuoteResponse;
-      setQuote(next);
-      setStep(4);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to accept quote"); }
-    finally { setQuoteLoading(false); }
-  }
-
-  async function prepare() {
-    if (!quote?.quote.quote_id || !mission?.mission.id) return;
-    setPrepareLoading(true); setError("");
-    try {
-      const auth = await read(await fetch("/api/auth/me", { credentials: "include" }));
-      if (!auth?.user?.wallet_address) throw new Error("Connect and sign in with your Testnet wallet first.");
-      const next = await read(await fetch("/api/testnet/prepare-quote", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mission_id: mission.mission.id, quote_id: quote.quote.quote_id, client_address: auth.user.wallet_address }) })) as PreparedResponse;
-      setPrepared(next);
-      setConfirmed({});
-      setChainJobId("");
-      setSignError("");
-      setStep(5);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to prepare the accepted quote"); }
-    finally { setPrepareLoading(false); }
-  }
-
-  async function syncReceipt(stepItem: Erc8183PlanStep, receipt: Receipt) {
-    if (!mission) throw new Error("Mission context is missing.");
-    const response = await fetch("/api/testnet/erc8183", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "sync_receipt", mission_id: mission.mission.id, job_id: mission.job.id, phase: stepItem.id, tx_hash: receipt.hash, chain_job_id: chainJobId || undefined }) });
-    const body = await response.json() as { ok?: boolean; error?: string; job?: { chain_job_id?: number | null }; onchain_job?: { id?: string } | null };
-    if (!response.ok) throw new Error(body.error || "Testnet receipt synchronization failed");
-    setConfirmed((current) => ({ ...current, [stepItem.id]: receipt }));
-    if (stepItem.id === "create") {
-      const discovered = body.job?.chain_job_id ?? body.onchain_job?.id;
-      if (discovered != null) setChainJobId(String(discovered));
-    }
-  }
-
-  async function signNextStep() {
-    if (!prepared || signing) return;
-    setSigning(true); setSignError("");
-    try {
-      await connectTestnetWallet();
-      let activePlan = buildErc8183Plan(prepared, chainJobId || undefined);
-      let next = activePlan.find((item) => !confirmed[item.id] && item.transaction);
-      if (!next) {
-        const approval = activePlan.find((item) => item.id === "approve");
-        if (approval && !approval.transaction && !confirmed.approve) {
-          setConfirmed((current) => ({ ...current, approve: { hash: "skipped", blockNumber: "—", logs: [] } }));
-        }
-        activePlan = buildErc8183Plan(prepared, chainJobId || undefined);
-        next = activePlan.find((item) => !confirmed[item.id] && item.transaction);
-      }
-      if (!next?.transaction) {
-        setStep(complete ? 6 : 5);
-        return;
-      }
-      const receipt = await sendAndConfirm(next.transaction);
-      await syncReceipt(next, receipt);
-      if (next.id === "create") {
-        // The API response is authoritative for the newly created job ID.
-        activePlan = buildErc8183Plan(prepared, chainJobId || undefined);
-      }
-    } catch (cause) {
-      setSignError(cause instanceof Error ? cause.message : "Testnet wallet signing failed");
-    } finally { setSigning(false); }
-  }
-
-  useEffect(() => {
-    if (step === 5 && complete) setStep(6);
-  }, [step, complete]);
-
-  const labels = ["Goal", "Match", "Quote", "Mission", "Sign", "Fund"];
-  const mins = Math.floor(ttl / 60); const secs = String(ttl % 60).padStart(2, "0");
-  const scoreRows = best ? Object.entries(best.breakdown) : [];
-
-  return (
-    <main className="max-w-[1240px] mx-auto px-6 md:px-8 py-8 relative font-body text-ink">
-      <section className="flex items-center justify-between mb-5">
-        <span className="font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477]">Create mission / Hiring flow</span>
-        <button className="text-[11px] font-bold text-inksoft hover:text-ink" type="button" onClick={() => location.assign("/dashboard")}>✕ Close</button>
-      </section>
-
-      {error && <div className="mb-4 border border-[#cfad9f] bg-rustsoft text-rust rounded-[14px_8px_15px_9px] px-4 py-3 text-[12px]">{error}</div>}
-
-      <div className="flex items-center gap-0 mb-8 overflow-x-auto">
-        {labels.map((label, i) => { const n = i + 1; return <div key={label} className={`flex items-center ${n === labels.length ? "" : "flex-1"} min-w-[86px]`}><div className="flex flex-col items-center shrink-0"><div className={`w-7 h-7 rounded-full flex items-center justify-center font-mono text-[10.5px] font-bold ${n <= step ? "bg-ink text-paperhi" : "bg-linesoft text-inksoft"} ${n === step ? "ring-2 ring-brass ring-offset-2 ring-offset-paper" : ""}`}>{n}</div><span className={`font-mono text-[8.5px] uppercase tracking-wide mt-1.5 ${n <= step ? "text-ink" : "text-[#9aa3b1]"}`}>{label}</span></div>{n !== labels.length && <div className={`flex-1 h-[2px] mx-2 mb-4 ${n < step ? "bg-brass" : "bg-linesoft"}`} />}</div>; })}
-      </div>
-
-      <div className="bg-paperhi border border-line card-asym-lg p-6 md:p-8 min-h-[420px]">
-        {step === 1 && <>
-          <span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-brass mb-3"><span className="w-1.5 h-1.5 rounded-full bg-brass" />Step 1 / 6 · Intent</span>
-          <h2 className="font-display text-[24px] font-bold tracking-tight mb-2">State the outcome you want.</h2>
-          <p className="text-[13px] text-inksoft mb-5 max-w-[520px]">Plain language in, structured intent out. No directory to browse — the parser reads the goal and the matcher does the rest.</p>
-          <div className="border border-line rounded-[16px_8px_18px_9px] bg-paper p-4 mb-4"><small className="block font-mono text-[9px] uppercase text-[#8a8477] mb-2">Your goal</small><textarea value={goal} onChange={(e) => setGoal(e.target.value)} className="w-full bg-transparent font-display text-[17px] font-semibold resize-none outline-none" rows={2} /></div>
-          <div className="grid sm:grid-cols-3 gap-3 mb-6"><Info title="Category" value={categoryLabel(intent.category)} /><Info title="Risk profile" value={intent.risk} /><Info title="Keywords" value={goal.toLowerCase().split(/\s+/).filter((w) => w.length >= 4).slice(0, 6).join(" · ") || "—"} mono /></div>
-          <button disabled={loading} type="button" onClick={() => void findAgent()} className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">{loading ? "Finding…" : "Find matching agents →"}</button>
-        </>}
-
-        {step === 2 && <>
-          <span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-brass mb-3"><span className="w-1.5 h-1.5 rounded-full bg-brass" />Step 2 / 6 · Explainable match</span>
-          <h2 className="font-display text-[24px] font-bold tracking-tight mb-1">Top fit, with a paper trail.</h2>
-          <p className="text-[13px] text-inksoft mb-5 max-w-[560px]">Weighted, transparent scoring — capability 35 · availability 15 · verification 15 · reputation 15 · completion 10 · liveness 10.</p>
-          {best ? <>
-            <div className="border border-brass/40 bg-brasssoft/60 rounded-[18px_9px_20px_10px] p-5 mb-4">
-              <div className="flex justify-between items-start mb-4"><div><small className="block font-mono text-[8.5px] uppercase text-brass mb-1">Best fit</small><strong className="font-display text-[19px] font-bold">{best.agent.name || `Agent #${best.agent.agent_id}`}</strong><div className="text-[11.5px] text-inksoft mt-0.5">{best.agent.description || categoryLabel(best.agent.category)}</div></div><div className="w-16 h-16 rounded-full border-2 border-brass flex flex-col items-center justify-center bg-paperhi shrink-0"><b className="font-display text-[19px] font-bold leading-none">{Math.round(best.score)}</b><span className="text-[8px] text-inksoft">/ 100</span></div></div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-5 gap-y-2.5 mb-4">{scoreRows.map(([key, value]) => { const max = ({ capability: 35, availability: 15, verification: 15, reputation: 15, completion: 10, liveness: 10 } as Record<string, number>)[key] || 1; const pct = Math.max(0, Math.min(100, Number(value) / max * 100)); return <div key={key}><div className="flex justify-between text-[10px] mb-1"><span className="text-inksoft">{human(key)}</span><b className="font-mono">{value}/{max}</b></div><i className="block h-[3px] bg-linesoft rounded-full overflow-hidden"><u className="block h-full bg-brass" style={{ width: `${pct}%` }} /></i></div>; })}</div>
-              <div className="flex flex-wrap gap-2">{(best.reasons || []).slice(0, 4).map((reason) => <span key={reason} className="font-mono text-[9.5px] px-2.5 py-1 rounded-full bg-paperhi border border-line text-inksoft">{reason}</span>)}</div>
-            </div>
-            <div className="grid sm:grid-cols-2 gap-3 mb-6">{(result?.alternatives || []).slice(0, 2).map((alternative) => <div key={alternative.agent.agent_id} className="border border-line rounded-[14px_8px_16px_9px] p-4"><div className="flex justify-between items-center mb-1"><strong className="text-[13px] font-bold">{alternative.agent.name || `Agent #${alternative.agent.agent_id}`}</strong><span className="font-mono text-[11px] text-inksoft">{Math.round(alternative.score)}</span></div><div className="text-[10.5px] text-inksoft">{alternative.reasons?.[0] || "Alternative match"}</div></div>)}</div>
-            <div className="flex gap-3"><button type="button" onClick={() => void hire()} disabled={loading || !best.hireability?.canCreateJob} className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">{loading ? "Creating mission…" : `Hire ${best.agent.name || "agent"} `}<span className="text-brasslt">→</span></button><button type="button" onClick={() => setStep(1)} className="font-bold text-[12px] px-4 py-3 text-inksoft">← Back</button></div>
-          </> : <div className="py-10 text-[13px] text-inksoft">No suitable Testnet agent found.</div>}
-        </>}
-
-        {step === 3 && quote && <>
-          <span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-brass mb-3"><span className="w-1.5 h-1.5 rounded-full bg-brass" />Step 3 / 6 · Provider quote</span>
-          <h2 className="font-display text-[24px] font-bold tracking-tight mb-1">The agent sets the price.</h2>
-          <p className="text-[13px] text-inksoft mb-5 max-w-[560px]">Budget isn't something you type in. The agent's endpoint negotiates terms for this exact goal and returns a signed, time-boxed quote.</p>
-          <div className="border border-line rounded-[18px_9px_20px_10px] overflow-hidden mb-6 bg-paper"><div className="flex justify-between items-center px-5 py-3 dash-b"><span className="font-mono text-[9px] uppercase text-[#8a8477]">marketplace_quotes</span><span className={`inline-block font-mono text-[9.5px] px-2.5 py-1 rounded-lg ${quote.quote.status === "accepted" ? "status-green" : "status-brass"}`}>{human(quote.quote.status)}</span></div><div className="grid sm:grid-cols-2 gap-4 p-5"><Info title="Quoted price" value={`${quote.quote.price} ${quote.quote.currency}`} mono /><Info title="Provider signature" value={quote.signature_present ? "Present ✓" : "Not present"} green /><Info title="Quote hash" value={compact(quote.quote.quote_hash)} mono /><Info title="Expires" value={ttl > 0 ? `in ${mins}:${secs}` : "expired"} /></div><div className="px-5 py-3 dash-t text-[10.5px] text-inksoft">Endpoint negotiation: <code className="font-mono text-[10.5px] bg-paperhi px-1 rounded">POST /erc8183/negotiate</code> · provider quote only</div></div>
-          <div className="flex gap-3"><button type="button" disabled={quoteLoading || ttl <= 0 || quote.quote.status === "accepted"} onClick={() => void acceptQuote()} className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">{quoteLoading ? "Accepting…" : quote.quote.status === "accepted" ? "Quote accepted" : "Accept quote →"}</button><button type="button" onClick={() => setStep(2)} className="font-bold text-[12px] px-4 py-3 text-inksoft">← Back</button></div>
-        </>}
-
-        {step === 4 && mission && quote && <>
-          <span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-brass mb-3"><span className="w-1.5 h-1.5 rounded-full bg-brass" />Step 4 / 6 · Mission</span>
-          <h2 className="font-display text-[24px] font-bold tracking-tight mb-1">Mission created.</h2>
-          <p className="text-[13px] text-inksoft mb-5 max-w-[560px]">Recorded in the Supabase workflow layer. The budget below isn't a new number — it's the accepted quote, carried forward.</p>
-          <div className="border border-line rounded-[18px_9px_20px_10px] p-5 mb-6 bg-paper"><div className="grid sm:grid-cols-2 gap-4 mb-4"><Info title="Title" value={mission.mission.title || `${selected?.agent.name || "Agent"} mission`} /><Info title="Category" value={human(mission.mission.category || intent.category)} /><Info title="Assigned agent" value={selected?.agent.name || "Provider"} /><Info title="Budget (from accepted quote)" value={`${quote.quote.price} ${quote.quote.currency}`} mono /></div><div className="flex justify-between items-end pt-4 dash-t"><div><small className="block font-mono text-[8.5px] uppercase text-[#8a8477] mb-1">Status</small><span className="inline-block font-mono text-[9.5px] px-2.5 py-1 rounded-lg status-brass">Open — not yet funded</span></div><span className="font-mono text-[9.5px] text-[#9aa3b1]">quote_id: {compact(quote.quote.quote_id)}</span></div></div>
-          <div className="flex gap-3"><button type="button" onClick={() => void prepare()} disabled={prepareLoading || quote.quote.status !== "accepted"} className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">{prepareLoading ? "Preparing…" : "Prepare ERC-8183 job →"}</button><button type="button" onClick={() => setStep(3)} className="font-bold text-[12px] px-4 py-3 text-inksoft">← Back</button></div>
-        </>}
-
-        {step === 5 && prepared && <>
-          <span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-brass mb-3"><span className="w-1.5 h-1.5 rounded-full bg-brass" />Step 5 / 6 · ERC-8183 preparation</span>
-          <h2 className="font-display text-[24px] font-bold tracking-tight mb-1">Your wallet signs five steps.</h2>
-          <p className="text-[13px] text-inksoft mb-5 max-w-[560px]">Nothing is custodied. Each line is a real wallet transaction, confirmed on BSC Testnet before the next dependent step unlocks.</p>
-          <div className="border border-line rounded-[18px_9px_20px_10px] overflow-hidden mb-6">
-            {plan.map((item, index) => { const skipped = item.id === "approve" && !item.transaction; const done = Boolean(confirmed[item.id]) || skipped; return <div key={item.id} className={`flex items-center gap-3 p-4 ${index < plan.length - 1 ? "dash-b" : ""} bg-paper`}><span className={`w-5 h-5 rounded-full border-2 shrink-0 flex items-center justify-center ${done ? "bg-green border-green text-white" : "border-line"}`}>{done ? "✓" : ""}</span><div><strong className="block font-mono text-[12px] font-medium">{item.label}</strong><span className="block text-[10.5px] text-inksoft">{stepDescriptions[item.id] || item.description}</span>{skipped && <small className="block mt-1 font-mono text-[8.5px] uppercase text-green">Already covered · no wallet prompt</small>}</div></div>; })}
-          </div>
-          {signError && <div className="mb-4 border border-[#cfad9f] bg-rustsoft text-rust rounded-[14px_8px_15px_9px] px-4 py-3 text-[11px]">{signError}</div>}
-          <div className="flex gap-3"><button type="button" onClick={() => void signNextStep()} disabled={signing || complete} className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">{signing ? "Signing in wallet…" : complete ? "Continue →" : "Sign in wallet →"}</button><button type="button" onClick={() => setStep(4)} className="font-bold text-[12px] px-4 py-3 text-inksoft">← Back</button></div>
-        </>}
-
-        {step === 6 && <>
-          <span className="inline-flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-widest text-green mb-3"><span className="w-1.5 h-1.5 rounded-full bg-green" />Step 6 / 6 · Chain receipt</span>
-          <h2 className="font-display text-[24px] font-bold tracking-tight mb-1">Funded, on-chain.</h2>
-          <p className="text-[13px] text-inksoft mb-5 max-w-[560px]">The receipt was confirmed before the mission moved into Fund. The application now follows the real ERC-8183 job state.</p>
-          <div className="border border-line rounded-[18px_9px_20px_10px] p-5 mb-6 bg-paper grid sm:grid-cols-2 gap-4"><Info title="Chain job ID" value={chainJobId ? `#${chainJobId}` : "Confirmed"} mono /><Info title="Status" value="Funded" green /><Info title="Network" value="BSC Testnet · Chain 97" /><Info title="Notified" value={selected?.agent.name || "Provider agent"} /></div>
-          <p className="text-[11.5px] text-inksoft mb-4 max-w-[520px]">From here the job lives in the provider's hands. Track its progress on the mission's own page — the same one you'd open from Missions.</p>
-          <div className="flex gap-3"><button type="button" onClick={() => location.assign(`/missions`)} className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">Go to Missions →</button><button type="button" onClick={() => location.assign(`/mission?job=${encodeURIComponent(mission?.job.id || "")}`)} className="font-bold text-[12px] px-4 py-3 text-inksoft">Watch provider progress</button></div>
-        </>}
-      </div>
-    </main>
-  );
+type Agent={id?:string;agent_id:string;name:string|null;description:string|null;category:string;status?:string|null;verification_status?:string|null};
+type Match={agent:Agent;score:number;breakdown:Record<string,number>;reasons?:string[];hireability?:{status:"ready"|"degraded"|"discoverable_only";canCreateJob:boolean;reason:string}};
+type MatchResponse={intent:ReturnType<typeof parseMarketplaceIntent>;bestMatch:Match|null;bestHireableMatch?:Match|null;alternatives:Match[]};
+type CapInput={name:string;label:string;type:string;required?:boolean;help?:string};
+type Cap={version?:number;inputs?:CapInput[];defaults?:Record<string,unknown>};
+type CapResponse={capability:Cap;agent:{owner:string;category:string}};
+type MissionResponse={mission:{id:string;title?:string;category?:string};task:{id:string};job:{id:string;status:string}};
+type QuoteResponse={ok:boolean;quote:{quote_id:string;price:string;currency:string;quote_hash:string|null;status:string;expires_at:string};provider?:{agent_id:string;name:string|null;endpoint:string;status:string|null;wallet_address?:string};signature_present?:boolean};
+type Prepared=Erc8183PreparedResponse&{ok:boolean;quote:{quote_id:string;price:string;currency:string;quote_hash:string;expires_at:string;status:string};agent:{agent_id:string;name:string|null;provider:string};job_description:string};
+type Receipt={hash:string;blockNumber:string;logs:Array<{address:string;topics:readonly `0x${string}`[];data:`0x${string}`}>};
+type Tx={to:string;data?:string;value?:string};
+const examples=["Manage my BNB portfolio conservatively","Find a safe yield strategy for my idle assets","Monitor my lending health factor and liquidation risk","Run a controlled grid strategy"];
+const human=(v:string)=>v.replace(/_/g," ").replace(/\b\w/g,c=>c.toUpperCase()); const compact=(v?:string|null)=>v?`${v.slice(0,6)}…${v.slice(-4)}`:"—";
+const read=async(r:Response)=>{const raw=await r.text();let b:any=null;try{b=raw?JSON.parse(raw):null}catch{throw Error(`${r.status}: ${raw.slice(0,180)}`)}if(!r.ok)throw Error(b?.error||"Request failed");return b};
+async function send(tx:Tx):Promise<Receipt>{const p=getTestnetConnectedProvider();const c=String(await p.request({method:"eth_chainId"}));if(Number.parseInt(c.replace(/^0x/,""),16)!==97)throw Error("Wallet must remain on BSC Testnet (chain 97).");const a=(await p.request({method:"eth_accounts"})) as string[];if(!a?.[0])throw Error("No connected wallet account.");const gas=await p.request({method:"eth_estimateGas",params:[{from:a[0],to:tx.to,...tx.data?{data:tx.data}:{},...tx.value?{value:tx.value}:{}}]});void gas;const h=String(await p.request({method:"eth_sendTransaction",params:[{from:a[0],to:tx.to,...tx.data?{data:tx.data}:{},...tx.value?{value:tx.value}:{}}]}));for(let i=0;i<72;i++){const r=await p.request({method:"eth_getTransactionReceipt",params:[h]}) as any;if(r){if(r.status!=="0x1")throw Error("Testnet transaction reverted.");return{hash:h,blockNumber:BigInt(r.blockNumber).toString(),logs:(r.logs||[]).map((x:any)=>({address:x.address||"",topics:x.topics||[],data:x.data||"0x"}))}}await new Promise(x=>setTimeout(x,2500))}throw Error("Testnet transaction confirmation timed out.")}
+function Info({title,value,mono=false,green=false}:{title:string;value:string;mono?:boolean;green?:boolean}){return <div className="border border-line rounded-[12px_7px_13px_8px] bg-paper p-3"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">{title}</small><strong className={`${mono?"font-mono text-[11px]":"font-display text-[14px]"} ${green?"text-green":""}`}>{value}</strong></div>}
+export default function MarketplaceWorkspace(){
+ const[goal,setGoal]=useState(examples[0]),[result,setResult]=useState<MatchResponse|null>(null),[selected,setSelected]=useState<Match|null>(null),[cap,setCap]=useState<CapResponse|null>(null),[params,setParams]=useState<Record<string,any>>({}),[yieldText,setYieldText]=useState(""),[mission,setMission]=useState<MissionResponse|null>(null),[quote,setQuote]=useState<QuoteResponse|null>(null),[prepared,setPrepared]=useState<Prepared|null>(null),[step,setStep]=useState(1),[loading,setLoading]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(""),[signError,setSignError]=useState(""),[ttl,setTtl]=useState(0),[job,setJob]=useState(""),[done,setDone]=useState<Record<string,Receipt>>({});
+ const intent=useMemo(()=>parseMarketplaceIntent(goal),[goal]); const best=selected||result?.bestHireableMatch||result?.bestMatch; const plan=useMemo(()=>prepared?buildErc8183Plan(prepared,job||undefined):[],[prepared,job]); const required=useMemo(()=>plan.filter(x=>x.transaction||x.id==="approve"),[plan]); const complete=required.every(x=>x.id==="approve"&&!x.transaction||!!done[x.id]);
+ useEffect(()=>{if(!quote?.quote.expires_at)return;const f=()=>setTtl(Math.max(0,Math.floor((new Date(quote.quote.expires_at).getTime()-Date.now())/1000)));f();const i=setInterval(f,1000);return()=>clearInterval(i)},[quote?.quote.expires_at]); useEffect(()=>{if(new URLSearchParams(location.search).get("funded")==="1")setStep(6)},[]);
+ async function findAgent(){setLoading(true);setError("");try{const r=await read(await fetch("/api/testnet/match",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({goal})})) as MatchResponse;const b=r.bestHireableMatch||r.bestMatch;if(!b)throw Error("No suitable Testnet agent found.");const c=await read(await fetch(`/api/testnet/capabilities?agent_id=${encodeURIComponent(b.agent.agent_id)}`)) as CapResponse;setResult(r);setSelected(b);setCap(c);setParams({});setYieldText("");setStep(2)}catch(e){setError(e instanceof Error?e.message:"Unable to resolve agent capability")}finally{setLoading(false)}}
+ function structured(){if(!best)return{};if(best.agent.category==="grid_trading")return{category:"grid_trading",lower_price:600,upper_price:700,grid_levels:12,notional:100,max_slippage_bps:50};if(best.agent.category==="rebalancing")return{current_tick:Number(params.current_tick),tick_lower:Number(params.tick_lower),tick_upper:Number(params.tick_upper)};if(best.agent.category==="health_factor")return{health_factor:Number(params.health_factor)};if(best.agent.category==="yield")return{opportunities:yieldText.split(/\n+/).map(x=>x.trim()).filter(Boolean).map(x=>{const[a="",b="",c="",d=""]=x.split("|").map(y=>y.trim());return{protocol:a,market:b,apr:Number(c),target:d}}).filter(x=>Number.isFinite(x.apr))};return{...params}}
+ function validate(p:Record<string,any>){if(!best||best.agent.category==="grid_trading")return;for(const i of(cap?.capability.inputs||[])){if(i.required!==false&&(p[i.name]===undefined||p[i.name]===null||p[i.name]===""||(Array.isArray(p[i.name])&&!p[i.name].length)))throw Error(`${i.name} is required.`)}if(best.agent.category==="rebalancing"&&p.tick_upper<=p.tick_lower)throw Error("Upper tick must be greater than lower tick.");if(best.agent.category==="health_factor"&&p.health_factor<=0)throw Error("Health factor must be positive.")}
+ async function hire(){if(!best)return;if(!best.hireability?.canCreateJob){setError(best.hireability?.reason||"Provider not ready.");return}setBusy(true);setError("");try{const auth=await read(await fetch("/api/auth/me",{credentials:"include"}));if(!auth?.user)throw Error("Connect and sign in with your Testnet wallet first.");const p=structured();validate(p);const m=await read(await fetch("/api/missions",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify({goal,agent_id:best.agent.agent_id,budget:0})})) as MissionResponse;setMission(m);if(!best.agent.id)throw Error("Selected provider is missing its database id.");const q=await read(await fetch("/api/testnet/quotes",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify({goal,agent_id:best.agent.id,parameters:p,mission_id:m.mission.id})})) as QuoteResponse;setQuote(q);setStep(3)}catch(e){setError(e instanceof Error?e.message:"Mission creation failed")}finally{setBusy(false)}}
+ async function accept(){if(!quote)return;setBusy(true);try{setQuote(await read(await fetch("/api/testnet/quotes",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"accept",quote_id:quote.quote.quote_id})})));setStep(4)}catch(e){setError(e instanceof Error?e.message:"Quote acceptance failed")}finally{setBusy(false)}}
+ async function prepare(){if(!quote||!mission)return;setBusy(true);try{const a=await read(await fetch("/api/auth/me",{credentials:"include"}));if(!a?.user?.wallet_address)throw Error("Connect and sign in with your Testnet wallet first.");setPrepared(await read(await fetch("/api/testnet/prepare-quote",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify({mission_id:mission.mission.id,quote_id:quote.quote.quote_id,client_address:a.user.wallet_address})})));setJob("");setDone({});setStep(5)}catch(e){setError(e instanceof Error?e.message:"Preparation failed")}finally{setBusy(false)}}
+ async function sync(item:Erc8183PlanStep,r:Receipt){if(!mission)throw Error("Mission context missing.");const x=await fetch("/api/testnet/erc8183",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"sync_receipt",mission_id:mission.mission.id,job_id:mission.job.id,phase:item.id,tx_hash:r.hash,chain_job_id:job||undefined})});const b=await x.json();if(!x.ok)throw Error(b.error||"Receipt synchronization failed");setDone(v=>({...v,[item.id]:r}));if(item.id==="create"&&(b.job?.chain_job_id??b.onchain_job?.id)!=null)setJob(String(b.job?.chain_job_id??b.onchain_job.id))}
+ async function sign(){if(!prepared||busy)return;setBusy(true);setSignError("");try{await connectTestnetWallet();let p=buildErc8183Plan(prepared,job||undefined);let n=p.find(x=>!done[x.id]&&x.transaction);if(!n){const a=p.find(x=>x.id==="approve");if(a&&!a.transaction&&!done.approve)setDone(v=>({...v,approve:{hash:"skipped",blockNumber:"—",logs:[]}}));p=buildErc8183Plan(prepared,job||undefined);n=p.find(x=>!done[x.id]&&x.transaction)}if(n?.transaction)await sync(n,await send(n.transaction));}catch(e){setSignError(e instanceof Error?e.message:"Wallet signing failed")}finally{setBusy(false)}} useEffect(()=>{if(step===5&&complete)setStep(6)},[step,complete]);
+ const labels=["Goal","Match","Quote","Mission","Sign","Fund"], mins=Math.floor(ttl/60),secs=String(ttl%60).padStart(2,"0"),inputs=cap?.capability.inputs||[];
+ return <main className="max-w-[1240px] mx-auto px-6 md:px-8 py-8 font-body text-ink"><section className="flex justify-between mb-5"><span className="font-mono text-[9px] uppercase text-[#8a8477]">Create mission / Hiring flow</span><button className="text-[11px] font-bold" onClick={()=>location.assign("/dashboard")}>✕ Close</button></section>{error&&<div className="mb-4 border border-[#cfad9f] bg-rustsoft text-rust rounded-[14px_8px_15px_9px] px-4 py-3 text-[12px]">{error}</div>}<div className="flex mb-8 overflow-x-auto">{labels.map((l,i)=><div key={l} className="flex-1 min-w-[70px] text-center"><b className={`mx-auto w-7 h-7 rounded-full flex items-center justify-center font-mono text-[10px] ${i+1<=step?"bg-ink text-paperhi":"bg-linesoft text-inksoft"}`}>{i+1}</b><span className="block font-mono text-[8px] uppercase mt-1">{l}</span></div>)}</div><div className="bg-paperhi border border-line card-asym-lg p-6 md:p-8 min-h-[420px]">
+ {step===1&&<><h2 className="font-display text-[24px] font-bold mb-2">State the outcome you want.</h2><p className="text-[13px] text-inksoft mb-5">The marketplace matches the goal first, then loads that agent's required task inputs.</p><textarea value={goal} onChange={e=>setGoal(e.target.value)} rows={2} className="w-full border border-line rounded-[14px] bg-paper p-4 font-display text-[17px] outline-none mb-5"/><div className="grid sm:grid-cols-3 gap-3 mb-5"><Info title="Category" value={human(intent.category)}/><Info title="Risk" value={intent.risk}/><Info title="Keywords" value={goal.toLowerCase().split(/\s+/).filter(x=>x.length>3).slice(0,5).join(" · ")||"—"} mono/></div><button disabled={loading} onClick={()=>void findAgent()} className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">{loading?"Matching…":"Find matching agents →"}</button></>}
+ {step===2&&best&&<><h2 className="font-display text-[24px] font-bold mb-1">Confirm the inputs this agent requires.</h2><p className="text-[13px] text-inksoft mb-5">Only required fields from the selected agent capability schema are requested. Grid remains unchanged.</p><div className="border border-brass/40 bg-brasssoft/60 rounded-[16px] p-5 mb-4"><strong className="font-display text-[18px]">{best.agent.name||best.agent.agent_id}</strong><div className="text-[11px] text-inksoft mt-1">Provider wallet: {compact(cap?.agent.owner)}</div></div>{best.agent.category==="grid_trading"?<Info title="Grid task" value="Existing defaults unchanged: 600–700 · 12 levels · 100 notional · 50 bps slippage."/>:<div className="border border-line rounded-[14px] bg-paper p-4 mb-5"><div className="grid sm:grid-cols-2 gap-4">{inputs.map(i=>i.type==="opportunities"?<div key={i.name} className="sm:col-span-2"><label className="font-mono text-[9px] uppercase block mb-1">{i.label} · required</label><textarea rows={4} value={yieldText} onChange={e=>setYieldText(e.target.value)} placeholder="Protocol | market | APR | target" className="w-full border border-line rounded-[10px] bg-paperhi p-3 text-[12px]"/><small className="text-[10px] text-inksoft">{i.help}</small></div>:<div key={i.name}><label className="font-mono text-[9px] uppercase block mb-1">{i.label} · required</label><input type="number" value={params[i.name]??""} onChange={e=>setParams(v=>({...v,[i.name]:e.target.value}))} className="w-full border border-line rounded-[10px] bg-paperhi p-3 text-[12px]"/></div>)}</div></div>}<div className="flex gap-3"><button disabled={busy} onClick={()=>void hire()} className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">{busy?"Getting quote…":"Confirm & get quote →"}</button><button onClick={()=>setStep(1)} className="font-bold text-[12px] px-4 py-3 text-inksoft">← Back</button></div></>}
+ {step===3&&quote&&<><h2 className="font-display text-[24px] font-bold mb-2">The selected agent sets the price.</h2><div className="grid sm:grid-cols-2 gap-3 mb-6"><Info title="Quoted price" value={`${quote.quote.price} ${quote.quote.currency}`} mono/><Info title="Provider wallet" value={compact(quote.provider?.wallet_address)} mono/><Info title="Quote hash" value={compact(quote.quote.quote_hash)} mono/><Info title="Expires" value={ttl>0?`in ${mins}:${secs}`:"expired"}/></div><div className="flex gap-3"><button disabled={busy||ttl<=0} onClick={()=>void accept()} className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">{busy?"Accepting…":"Accept quote →"}</button><button onClick={()=>setStep(2)} className="font-bold text-[12px] px-4 py-3 text-inksoft">← Back</button></div></>}
+ {step===4&&mission&&quote&&<><h2 className="font-display text-[24px] font-bold mb-2">Mission created.</h2><div className="grid sm:grid-cols-2 gap-3 mb-6"><Info title="Assigned agent" value={selected?.agent.name||"Provider"}/><Info title="Category" value={human(mission.mission.category||intent.category)}/><Info title="Accepted quote" value={`${quote.quote.price} ${quote.quote.currency}`} mono/><Info title="Mission status" value="Open — not yet funded"/></div><button disabled={busy} onClick={()=>void prepare()} className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">{busy?"Preparing…":"Prepare ERC-8183 job →"}</button></>}
+ {step===5&&prepared&&<><h2 className="font-display text-[24px] font-bold mb-2">Sign the real ERC-8183 steps.</h2><p className="text-[13px] text-inksoft mb-5">The server has already bound the selected agent's provider wallet into createJob.</p><div className="border border-line rounded-[16px] overflow-hidden mb-5">{plan.map((x,i)=><div key={x.id} className={`p-4 bg-paper ${i<plan.length-1?"dash-b":""}`}><b className="font-mono text-[11px]">{done[x.id]||x.id==="approve"&&!x.transaction?"✓ ":""}{x.label}</b><div className="text-[10px] text-inksoft">{stepDescriptions[x.id]||x.description}</div></div>)}</div>{signError&&<div className="mb-4 text-[11px] text-rust">{signError}</div>}<button disabled={busy||complete} onClick={()=>void sign()} className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">{busy?"Signing…":complete?"Complete →":"Sign next step →"}</button></>}
+ {step===6&&<><h2 className="font-display text-[24px] font-bold mb-2">Funded, on-chain.</h2><p className="text-[13px] text-inksoft mb-5">The real ERC-8183 job is now assigned to the selected provider wallet.</p><div className="grid sm:grid-cols-2 gap-3 mb-6"><Info title="Chain job ID" value={job?`#${job}`:"Confirmed"} mono/><Info title="Status" value="Funded" green/><Info title="Network" value="BSC Testnet · Chain 97"/><Info title="Provider" value={selected?.agent.name||"Provider"}/></div><button onClick={()=>location.assign("/missions")} className="font-display font-bold text-[12px] px-5 py-3 bg-ink text-paperhi btn-asym">Go to Missions →</button></>}
+ </div></main>;
 }
