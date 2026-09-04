@@ -1,6 +1,6 @@
 import { createPublicClient, http, type Address } from "viem";
 import { bscTestnet } from "viem/chains";
-import { buildPancakeExactInputSingle, buildPancakeTestnetConfig, type PancakeExactInputSingleParams } from "./pancakeSwap.js";
+import { buildPancakeApproval, buildPancakeExactInputSingle, buildPancakeTestnetConfig, type PancakeExactInputSingleParams } from "./pancakeSwap.js";
 
 const publicClient = createPublicClient({
   chain: bscTestnet,
@@ -178,25 +178,25 @@ export async function pancakeSwapPreflight(input: Record<string, unknown>) {
   const call = buildPancakeExactInputSingle(params);
   const tokenInBalanceOk = tokenInBalance >= amountIn;
   const tokenInAllowanceOk = tokenInAllowance >= amountIn;
+  const approvalCall = tokenInAllowanceOk ? null : buildPancakeApproval(tokenIn, router, amountIn.toString());
 
   if (!tokenInBalanceOk) {
     throw new Error(`tokenIn balance ${tokenInBalance.toString()} is below amountIn ${amountIn.toString()}`);
   }
-  if (!tokenInAllowanceOk) {
-    throw new Error(`tokenIn allowance ${tokenInAllowance.toString()} is below amountIn ${amountIn.toString()}`);
-  }
 
   let simulationData: string | null = null;
-  try {
-    const simulation = await publicClient.call({
-      account: recipient,
-      to: router,
-      data: call.data,
-      value: call.value ?? 0n,
-    });
-    simulationData = simulation.data ?? null;
-  } catch (error) {
-    throw new Error(`PancakeSwap exactInputSingle simulation reverted: ${describeSimulationError(error)}`);
+  if (tokenInAllowanceOk) {
+    try {
+      const simulation = await publicClient.call({
+        account: recipient,
+        to: router,
+        data: call.data,
+        value: call.value ?? 0n,
+      });
+      simulationData = simulation.data ?? null;
+    } catch (error) {
+      throw new Error(`PancakeSwap exactInputSingle simulation reverted: ${describeSimulationError(error)}`);
+    }
   }
 
   return {
@@ -217,6 +217,8 @@ export async function pancakeSwapPreflight(input: Record<string, unknown>) {
       liquidity: item.liquidity?.toString() ?? null,
     })),
     call,
+    approval_call: approvalCall,
+    requires_approval: !tokenInAllowanceOk,
     checks: {
       token_in_balance: tokenInBalance.toString(),
       token_in_allowance: tokenInAllowance.toString(),
@@ -224,10 +226,12 @@ export async function pancakeSwapPreflight(input: Record<string, unknown>) {
       token_in_allowance_ok: tokenInAllowanceOk,
       pool_exists: true,
       pool_liquidity_ok: true,
-      simulation_ok: true,
+      simulation_ok: tokenInAllowanceOk,
     },
     simulation_return_data: simulationData,
     broadcast: false,
-    note: `Read-only BSC Testnet preflight. The provider defaults to ${config.tokenInSymbol}/${config.tokenOutSymbol}; factory pool discovery, active pool liquidity, balance, allowance and exact swap calldata are checked before simulation.`,
+    note: tokenInAllowanceOk
+      ? `Read-only BSC Testnet preflight. The provider defaults to ${config.tokenInSymbol}/${config.tokenOutSymbol}; factory pool discovery, active pool liquidity, balance, allowance and exact swap calldata are checked before simulation.`
+      : `Read-only BSC Testnet preflight. The requested ${config.tokenInSymbol} allowance is below amountIn, so execution must first submit the bounded ERC-20 approval call for exactly ${amountIn.toString()} raw units, then perform the declared swap.` ,
   };
 }
