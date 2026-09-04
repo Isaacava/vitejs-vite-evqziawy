@@ -44,13 +44,27 @@ def _job_provider(job:dict[str,Any])->str:
         value=job.get(key)
         if value is not None and str(value).strip():return str(value).strip()
     return ""
+def _is_funded(job:dict[str,Any])->bool:
+    """The watcher callback must explicitly identify the ERC-8183 FUNDED state."""
+    value=job.get("status")
+    if isinstance(value,str):
+        text=value.strip().upper()
+        if text=="FUNDED":return True
+        try:return int(text)==1
+        except ValueError:return False
+    try:return int(value)==1
+    except (TypeError,ValueError):return False
 def _job_matches_agent(job:dict[str,Any],has_pending:bool=False)->bool:
     if has_pending:return True
     assigned=_job_provider(job)
     if not assigned:
         logging.warning("%s funded job=%s has no provider assignment in watcher payload; refusing to execute",DISPLAY_NAME,job.get("jobId")); return False
     return assigned.lower()==provider_address().lower()
-async def submit(job_id:int,deliverable:str,metadata:dict[str,Any]):
+async def submit(job_id:int,deliverable:str,metadata:dict[str,Any],job:dict[str,Any]):
+    # Never submit from an OPEN/unknown job. funded_job_watcher supplies the
+    # chain-derived callback, and we require its explicit FUNDED status here.
+    if not _is_funded(job):
+        raise RuntimeError(f"ERC-8183 job {job_id} is not FUNDED; refusing submission")
     save_pending(job_id,deliverable,metadata); result=await _ops.submit_result(job_id,deliverable); tx_hash=getattr(result,"hash",None)
     if tx_hash is None and isinstance(result,dict):tx_hash=result.get("hash") or result.get("tx_hash")
     if tx_hash is None and isinstance(result,str):tx_hash=result
@@ -58,6 +72,8 @@ async def submit(job_id:int,deliverable:str,metadata:dict[str,Any]):
 async def on_funded(job:dict[str,Any])->None:
     try:job_id=int(job.get("jobId"))
     except (TypeError,ValueError):logging.warning("%s funded callback missing valid jobId",DISPLAY_NAME);return
+    if not _is_funded(job):
+        logging.warning("%s received non-FUNDED callback job=%s status=%r; ignoring",DISPLAY_NAME,job_id,job.get("status")); return
     _runtime["last_funded_job"]={"timestamp":int(time.time()),"job_id":job_id}
     pending=load_pending(job_id)
     if not _job_matches_agent(job,has_pending=pending is not None):
@@ -67,8 +83,6 @@ async def on_funded(job:dict[str,Any])->None:
         else:
             module=importlib.import_module("app.agent.main"); deliverable,metadata=await asyncio.to_thread(module.fulfill_job,job)
         status=str(metadata.get("execution_status") or "").lower()
-        # Only a completed execution or a genuinely observational/hold result may be submitted.
-        # Never submit a planned state-changing decision.
         decision=str(metadata.get("decision") or "").lower()
         if status == "planned" or (decision in {"move_range","widen"} and status != "executed"):
             raise RuntimeError(f"Rebalancing decision '{decision or 'state-changing'}' requires successful execution before ERC-8183 submission")
@@ -76,7 +90,7 @@ async def on_funded(job:dict[str,Any])->None:
             raise RuntimeError("Rebalancing agent did not produce an accepted terminal execution status")
         if status == "executed" and not metadata.get("transaction_hash"):
             raise RuntimeError("Rebalancing execution reported executed but no transaction hash was returned; refusing submission")
-        _runtime["last_execution"]={"timestamp":int(time.time()),"job_id":job_id,"status":status,"tx_hash":metadata.get("transaction_hash")}; tx_hash=await submit(job_id,deliverable,metadata); _runtime["last_submission"]={"timestamp":int(time.time()),"job_id":job_id,"tx_hash":tx_hash}; _runtime["last_error"]=None
+        _runtime["last_execution"]={"timestamp":int(time.time()),"job_id":job_id,"status":status,"tx_hash":metadata.get("transaction_hash")}; tx_hash=await submit(job_id,deliverable,metadata,job); _runtime["last_submission"]={"timestamp":int(time.time()),"job_id":job_id,"tx_hash":tx_hash}; _runtime["last_error"]=None
     except Exception as exc:
         _runtime["last_error"]={"timestamp":int(time.time()),"job_id":job_id,"error":str(exc)}
         logging.error("%s job=%s not submitted: %s",DISPLAY_NAME,job_id,exc)
