@@ -35,6 +35,7 @@ const TESTNET_CHAIN_CONFIG = {
 };
 const AUTH_API = "/api/auth";
 
+let activeProvider: Eip1193Provider | null = null;
 let walletConnectProvider: Eip1193Provider | null = null;
 let walletConnectInitPromise: Promise<Eip1193Provider> | null = null;
 
@@ -93,7 +94,7 @@ export async function ensureExpectedChain(provider: WalletRequestProvider) {
 
     if (code !== 4902) {
       throw new Error(
-        `Wallet is on chain ${current || "unknown"}. AgentMarket Testnet requires BSC Testnet (chain 97). Approve the network switch in your wallet.`,
+        `Wallet is on chain ${current || "unknown"}. AgentMarket Testnet requires BSC Testnet (chain ${AUTH_CHAIN_ID}). Approve the network switch in your wallet.`,
       );
     }
 
@@ -108,7 +109,30 @@ export async function ensureExpectedChain(provider: WalletRequestProvider) {
   }
 }
 
+async function connectBrowserWallet() {
+  const provider = window.ethereum;
+  if (!provider) return null;
+
+  const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
+  if (!accounts?.[0]) throw new Error("Browser wallet returned no accounts.");
+  await ensureExpectedChain(provider);
+
+  activeProvider = provider;
+  return { provider, address: accounts[0] };
+}
+
 export async function connectWallet() {
+  if (window.ethereum) {
+    try {
+      const browser = await connectBrowserWallet();
+      if (browser) return browser;
+    } catch (error) {
+      // A browser wallet is the preferred signing provider. Do not silently replace
+      // a rejected chain/account request with a different wallet session.
+      throw error;
+    }
+  }
+
   let provider = await getWalletConnectProvider();
 
   try {
@@ -129,13 +153,26 @@ export async function connectWallet() {
 
   const accounts = (await provider.request({ method: "eth_accounts" })) as string[];
   const wallet = accounts?.[0];
-  if (!wallet) throw new Error("No WalletConnect account was selected.");
+  if (!wallet) throw new Error("No wallet account was selected.");
 
+  activeProvider = provider;
   walletConnectProvider = provider;
   return { provider, address: wallet };
 }
 
 export async function ensureWalletConnectedProvider() {
+  if (activeProvider) {
+    try {
+      const accounts = (await activeProvider.request({ method: "eth_accounts" })) as string[];
+      if (accounts?.[0]) {
+        await ensureExpectedChain(activeProvider);
+        return { provider: activeProvider, address: accounts[0] };
+      }
+    } catch {
+      // Reconnect below when the existing provider is stale or disconnected.
+      activeProvider = null;
+    }
+  }
   return connectWallet();
 }
 
@@ -145,10 +182,10 @@ export async function getWalletProvider() {
 }
 
 export function getConnectedWalletProvider() {
-  if (!walletConnectProvider) {
-    throw new Error("WalletConnect session is not initialized. Connect your AgentMarket wallet first.");
+  if (!activeProvider) {
+    throw new Error("Wallet session is not initialized. Connect your AgentMarket wallet first.");
   }
-  return walletConnectProvider;
+  return activeProvider;
 }
 
 export function getWalletProviderOrThrow() {
@@ -195,6 +232,7 @@ export async function signOut() {
   finally {
     const activeWalletConnectProvider = walletConnectProvider;
     try { await activeWalletConnectProvider?.disconnect?.(); } catch { /* stale session */ }
+    activeProvider = null;
     walletConnectProvider = null;
     walletConnectInitPromise = null;
   }
@@ -202,6 +240,7 @@ export async function signOut() {
 
 export async function resetWalletConnectSession() {
   try { await walletConnectProvider?.disconnect?.(); } catch { /* stale session */ }
+  activeProvider = null;
   walletConnectProvider = null;
   walletConnectInitPromise = null;
   return getWalletConnectProvider();
