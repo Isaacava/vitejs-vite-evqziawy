@@ -29,8 +29,8 @@ type AgentRow = {
   id: string;
   agent_id: string;
   owner: string;
-  name: string | null;
-  category: string | null;
+  name?: string | null;
+  category?: string | null;
   status: string | null;
   verification_status: string | null;
   metadata: Record<string, unknown> | null;
