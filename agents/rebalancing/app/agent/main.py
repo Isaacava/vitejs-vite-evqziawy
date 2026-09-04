@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 import json
-import os
 from typing import Any
 
 from app.agent.execution import execute_testnet_swap
@@ -22,7 +21,15 @@ def _obj(value: Any) -> dict[str, Any]:
 def _params(job: dict[str, Any]) -> dict[str, Any]:
     merged = {**_obj(job.get("metadata")), **_obj(job.get("description"))}
     if isinstance(merged.get("params"), dict): merged = {**merged, **merged["params"]}
+    execution = merged.get("execution")
+    if isinstance(execution, dict): merged = {**merged, **execution}
+    market = merged.get("execution_market")
+    if isinstance(market, dict): merged = {**merged, **market}
     return merged
+
+
+def _valid_address(value: str) -> bool:
+    return isinstance(value, str) and value.startswith("0x") and len(value) == 42
 
 
 def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -54,15 +61,20 @@ def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     transaction_hash = None
 
     if action != "hold":
-        job_id = int(job.get("jobId", job.get("id", 0)))
-        wallet = str(p.get("execution_wallet") or p.get("user_altana_wallet") or os.getenv("EXECUTION_WALLET") or "").strip()
-        token_in = str(p.get("token_in") or os.getenv("EXECUTION_TOKEN_IN") or "").strip()
-        token_out = str(p.get("token_out") or os.getenv("EXECUTION_TOKEN_OUT") or "").strip()
+        try:
+            job_id = int(job.get("jobId", job.get("id", 0)))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("Rebalancing execution requires a valid ERC-8183 jobId") from exc
+        wallet = str(p.get("wallet_address") or p.get("execution_wallet") or p.get("user_altana_wallet") or "").strip()
+        token_in = str(p.get("token_in") or "").strip()
+        token_out = str(p.get("token_out") or "").strip()
         amount_in = str(p.get("amount_in") or "").strip()
         minimum_out = str(p.get("amount_out_minimum") or "0").strip()
 
-        if not wallet or not token_in or not token_out or not amount_in:
-            raise RuntimeError("Rebalancing execution requires execution_wallet, token_in, token_out and amount_in; no result will be submitted")
+        if not _valid_address(wallet):
+            raise RuntimeError("Rebalancing execution requires the user-scoped Altana execution wallet embedded in the ERC-8183 job; agent-owned fallback wallets are disabled")
+        if not _valid_address(token_in) or not _valid_address(token_out) or not amount_in:
+            raise RuntimeError("Rebalancing execution requires token_in, token_out and amount_in; no result will be submitted")
 
         try:
             execution = execute_testnet_swap(
@@ -99,11 +111,12 @@ def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "execution": execution if action != "hold" else "observation_only",
         "execution_status": execution_status,
         "authorization": {
-            "required": False,
-            "obtained": False,
-            "status": "agent_owned" if action != "hold" else "not_required",
+            "required": action != "hold",
+            "obtained": action != "hold",
+            "status": "user_scoped_altana" if action != "hold" else "not_required",
+            "wallet": p.get("wallet_address") or p.get("execution_wallet") or p.get("user_altana_wallet") or None,
         },
-        "note": "Provider execution is standalone and does not call AgentMarket APIs.",
+        "note": "State-changing execution uses the user-scoped Altana wallet embedded in the ERC-8183 job and is rejected when that binding is missing.",
     }
     return json.dumps(payload, separators=(",", ":")), {
         "execution_status": execution_status,
