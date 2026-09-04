@@ -50,9 +50,18 @@ def _pending_submission_path(job_id: int) -> Path:
     return _STORAGE_DIR / f"erc8183-pending-submission-{job_id}.json"
 
 
+def _response_path(job_id: int) -> Path:
+    return _STORAGE_DIR / f"erc8183-job-{job_id}.json"
+
+
 def _save_pending_submission(job_id: int, deliverable: str, metadata: dict[str, Any]) -> None:
     _STORAGE_DIR.mkdir(parents=True, exist_ok=True)
     _pending_submission_path(job_id).write_text(json.dumps({"job_id": job_id, "deliverable": deliverable, "metadata": metadata}, separators=(",", ":")), encoding="utf-8")
+
+
+def _save_response(job_id: int, deliverable: str, metadata: dict[str, Any], tx_hash: str | None) -> None:
+    _STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+    _response_path(job_id).write_text(json.dumps({"job_id": job_id, "deliverable": deliverable, "metadata": metadata, "transaction_hash": tx_hash, "submitted_at": int(time.time())}, separators=(",", ":")), encoding="utf-8")
 
 
 def _load_pending_submission(job_id: int) -> tuple[str, dict[str, Any]] | None:
@@ -92,6 +101,10 @@ async def _submit(job_id: int, deliverable: str, metadata: dict[str, Any]) -> st
         logger.exception("ERC-8183 submission failed job_id=%s", job_id)
         raise
     tx_hash = _submission_hash(submission)
+    try:
+        _save_response(job_id, deliverable, metadata, tx_hash)
+    except Exception:
+        logger.exception("ERC-8183 response persistence failed after successful submit job_id=%s", job_id)
     _clear_pending_submission(job_id)
     return tx_hash
 
@@ -130,11 +143,8 @@ async def _on_funded(job: dict[str, Any]) -> None:
         tx_hash = await _submit(job_id, deliverable, metadata)
         _runtime["last_submission"] = {"timestamp": int(time.time()), "job_id": job_id, "tx_hash": tx_hash}
         _runtime["last_error"] = None
-        logger.info("ERC8183_SUBMISSION_CONFIRMED job_id=%s provider=%s tx_hash=%s network=%s chain_id=97", job_id, _provider_address(), tx_hash or "unknown", config["network"])
+        logger.info("ERC8183_SUBMISSION_CONFIRMED job_id=%s provider=%s tx_hash=%s network=%s chain_id=97", job_id, _provider_address(), tx_hash or "unknown", config["network"],)
     except ValueError as exc:
-        # These errors are deterministic job-input failures. Retrying them on
-        # every funded_job_watcher cycle creates noise and cannot make an
-        # immutable on-chain job valid. Never submit a guessed strategy.
         message = str(exc)
         if message.startswith(("Grid range must", "grid_levels must", "notional must", "max_slippage_bps")):
             _runtime["last_execution_failed"] = int(time.time())
@@ -196,7 +206,7 @@ async def health() -> dict[str, str]: return {"status": "ok"}
 
 @app.get("/erc8183")
 async def erc8183_root() -> dict[str, Any]:
-    return {"status": "ok", "service": "Grid Agent ERC-8183 provider", "network": "bsc-testnet", "chain_id": 97, "agent_address": _provider_address(), "endpoints": {"health": "/erc8183/health", "status": "/erc8183/status", "runtime_status": "/erc8183/runtime-status", "negotiate": "/erc8183/negotiate", "execution_capabilities": "/erc8183/execution-capabilities", "execution_health": "/erc8183/execution-health", "preflight_pancake": "/erc8183/preflight/pancake", "execute": "/erc8183/execute", "receipt": "/erc8183/receipt/{transaction_hash}"}}
+    return {"status": "ok", "service": "Grid Agent ERC-8183 provider", "network": "bsc-testnet", "chain_id": 97, "agent_address": _provider_address(), "endpoints": {"health": "/erc8183/health", "status": "/erc8183/status", "runtime_status": "/erc8183/runtime-status", "negotiate": "/erc8183/negotiate", "execution_capabilities": "/erc8183/execution-capabilities", "execution_health": "/erc8183/execution-health", "preflight_pancake": "/erc8183/preflight/pancake", "execute": "/erc8183/execute", "receipt": "/erc8183/receipt/{transaction_hash}", "job_response": "/erc8183/job/{job_id}/response"}}
 
 @app.get("/erc8183/health")
 async def erc8183_health() -> dict[str, Any]: return {"status": "ok", "service": "Grid Agent ERC-8183", "network": "bsc-testnet", "chain_id": 97}
@@ -228,7 +238,7 @@ async def execute(request: Request) -> Response: return await _proxy_execution(r
 async def execution_receipt(transaction_hash: str, request: Request) -> Response: return await _proxy_execution(request, f"/receipt/{transaction_hash}")
 @app.get("/erc8183/job/{job_id}/response")
 async def job_response(job_id: int) -> Response:
-    filepath = _STORAGE_DIR / f"erc8183-job-{job_id}.json"
+    filepath = _response_path(job_id)
     try: content = filepath.read_bytes()
     except FileNotFoundError as exc: raise HTTPException(status_code=404, detail="No deliverable found for this job") from exc
-    return Response(content=content, media_type="application/json")
+    return Response(content=content, media_type="application/json", headers={"cache-control": "no-store"})
