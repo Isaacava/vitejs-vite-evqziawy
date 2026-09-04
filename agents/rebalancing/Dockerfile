@@ -24,6 +24,7 @@ ENV PYTHONPATH=/app/agents:/app/agents/rebalancing:/app
 ENV PORT=8000
 ENV EXECUTION_PORT=8788
 ENV EXECUTION_AGENT_KIND=rebalancing
+# Explicit module target keeps the Rebalancing image self-contained even if Railway variable configuration drifts.
 ENV AGENT_APP_MODULE=app.service.main:app
 ENV ALTANA_EXECUTION_INTERNAL_URL=http://127.0.0.1:8788
 EXPOSE 8000
