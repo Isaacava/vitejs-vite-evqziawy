@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 from urllib.request import Request as UrlRequest, urlopen
+from fastapi import FastAPI, HTTPException, Request
 from bnbagent import EVMWalletProvider
 from bnbagent.erc8183 import ERC8183JobOps, funded_job_watcher
 from bnbagent.storage import LocalStorageProvider
