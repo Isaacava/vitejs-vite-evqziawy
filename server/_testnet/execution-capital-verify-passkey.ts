@@ -45,13 +45,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { data: request, error: requestError } = await supabase.from("execution_capital_requests").select("*").eq("id", requestId).maybeSingle();
     if (requestError) return res.status(500).json({ error: requestError.message });
     if (!request) return res.status(404).json({ error: "Execution authorization request not found" });
-    if (request.status === "authorized" && !renewal) return res.status(200).json({ ok: true, authorized: true, request });
     if (!["requested", "authorized"].includes(String(request.status))) return res.status(409).json({ error: `Execution authorization request is already ${request.status}` });
 
     const { data: job, error: jobError } = await supabase.from("jobs").select("id,client_wallet,mission_task_id,chain_job_id").eq("id", request.job_id).maybeSingle();
     if (jobError) return res.status(500).json({ error: jobError.message });
     if (!job || !auth.user.wallet_address || String(job.client_wallet || "").toLowerCase() !== auth.user.wallet_address.toLowerCase()) return res.status(403).json({ error: "You do not own this execution authorization request" });
     if (!job.chain_job_id) return res.status(409).json({ error: "The execution authorization request is not attached to an ERC-8183 chain job" });
+
+    // Ownership must be established before the idempotent authorized fast-path.
+    if (request.status === "authorized" && !renewal) return res.status(200).json({ ok: true, authorized: true, request });
 
     const { data: persistentWallet, error: persistentWalletError } = await supabase
       .from("altana_execution_wallets")
