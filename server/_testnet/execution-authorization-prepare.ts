@@ -14,11 +14,7 @@ function capabilityUrls(agent: Record<string, unknown>): string[] {
   const metadata = object(agent.metadata), execution = object(metadata.execution);
   const declared = [metadata.execution_capabilities_url, metadata.execution_capability_url, execution.execution_capabilities_url, execution.execution_capability_url, execution.capabilities_url, execution.capability_url];
   const endpoints = Array.isArray(agent.__endpoint_urls) ? agent.__endpoint_urls : [];
-  const generated = endpoints.flatMap((value) => {
-    const base = normalizeUrl(value);
-    if (!base) return [];
-    return [...new Set([`${base}/execution-capabilities`, `${base}/erc8183/execution-capabilities`])];
-  });
+  const generated = endpoints.flatMap((value) => { const base = normalizeUrl(value); if (!base) return []; return [...new Set([`${base}/execution-capabilities`, `${base}/erc8183/execution-capabilities`])]; });
   return [...new Set([...declared.map(normalizeUrl).filter((value): value is string => Boolean(value)), ...generated])];
 }
 function unwrapCapability(value: Record<string, unknown>): Record<string, unknown> {
@@ -30,13 +26,18 @@ function declaresExecutionCapability(agent: Record<string, unknown>): boolean {
   const metadata = object(agent.metadata), execution = object(metadata.execution);
   return capabilityUrls(agent).length > 0 || [metadata.execution_capability_url, metadata.execution_capabilities_url, execution.execution_capability_url, execution.execution_capabilities_url].some((value) => typeof value === "string" && value.trim().length > 0);
 }
-async function capability(agent: Record<string, unknown>): Promise<{ descriptor: Record<string, unknown>; source_url: string; capital_token: Address } | null> {
+async function capability(agent: Record<string, unknown>, chainJobId: string): Promise<{ descriptor: Record<string, unknown>; source_url: string; capital_token: Address } | null> {
   const { data: endpoints, error } = await serverClient().from("agent_endpoints").select("endpoint_url").eq("agent_id", String(agent.id || "")).limit(20);
   if (error) throw new Error(error.message);
   const agentWithEndpoints = { ...agent, __endpoint_urls: (endpoints || []).map((e) => e.endpoint_url) };
   for (const candidate of capabilityUrls(agentWithEndpoints)) {
     try {
-      const response = await fetch(candidate, { headers: { Accept: "application/json" } });
+      // Agent capability documents are job-scoped so the published session key can be
+      // deterministically derived for the exact ERC-8183 job being created.
+      const url = new URL(candidate);
+      url.searchParams.set("job_id", chainJobId);
+      const capabilityUrl = url.toString();
+      const response = await fetch(capabilityUrl, { headers: { Accept: "application/json" } });
       if (!response.ok) continue;
       const raw = await response.text();
       if (new TextEncoder().encode(raw).byteLength > MAX_CAPABILITY_BYTES) continue;
@@ -46,7 +47,7 @@ async function capability(agent: Record<string, unknown>): Promise<{ descriptor:
       const chainId = Number(value.chainId ?? value.chain_id);
       if (value.network !== "bsc-testnet" || chainId !== 97 || value.execution !== "altana-scoped-session" || value.wallet_provider !== "altana" || value.authorization_model !== "scoped_session" || value.private_key_exposed !== false || !address(value.session_key_address) || !hex(value.session_key_public_key) || value.session_key_public_key.length < 4 || !Array.isArray(value.allowed_targets) || !Array.isArray(value.allowed_selectors) || !value.allowed_targets.length || !value.allowed_selectors.length || !token) continue;
       if (!value.allowed_targets.every(address) || !value.allowed_selectors.every(hex)) continue;
-      return { descriptor: value, source_url: candidate, capital_token: token };
+      return { descriptor: value, source_url: capabilityUrl, capital_token: token };
     } catch { /* Try every declared and convention-based capability endpoint. */ }
   }
   return null;
@@ -79,9 +80,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (agentError) throw new Error(agentError.message);
     if (!agent) return res.status(404).json({ error: "Provider agent not found" });
     const advertises = declaresExecutionCapability(agent as Record<string, unknown>);
-    const cap = await capability(agent as Record<string, unknown>);
+    const cap = await capability(agent as Record<string, unknown>, chainJobId);
     if (!cap) {
-      if (advertises) return res.status(409).json({ ok: false, required: true, error: "This provider advertises Altana execution authorization, but its live capability could not be independently verified. Funding is blocked until the provider capability is available and valid." });
+      if (advertises) return res.status(409).json({ ok: false, required: true, error: "This provider advertises Altana execution authorization, but its live job-scoped capability could not be independently verified. Funding is blocked until the provider capability is available and valid." });
       return res.status(200).json({ ok: true, required: false, created: false, chain_job_id: Number(chainJobId), note: "Provider does not advertise an execution-authorization capability for this job." });
     }
     const market = object(cap.descriptor.execution_market);
