@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 from urllib.request import Request as UrlRequest, urlopen
+from fastapi import FastAPI, HTTPException, Request
 from bnbagent import EVMWalletProvider
 from bnbagent.erc8183 import ERC8183JobOps, funded_job_watcher
 from bnbagent.storage import LocalStorageProvider
@@ -17,8 +18,7 @@ def payment_token()->str|None:
     try:return str(_ops.erc8183_client.payment_token)
     except Exception:return None
 def pending_path(job_id:int)->Path:return STORAGE_DIR/f"erc8183-pending-submission-{job_id}.json"
-def save_pending(job_id:int,deliverable:str,metadata:dict[str,Any])->None:
-    STORAGE_DIR.mkdir(parents=True,exist_ok=True);pending_path(job_id).write_text(json.dumps({"job_id":job_id,"deliverable":deliverable,"metadata":metadata},separators=(",",":")),encoding="utf-8")
+def save_pending(job_id:int,deliverable:str,metadata:dict[str,Any])->None:STORAGE_DIR.mkdir(parents=True,exist_ok=True);pending_path(job_id).write_text(json.dumps({"job_id":job_id,"deliverable":deliverable,"metadata":metadata},separators=(",",":")),encoding="utf-8")
 def load_pending(job_id:int):
     try:payload=json.loads(pending_path(job_id).read_text(encoding="utf-8"))
     except (FileNotFoundError,OSError,json.JSONDecodeError):return None
@@ -81,7 +81,7 @@ async def erc_health():return {"status":"ok","service":DISPLAY_NAME,"network":NE
 @app.get("/erc8183/status")
 async def status():return {"status":"ok","agent_kind":KIND,"agent_address":provider_address(),"commerce_address":str(_ops.erc8183_client.commerce.address),"router_address":str(_ops.erc8183_client.router.address),"policy_address":str(_ops.erc8183_client.policy.address),"service_price":SERVICE_PRICE,"payment_token":payment_token(),"poll_interval":POLL_INTERVAL,"execution_service":EXECUTION_URL}
 @app.get("/erc8183/runtime-status")
-async def runtime():return {"status":"ok","agent_kind":KIND,"agent_address":provider_address(),"last_funded_job":_runtime["last_funded_job"],"last_execution":_runtime["last_execution"],"last_submission":_runtime["last_submission"],"last_error":_runtime["last_error"]}
+async def runtime():return {"status":"ok","agent":KIND,"agent_address":provider_address(),"last_funded_job":_runtime["last_funded_job"],"last_execution":_runtime["last_execution"],"last_submission":_runtime["last_submission"],"last_error":_runtime["last_error"]}
 @app.get("/erc8183/execution-capabilities")
 async def execution_capabilities():return proxy_get("/execution-capabilities")
 @app.post("/erc8183/preflight")
