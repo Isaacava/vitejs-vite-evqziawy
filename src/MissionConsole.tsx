@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
+import type { Address, Hex } from "viem";
 import "./mission-console.css";
+import AltanaSessionGrantGate from "./AltanaSessionGrantGate";
+import AltanaWalletGate from "./AltanaWalletGate";
+import { getAltanaWalletResolution } from "./lib/altanaWallet";
 
 type JobView = {
   job: {
@@ -20,9 +24,27 @@ type JobView = {
   payment: { amount: number; status: string; tx_hash: string | null; token_symbol: string | null } | null;
 };
 
+type ExecutionState = {
+  required: boolean;
+  status: string;
+  request_id: string | null;
+  capability: Record<string, unknown> | null;
+  request: {
+    capital_requested?: string | number | null;
+    capital_token?: string | null;
+    duration_seconds?: number | null;
+    user_execution_wallet?: string | null;
+    session_key_id?: string | null;
+    session_expiry?: number | null;
+  } | null;
+};
+
 const STEPS = ["open", "funded", "accepted", "in_progress", "submitted", "terminal"];
 const human = (value: string) => value.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 const compact = (value?: string | null) => value ? `${value.slice(0, 8)}…${value.slice(-6)}` : "—";
+const validAddress = (value: unknown): value is Address => typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value);
+const validHex = (value: unknown): value is Hex => typeof value === "string" && /^0x[a-fA-F0-9]+$/.test(value);
+
 function timeAgo(value?: string | null) {
   if (!value) return "never synced";
   const diffMs = Date.now() - new Date(value).getTime();
@@ -37,8 +59,11 @@ function timeAgo(value?: string | null) {
 export default function MissionConsole() {
   const [jobId] = useState(() => new URLSearchParams(window.location.search).get("job") || "");
   const [data, setData] = useState<JobView | null>(null);
+  const [execution, setExecution] = useState<ExecutionState | null>(null);
+  const [altanaWalletReady, setAltanaWalletReady] = useState(Boolean(getAltanaWalletResolution()));
   const [deliverable, setDeliverable] = useState("Completed the requested task and prepared the result for review.");
   const [busy, setBusy] = useState(false);
+  const [executionBusy, setExecutionBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -50,9 +75,55 @@ export default function MissionConsole() {
     setData(body as JobView);
   }, [jobId]);
 
+  const loadExecution = useCallback(async (current?: JobView | null) => {
+    const view = current || data;
+    const chainJobId = view?.job.chain_job_id;
+    if (!view || chainJobId == null) return;
+    setExecutionBusy(true);
+    try {
+      const prepareResponse = await fetch("/api/testnet?route=execution-authorization-prepare", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          job_id: view.job.id,
+          chain_job_id: String(chainJobId),
+          capital_requested: 1,
+          duration_seconds: 86400,
+          purpose: "Agent execution",
+        }),
+      });
+      const prepared = await prepareResponse.json().catch(() => null);
+      if (!prepareResponse.ok && prepared?.required !== false) {
+        throw new Error(prepared?.error || "Execution authorization could not be prepared.");
+      }
+
+      const statusResponse = await fetch(`/api/testnet?route=execution-authorization-status&job=${encodeURIComponent(String(chainJobId))}`, { credentials: "include", cache: "no-store" });
+      const statusBody = await statusResponse.json().catch(() => null);
+      if (!statusResponse.ok) throw new Error(statusBody?.error || "Unable to read execution authorization status.");
+      setExecution({
+        required: statusBody?.required === true,
+        status: String(statusBody?.status || "not_requested").toLowerCase(),
+        request_id: statusBody?.request_id || prepared?.request?.id || null,
+        capability: statusBody?.capability || null,
+        request: statusBody?.request || prepared?.request || null,
+      });
+    } catch (cause) {
+      setExecution(null);
+      setError(cause instanceof Error ? cause.message : "Unable to load execution authorization");
+    } finally {
+      setExecutionBusy(false);
+    }
+  }, [data]);
+
   useEffect(() => {
-    void load().catch((cause) => setError(cause instanceof Error ? cause.message : "Unable to load job"));
+    void load().then((view) => undefined).catch((cause) => setError(cause instanceof Error ? cause.message : "Unable to load job"));
   }, [load]);
+
+  useEffect(() => {
+    if (!data?.job.chain_job_id) return;
+    void loadExecution(data);
+  }, [data?.job.chain_job_id, loadExecution]);
 
   async function action(name: string) {
     if (!jobId) return;
@@ -84,6 +155,16 @@ export default function MissionConsole() {
   const statusIndex = data ? STEPS.indexOf(data.job.status) : -1;
   const canPrepare = !!data && (data.job.status === "open" || data.job.status === "funded") && !data.job.chain_job_id;
   const riskEvidence = data?.evaluation?.evidence;
+  const capability = execution?.capability || {};
+  const executionStatus = execution?.status || "not_requested";
+  const authorizationReady = executionStatus === "authorized";
+  const sessionAddress = capability.session_key_address;
+  const sessionPublicKey = capability.session_key_public_key;
+  const allowedTargets = Array.isArray(capability.allowed_targets) ? capability.allowed_targets.filter(validAddress) : [];
+  const allowedSelectors = Array.isArray(capability.allowed_selectors) ? capability.allowed_selectors.filter(validHex) : [];
+  const capitalToken = execution?.request?.capital_token || (typeof capability.execution_market === "object" && capability.execution_market ? (capability.execution_market as Record<string, unknown>).token_in : null);
+  const capitalAmount = Number(execution?.request?.capital_requested || 1);
+  const durationSeconds = Number(execution?.request?.duration_seconds || 86400);
 
   return (
     <main className="console-page">
@@ -122,10 +203,10 @@ export default function MissionConsole() {
           </section>
 
           <section className="console-timeline">
-            {STEPS.map((step, index) => (
-              <div className="console-timeline-step" key={step}>
+            {STEPS.map((stepName, index) => (
+              <div className="console-timeline-step" key={stepName}>
                 <span className={statusIndex >= index ? "done" : ""}>{String(index + 1).padStart(2, "0")}</span>
-                <strong>{human(step)}</strong>
+                <strong>{human(stepName)}</strong>
                 {index < STEPS.length - 1 && <i />}
               </div>
             ))}
@@ -150,11 +231,48 @@ export default function MissionConsole() {
               {data.job.status === "in_progress" ? <><textarea value={deliverable} onChange={(event) => setDeliverable(event.target.value)} rows={6} className="console-textarea" /><button className="console-dark-button" disabled={busy || !deliverable.trim()} onClick={() => void action("submit")}>Submit deliverable</button></> : null}
               {data.job.status === "submitted" ? <div className="console-review-wait"><small>EVALUATION / SETTLEMENT</small><strong>Open the evaluator workspace to read the live ERC-8183 policy state.</strong><p>The marketplace will not mark payment released or terminal merely because a UI button was pressed.</p><div className="console-button-row">{data.job.chain_job_id ? <a href={`/evaluator?job=${encodeURIComponent(String(data.job.chain_job_id))}&mission=${encodeURIComponent(data.mission?.id || "")}&market_job=${encodeURIComponent(data.job.id)}`} className="console-brass-button">Open evaluator →</a> : null}{data.job.chain_job_id ? <a href={`/lifecycle?job=${encodeURIComponent(String(data.job.chain_job_id))}`} className="console-dark-button">Open recovery paths →</a> : null}</div></div> : null}
               {data.job.status === "terminal" ? <div className="console-complete">The job is terminal. Review the evidence and real transaction record before treating the mission as fully complete.</div> : null}
+
+              {execution?.required && data.job.chain_job_id && data.job.status !== "submitted" && data.job.status !== "terminal" && (
+                <section className="console-card" style={{ marginTop: 18, background: "var(--paperhi)" }}>
+                  <div className="console-section-head"><span>02 / EXECUTION AUTHORIZATION</span><b>{authorizationReady ? "authorized" : executionStatus}</b></div>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start" }}>
+                    <div><h2>Authorize the agent's execution</h2><p style={{ maxWidth: 680 }}>Your Passkey owns the persistent Altana wallet. This job receives a separate, expiring session scoped to the exact token, spend cap, contracts, and selectors published by the provider.</p></div>
+                    <span className={authorizationReady ? "console-brass-button" : "console-dark-button"}>{authorizationReady ? "Verified ✓" : "Passkey required"}</span>
+                  </div>
+
+                  {executionBusy && <div className="console-evidence" style={{ marginTop: 14 }}><small>CHECKING PROVIDER CAPABILITY</small><p>Reading the live job-scoped Altana capability and authorization state…</p></div>}
+
+                  {!altanaWalletReady && <div style={{ marginTop: 18 }}><AltanaWalletGate onResolved={() => { setAltanaWalletReady(true); void loadExecution(); }} /></div>}
+
+                  {altanaWalletReady && !authorizationReady && execution.request_id && validAddress(sessionAddress) && validHex(sessionPublicKey) && validAddress(capitalToken) && allowedTargets.length > 0 && allowedSelectors.length > 0 && (
+                    <div style={{ marginTop: 18 }}>
+                      <AltanaSessionGrantGate
+                        requestId={execution.request_id}
+                        agentSessionAddress={sessionAddress}
+                        agentSessionPublicKey={sessionPublicKey}
+                        allowedCalls={allowedTargets}
+                        allowedSelectors={allowedSelectors}
+                        capitalAmount={BigInt(capitalAmount)}
+                        capitalToken={capitalToken}
+                        purpose="Agent execution"
+                        durationSeconds={durationSeconds}
+                        capabilitySource={typeof capability.source_url === "string" ? capability.source_url : undefined}
+                        onAuthorized={() => { void loadExecution(); }}
+                      />
+                    </div>
+                  )}
+
+                  {authorizationReady && execution.request?.user_execution_wallet && <div className="console-evidence" style={{ marginTop: 16 }}><small>AUTHORIZATION VERIFIED</small><strong>Altana session active ✓</strong><p>Wallet {compact(execution.request.user_execution_wallet)} · session {compact(execution.request.session_key_id)} · expires {execution.request.session_expiry ? new Date(Number(execution.request.session_expiry) * 1000).toLocaleString() : "reported by provider"}</p></div>}
+
+                  {!executionBusy && !authorizationReady && (!sessionAddress || !sessionPublicKey || !validAddress(capitalToken) || !allowedTargets.length || !allowedSelectors.length) && <div className="console-alert console-alert-error" style={{ marginTop: 16 }}>The provider advertised execution authorization, but its live job-scoped Altana capability is incomplete. AgentMarket will not authorize or fund execution until the capability can be independently verified.</div>}
+                </section>
+              )}
+
               {data.job.chain_job_id && data.job.status !== "submitted" && data.job.status !== "terminal" ? <div className="console-chain-callout"><div><small>ERC-8183 / RECOVERY</small><strong>Need to dispute, inspect expiry, or recover an unresolved job?</strong><span>The lifecycle workspace reads the live chain and only enables protocol-valid actions.</span></div><a href={`/lifecycle?job=${encodeURIComponent(String(data.job.chain_job_id))}`} className="console-dark-button">Open lifecycle →</a></div> : null}
             </section>
 
             <aside className="console-card">
-              <div className="console-section-head"><span>02 / ESCROW & EVIDENCE</span><b>{data.payment?.status || "pending"}</b></div>
+              <div className="console-section-head"><span>03 / ESCROW & EVIDENCE</span><b>{data.payment?.status || "pending"}</b></div>
               <div className="console-stat"><span>Budget</span><strong>{data.job.budget}</strong></div>
               <div className="console-stat"><span>Chain job</span><strong>{data.job.chain_job_id ?? "Pending"}</strong></div>
               <div className="console-stat"><span>Evaluation</span><strong>{data.evaluation?.verdict || "Pending"}</strong></div>
@@ -163,6 +281,7 @@ export default function MissionConsole() {
               {riskEvidence?.source === "risk_guardian_runtime" && (
                 <div className="console-evidence"><small>RISK GUARDIAN</small><strong>{human(riskEvidence.decision || "pending")}</strong><p>{riskEvidence.reasons?.join(" ") || "Decision recorded without additional reasons."}</p></div>
               )}
+              {execution?.required && <div className="console-evidence"><small>EXECUTION AUTHORITY</small><strong>{authorizationReady ? "Authorized ✓" : "Awaiting Passkey"}</strong><p>{authorizationReady ? "A job-scoped Altana session has been independently verified on-chain." : "The agent cannot perform state-changing execution until its job-scoped Altana session is authorized."}</p></div>}
               <div className="console-evidence"><small>SOURCE OF TRUTH</small><p>Supabase stores marketplace workflow records. A blockchain job ID and transaction hash are shown only when real chain records exist.</p></div>
             </aside>
           </div>
