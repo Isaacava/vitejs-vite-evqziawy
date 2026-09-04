@@ -51,7 +51,8 @@ function selectors(name: string): Hex[] {
 }
 function deriveJobSessionPrivateKey(jobId: number): `0x${string}` {
   if (!Number.isSafeInteger(jobId) || jobId <= 0) throw new Error("jobId must be a positive integer");
-  const master = normalizePrivateKey(process.env.ALTANA_SESSION_PRIVATE_KEY || "");
+  const masterSource = process.env.ALTANA_SESSION_PRIVATE_KEY || process.env.PRIVATE_KEY || "";
+  const master = normalizePrivateKey(masterSource);
   return `0x${createHmac("sha256", master.slice(2)).update(`${AGENT}-job-session:${jobId}`).digest("hex")}`;
 }
 function descriptor(jobId: number, walletAddress: string) {
@@ -64,7 +65,7 @@ function descriptor(jobId: number, walletAddress: string) {
   if (declaredAddress && sessionAddress.toLowerCase() !== declaredAddress.toLowerCase()) throw new Error("Derived session address does not match ALTANA_SESSION_ADDRESS");
   const declaredPublicKey = (process.env.ALTANA_SESSION_PUBLIC_KEY || "").trim();
   if (declaredPublicKey && sessionPublicKey.toLowerCase() !== declaredPublicKey.toLowerCase()) throw new Error("Derived session public key does not match ALTANA_SESSION_PUBLIC_KEY");
-  const expiry = Number(process.env.ALTANA_SESSION_EXPIRY || 0);
+  const expiry = Number(process.env.ALTANA_SESSION_EXPIRY || Math.floor(Date.now() / 1000) + 86_400);
   if (!Number.isSafeInteger(expiry) || expiry <= Math.floor(Date.now() / 1000)) throw new Error("ALTANA_SESSION_EXPIRY is missing or expired");
   const spendToken = (process.env.ALTANA_SESSION_SPEND_TOKEN || "").trim();
   if (!isAddress(spendToken)) throw new Error("ALTANA_SESSION_SPEND_TOKEN must be configured");
@@ -130,6 +131,8 @@ function capabilityDescriptor(jobId: number) {
   const d = descriptor(jobId, (process.env.ALTANA_CAPABILITY_WALLET || process.env.ALTANA_SESSION_WALLET || process.env.ALTANA_SESSION_ADDRESS || "0x0000000000000000000000000000000000000000"));
   const router = (process.env.ALTANA_SWAP_ROUTER || "").trim();
   const fee = Number(process.env.ALTANA_SWAP_FEE || 2500);
+  const defaultTokenOut = (process.env.ALTANA_DEFAULT_TOKEN_OUT || "").trim();
+  const configuredAmountInRaw = (process.env.ALTANA_TESTNET_EXECUTION_AMOUNT_RAW || process.env.REBALANCING_TESTNET_EXECUTION_AMOUNT_RAW || "").trim();
   return {
     type: "agent-execution-capability-v1",
     agent: AGENT,
@@ -142,9 +145,11 @@ function capabilityDescriptor(jobId: number) {
     preflight_path: "/preflight",
     execution_market: {
       token_in: d.spendToken,
-      token_out: process.env.ALTANA_DEFAULT_TOKEN_OUT && isAddress(process.env.ALTANA_DEFAULT_TOKEN_OUT) ? process.env.ALTANA_DEFAULT_TOKEN_OUT : null,
+      token_out: defaultTokenOut && isAddress(defaultTokenOut) ? defaultTokenOut : null,
       router: router && isAddress(router) ? router : null,
       fee: Number.isInteger(fee) && fee >= 0 && fee <= 0xffffff ? fee : 2500,
+      ...(configuredAmountInRaw ? { amount_in_raw: configuredAmountInRaw } : {}),
+      amount_out_minimum_raw: process.env.ALTANA_TESTNET_AMOUNT_OUT_MINIMUM_RAW || "0",
     },
     session_key_address: d.sessionAddress,
     session_key_public_key: d.sessionPublicKey,
