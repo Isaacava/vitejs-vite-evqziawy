@@ -128,6 +128,8 @@ async function preflight(body: Record<string, unknown>) {
 }
 function capabilityDescriptor(jobId: number) {
   const d = descriptor(jobId, (process.env.ALTANA_CAPABILITY_WALLET || process.env.ALTANA_SESSION_WALLET || process.env.ALTANA_SESSION_ADDRESS || "0x0000000000000000000000000000000000000000"));
+  const tokenOut = (process.env.ALTANA_SWAP_TOKEN_OUT || process.env.EXECUTION_TOKEN_OUT || "").trim();
+  const fee = Number(process.env.ALTANA_SWAP_FEE || 2500);
   return {
     type: "agent-execution-capability-v1",
     agent: AGENT,
@@ -138,6 +140,11 @@ function capabilityDescriptor(jobId: number) {
     chain_id: CHAIN_ID,
     protocol: "pancake-v3-swap",
     preflight_path: "/preflight",
+    execution_market: {
+      token_in: d.spendToken,
+      ...(isAddress(tokenOut) ? { token_out: tokenOut } : {}),
+      fee,
+    },
     session_key_address: d.sessionAddress,
     session_key_public_key: d.sessionPublicKey,
     allowed_targets: d.allowedCalls,
@@ -145,6 +152,9 @@ function capabilityDescriptor(jobId: number) {
     selectors_required: true,
     private_key_exposed: false,
     session_expiry: d.expiry,
+    spend_token: d.spendToken,
+    spend_limit: d.spendLimit.toString(),
+    native_spend_limit: d.nativeSpendLimit.toString(),
   };
 }
 function response(res: any, status: number, body: unknown) { const raw = JSON.stringify(body); res.writeHead(status, { "content-type": "application/json", "content-length": Buffer.byteLength(raw) }); res.end(raw); }
@@ -167,4 +177,4 @@ const server = await import("node:http").then(({ createServer }) => createServer
     return response(res, 404, { error: "not_found" });
   } catch (error) { return response(res, 400, { error: error instanceof Error ? error.message : String(error) }); }
 }));
-server.listen(PORT, "127.0.0.1", () => console.log(`${AGENT} Altana execution listening on 127.0.0.1:${PORT}`));
+server.listen(PORT, "127.0.0.1", () => console.log(`${AGENT} Altana execution listening on ${PORT}`));
