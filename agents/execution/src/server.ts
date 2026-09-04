@@ -126,8 +126,25 @@ async function preflight(body: Record<string, unknown>) {
   const calls = buildSwapCalls(body, d);
   return { broadcast: false, agent: AGENT, network: NETWORK, chain_id: CHAIN_ID, job_id: jobId, targets: calls.map(c => c.to), selectors: calls.map(c => c.data.slice(0, 10)), recipient: walletAddress };
 }
+
+function parseCsvAddresses(name: string) {
+  try { return addresses(name); } catch { return []; }
+}
+function parseCsvSelectors(name: string) {
+  try { return selectors(name); } catch { return []; }
+}
 function capabilityDescriptor(jobId: number) {
-  const d = descriptor(jobId, (process.env.ALTANA_CAPABILITY_WALLET || process.env.ALTANA_SESSION_WALLET || process.env.ALTANA_SESSION_ADDRESS || "0x0000000000000000000000000000000000000000"));
+  if (!Number.isSafeInteger(jobId) || jobId <= 0) throw new Error("job_id must be a positive integer");
+  const sessionPrivateKey = deriveJobSessionPrivateKey(jobId);
+  const account = privateKeyToAccount(sessionPrivateKey);
+  const expiryRaw = Number(process.env.ALTANA_SESSION_EXPIRY || 0);
+  const sessionExpiry = Number.isSafeInteger(expiryRaw) && expiryRaw > 0 ? expiryRaw : null;
+  const spendTokenRaw = (process.env.ALTANA_SESSION_SPEND_TOKEN || "").trim();
+  const spendLimitRaw = process.env.ALTANA_SESSION_SPEND_LIMIT || "0";
+  const nativeSpendLimitRaw = process.env.ALTANA_SESSION_NATIVE_SPEND_LIMIT || "0";
+  const targets = parseCsvAddresses("ALTANA_ALLOWED_TARGETS");
+  const selectorsList = parseCsvSelectors("ALTANA_ALLOWED_SELECTORS");
+  let executionMarket: Record<string, unknown> = { protocol: "pancake-v3-swap", token_in: process.env.ALTANA_SESSION_SPEND_TOKEN || null, token_out: process.env.ALTANA_DEFAULT_TOKEN_OUT || null, fee: Number(process.env.ALTANA_SWAP_FEE || 2500) };
   return {
     type: "agent-execution-capability-v1",
     agent: AGENT,
@@ -138,13 +155,29 @@ function capabilityDescriptor(jobId: number) {
     chain_id: CHAIN_ID,
     protocol: "pancake-v3-swap",
     preflight_path: "/preflight",
-    session_key_address: d.sessionAddress,
-    session_key_public_key: d.sessionPublicKey,
-    allowed_targets: d.allowedCalls,
-    allowed_selectors: d.allowedSelectors,
+    execution_market: executionMarket,
+    session_key_address: account.address,
+    session_key_public_key: account.publicKey,
+    allowed_targets: targets,
+    allowed_selectors: selectorsList,
     selectors_required: true,
     private_key_exposed: false,
-    session_expiry: d.expiry,
+    session_expiry: sessionExpiry,
+    execution_wallet_mode: "user-granted-wallet",
+    session_scope: "request-scoped",
+    job_id: jobId,
+    execution_ready: Boolean(sessionExpiry && spendTokenRaw && /^0x[a-fA-F0-9]{40}$/.test(spendTokenRaw) && /^\d+$/.test(spendLimitRaw) && BigInt(spendLimitRaw || "0") > 0n && /^\d+$/.test(nativeSpendLimitRaw) && BigInt(nativeSpendLimitRaw || "0") > 0n && targets.length > 0 && selectorsList.length > 0),
+    configuration: {
+      session_private_key_configured: Boolean(process.env.ALTANA_SESSION_PRIVATE_KEY),
+      altana_wallet_address_configured: Boolean(process.env.ALTANA_WALLET_ADDRESS),
+      altana_session_expiry_configured: Boolean(process.env.ALTANA_SESSION_EXPIRY),
+      altana_session_spend_token_configured: Boolean(spendTokenRaw),
+      altana_session_spend_limit_configured: /^\d+$/.test(spendLimitRaw) && BigInt(spendLimitRaw || "0") > 0n,
+      altana_session_native_spend_limit_configured: /^\d+$/.test(nativeSpendLimitRaw) && BigInt(nativeSpendLimitRaw || "0") > 0n,
+      allowed_targets_configured: targets.length > 0,
+      allowed_selectors_configured: selectorsList.length > 0,
+      pancake_router_configured: Boolean(process.env.ALTANA_SWAP_ROUTER),
+    },
   };
 }
 function response(res: any, status: number, body: unknown) { const raw = JSON.stringify(body); res.writeHead(status, { "content-type": "application/json", "content-length": Buffer.byteLength(raw) }); res.end(raw); }
@@ -167,4 +200,4 @@ const server = await import("node:http").then(({ createServer }) => createServer
     return response(res, 404, { error: "not_found" });
   } catch (error) { return response(res, 400, { error: error instanceof Error ? error.message : String(error) }); }
 }));
-server.listen(PORT, "127.0.0.1", () => console.log(`${AGENT} Altana execution listening on 127.0.0.1:${PORT}`));
+server.listen(PORT, "127.0.0.1", () => console.log(`${AGENT} Altana execution listening on ${PORT}`));
