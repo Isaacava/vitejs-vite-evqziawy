@@ -6,7 +6,6 @@ import os
 from typing import Any
 
 from app.agent.execution import execute_testnet_swap
-from shared.execution_authorization import wait_for_execution_authorization
 
 
 def _obj(value: Any) -> dict[str, Any]:
@@ -53,28 +52,17 @@ def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     execution = None
     execution_status = "observed"
     transaction_hash = None
-    authorization = None
 
     if action != "hold":
         job_id = int(job.get("jobId", job.get("id", 0)))
-        provider_address = str(job.get("provider") or os.getenv("AGENT_PROVIDER_ADDRESS") or "").strip()
-        if not provider_address:
-            raise RuntimeError("State-changing execution requires the provider address for job-scoped authorization")
-
-        # Never infer authorization from job parameters. Wait for AgentMarket to
-        # report a verified, job-scoped Altana authorization before executing.
-        authorization = wait_for_execution_authorization(job_id, provider_address)
-
-        wallet = str(authorization.get("execution_wallet") or p.get("execution_wallet") or p.get("user_altana_wallet") or "").strip()
-        token_in = str(authorization.get("capital_token") or p.get("token_in") or os.getenv("ALTANA_SESSION_SPEND_TOKEN") or "").strip()
-        token_out = str(p.get("token_out") or os.getenv("ALTANA_SWAP_TOKEN_OUT") or "").strip()
+        wallet = str(p.get("execution_wallet") or p.get("user_altana_wallet") or os.getenv("EXECUTION_WALLET") or "").strip()
+        token_in = str(p.get("token_in") or os.getenv("EXECUTION_TOKEN_IN") or "").strip()
+        token_out = str(p.get("token_out") or os.getenv("EXECUTION_TOKEN_OUT") or "").strip()
         amount_in = str(p.get("amount_in") or "").strip()
         minimum_out = str(p.get("amount_out_minimum") or "0").strip()
 
         if not wallet or not token_in or not token_out or not amount_in:
-            raise RuntimeError(
-                "Rebalancing execution is authorized but requires execution_wallet, token_in, token_out and amount_in; no result will be submitted"
-            )
+            raise RuntimeError("Rebalancing execution requires execution_wallet, token_in, token_out and amount_in; no result will be submitted")
 
         try:
             execution = execute_testnet_swap(
@@ -111,12 +99,11 @@ def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "execution": execution if action != "hold" else "observation_only",
         "execution_status": execution_status,
         "authorization": {
-            "required": action != "hold",
-            "obtained": authorization is not None,
-            "token": str(authorization.get("capital_token")) if authorization else None,
-            "status": "verified" if authorization else "not_required",
+            "required": False,
+            "obtained": False,
+            "status": "agent_owned" if action != "hold" else "not_required",
         },
-        "note": "State-changing execution is permitted only after AgentMarket reports a verified job-scoped authorization through the provider's allowlisted execution session; execution must succeed before result submission.",
+        "note": "Provider execution is standalone and does not call AgentMarket APIs.",
     }
     return json.dumps(payload, separators=(",", ":")), {
         "execution_status": execution_status,
