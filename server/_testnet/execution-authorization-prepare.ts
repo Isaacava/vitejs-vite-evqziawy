@@ -12,48 +12,36 @@ function object(value: unknown): Record<string, unknown> { return value && typeo
 function normalizeUrl(value: unknown): string | null { if (typeof value !== "string" || !value.trim()) return null; try { const url = new URL(value.trim()); url.hash = ""; return url.toString().replace(/\/$/, ""); } catch { return null; } }
 function capabilityUrls(agent: Record<string, unknown>): string[] {
   const metadata = object(agent.metadata), execution = object(metadata.execution);
-  const declared = [
-    metadata.execution_capabilities_url,
-    metadata.execution_capability_url,
-    execution.execution_capabilities_url,
-    execution.execution_capability_url,
-    execution.capabilities_url,
-    execution.capability_url,
-  ];
+  const declared = [metadata.execution_capabilities_url, metadata.execution_capability_url, execution.execution_capabilities_url, execution.execution_capability_url, execution.capabilities_url, execution.capability_url];
   const endpoints = Array.isArray(agent.__endpoint_urls) ? agent.__endpoint_urls : [];
   const generated = endpoints.flatMap((value) => {
     const base = normalizeUrl(value);
     if (!base) return [];
-    const candidates = new Set<string>();
-    candidates.add(`${base}/execution-capabilities`);
-    candidates.add(`${base}/erc8183/execution-capabilities`);
-    if (base.endsWith("/erc8183")) candidates.add(`${base}/execution-capabilities`);
-    return [...candidates];
+    return [...new Set([`${base}/execution-capabilities`, `${base}/erc8183/execution-capabilities`])];
   });
   return [...new Set([...declared.map(normalizeUrl).filter((value): value is string => Boolean(value)), ...generated])];
 }
 function unwrapCapability(value: Record<string, unknown>): Record<string, unknown> {
   const nested = [value.capability, value.execution_capability, value.execution_capabilities].map(object);
-  for (const candidate of nested) {
-    if (Object.keys(candidate).length) return candidate;
-  }
+  for (const candidate of nested) if (Object.keys(candidate).length) return candidate;
   return value;
+}
+function declaresExecutionCapability(agent: Record<string, unknown>): boolean {
+  const metadata = object(agent.metadata), execution = object(metadata.execution);
+  return capabilityUrls(agent).length > 0 || [metadata.execution_capability_url, metadata.execution_capabilities_url, execution.execution_capability_url, execution.execution_capabilities_url].some((value) => typeof value === "string" && value.trim().length > 0);
 }
 async function capability(agent: Record<string, unknown>): Promise<{ descriptor: Record<string, unknown>; source_url: string; capital_token: Address } | null> {
   const { data: endpoints, error } = await serverClient().from("agent_endpoints").select("endpoint_url").eq("agent_id", String(agent.id || "")).limit(20);
   if (error) throw new Error(error.message);
   const agentWithEndpoints = { ...agent, __endpoint_urls: (endpoints || []).map((e) => e.endpoint_url) };
-  const candidates = capabilityUrls(agentWithEndpoints);
-  for (const candidate of candidates) {
+  for (const candidate of capabilityUrls(agentWithEndpoints)) {
     try {
       const response = await fetch(candidate, { headers: { Accept: "application/json" } });
       if (!response.ok) continue;
       const raw = await response.text();
       if (new TextEncoder().encode(raw).byteLength > MAX_CAPABILITY_BYTES) continue;
       const value = unwrapCapability(object(raw ? JSON.parse(raw) : null));
-      const market = object(value.execution_market);
-      const marketToken = market.token_in;
-      const spendToken = value.spend_token;
+      const market = object(value.execution_market), marketToken = market.token_in, spendToken = value.spend_token;
       const token = address(marketToken) ? marketToken : address(spendToken) ? spendToken : null;
       const chainId = Number(value.chainId ?? value.chain_id);
       if (value.network !== "bsc-testnet" || chainId !== 97 || value.execution !== "altana-scoped-session" || value.wallet_provider !== "altana" || value.authorization_model !== "scoped_session" || value.private_key_exposed !== false || !address(value.session_key_address) || !hex(value.session_key_public_key) || value.session_key_public_key.length < 4 || !Array.isArray(value.allowed_targets) || !Array.isArray(value.allowed_selectors) || !value.allowed_targets.length || !value.allowed_selectors.length || !token) continue;
@@ -90,8 +78,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { data: agent, error: agentError } = await supabase.from("agents").select("id,agent_id,owner,metadata").eq("id", task.agent_id).maybeSingle();
     if (agentError) throw new Error(agentError.message);
     if (!agent) return res.status(404).json({ error: "Provider agent not found" });
+    const advertises = declaresExecutionCapability(agent as Record<string, unknown>);
     const cap = await capability(agent as Record<string, unknown>);
-    if (!cap) return res.status(200).json({ ok: true, required: false, created: false, chain_job_id: Number(chainJobId), note: "Provider does not currently advertise a verified execution-authorization capability." });
+    if (!cap) {
+      if (advertises) return res.status(409).json({ ok: false, required: true, error: "This provider advertises Altana execution authorization, but its live capability could not be independently verified. Funding is blocked until the provider capability is available and valid." });
+      return res.status(200).json({ ok: true, required: false, created: false, chain_job_id: Number(chainJobId), note: "Provider does not advertise an execution-authorization capability for this job." });
+    }
     const market = object(cap.descriptor.execution_market);
     const { data: existing, error: existingError } = await supabase.from("execution_capital_requests").select("*").eq("job_id", job.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (existingError) throw new Error(existingError.message);
@@ -109,17 +101,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       wallet_provider: "altana",
       authorization_model: "scoped_session",
       status: "requested",
-      evidence: {
-        source: "agentmarket_execution_authorization_prepare",
-        chain_id: 97,
-        chain_job_id: Number(chainJobId),
-        provider_agent_id: agent.agent_id,
-        execution_capability: { ...cap.descriptor, execution_market: { ...market, token_in: cap.capital_token }, source_url: cap.source_url, fetched_at: fetchedAt, independently_authorized: false },
-      },
+      evidence: { source: "agentmarket_execution_authorization_prepare", chain_id: 97, chain_job_id: Number(chainJobId), provider_agent_id: agent.agent_id, execution_capability: { ...cap.descriptor, execution_market: { ...market, token_in: cap.capital_token }, source_url: cap.source_url, fetched_at: fetchedAt, independently_authorized: false } },
     }).select("*").single();
     if (insertError) throw new Error(insertError.message);
     return res.status(201).json({ ok: true, required: true, created: true, request, chain_job_id: Number(chainJobId) });
-  } catch (error) {
-    return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : "Unable to prepare execution authorization" });
-  }
+  } catch (error) { return res.status(409).json({ ok: false, error: error instanceof Error ? error.message : "Unable to prepare execution authorization" }); }
 }
