@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm && r
 COPY agents/yield/requirements.txt ./requirements.txt
 RUN python -m pip install --no-cache-dir --upgrade pip && python -m pip install --no-cache-dir -r requirements.txt
 COPY agents/yield/ ./agents/yield/
+COPY agents/shared/ ./agents/shared/
 COPY agents/execution_client.py ./agents/execution_client.py
 COPY agents/erc8004_register.py ./erc8004_register.py
 COPY agents/start_agent.sh ./start_agent.sh
