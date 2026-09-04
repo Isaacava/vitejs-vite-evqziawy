@@ -47,7 +47,7 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
       });
       const body = await response.json() as { error?: string; request?: unknown };
 
-      // The job may already have been prepared by another page/render. That is
+      // The job may already have been prepared by another render. That is
       // still the desired state: continue directly to the Altana authorization gate.
       if (response.status !== 201 && response.status !== 409) throw new Error(body.error || "Unable to prepare execution authorization");
       setStatus("requested");
@@ -62,8 +62,8 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
     if (startedRef.current) return;
     startedRef.current = true;
     void requestCapital();
-    // The preparation request is intentionally automatic: the ERC-8183 job is
-    // already funded, but Grid must remain paused until the user grants Altana.
+    // Preparation is intentionally automatic only after the ERC-8183 job is
+    // funded. No token transfer, allowance, or agent execution happens here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId]);
 
@@ -72,8 +72,8 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
       <div className="flex items-start justify-between gap-4">
         <div>
           <small className="block font-mono text-[8.5px] uppercase tracking-widest text-brass mb-1.5">Execution Capital · Authorization Required</small>
-          <h3 className="font-display text-[18px] font-bold m-0">Approve Altana before the agent starts</h3>
-          <p className="text-[11px] text-inksoft mt-1.5 max-w-[620px]">The ERC-8183 job is funded, so AgentMarket is preparing the execution-capital request automatically. Grid will wait on-chain for this scoped Altana authorization and will not execute or submit a deliverable before it is granted.</p>
+          <h3 className="font-display text-[18px] font-bold m-0">Authorize the agent before it starts</h3>
+          <p className="text-[11px] text-inksoft mt-1.5 max-w-[620px]">The ERC-8183 job is already funded, so AgentMarket is preparing the execution-capital request automatically. The provider remains paused until the job-scoped Altana authorization is granted and verified.</p>
         </div>
         <span className="font-mono text-[9px] px-2.5 py-1 rounded-lg status-brass">WAITING</span>
       </div>
@@ -85,7 +85,7 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
       </div>
 
       {status === "submitting" && <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi px-4 py-3 text-[11px] text-inksoft">Preparing the authorization record…</div>}
-      {status === "requested" && <div className="mt-4 border border-green/30 bg-green/5 rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]"><strong className="text-green">Authorization request ready.</strong> Continue to the Altana wallet gate below. Grid remains paused until the grant is verified.</div>}
+      {status === "requested" && <div className="mt-4 border border-green/30 bg-green/5 rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]"><strong className="text-green">Authorization request ready.</strong> Continue to the Altana wallet gate below. The provider remains paused until the grant is verified.</div>}
       {error && <div className="mt-4 border border-[#cfad9f] bg-rustsoft text-rust rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px] break-words"><strong className="block mb-1">Authorization preparation failed.</strong>{error}</div>}
 
       <p className="mt-4 text-[10px] text-inksoft">No token transfer, allowance, execution, or on-chain submission is performed by this preparation step.</p>
