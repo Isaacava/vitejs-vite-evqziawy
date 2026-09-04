@@ -10,7 +10,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm && r
 COPY agents/rebalancing/requirements.txt ./requirements.txt
 RUN python -m pip install --no-cache-dir --upgrade pip && python -m pip install --no-cache-dir -r requirements.txt
 COPY agents/rebalancing/ ./agents/rebalancing/
-COPY agents/shared/ ./agents/shared/
 COPY agents/execution_client.py ./agents/execution_client.py
 COPY agents/erc8004_register.py ./erc8004_register.py
 COPY agents/start_agent.sh ./start_agent.sh
@@ -21,7 +20,7 @@ COPY --from=execution-build /execution/dist /execution/dist
 RUN mkdir -p /execution/node_modules && cd /execution && npm install --omit=dev --no-audit --no-fund
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONPATH=/app/agents:/app/agents/rebalancing:/app
+ENV PYTHONPATH=/app/agents/rebalancing:/app
 ENV PORT=8000
 ENV EXECUTION_PORT=8788
 ENV EXECUTION_AGENT_KIND=rebalancing
