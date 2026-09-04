@@ -9,25 +9,57 @@ const MAX_CAPABILITY_BYTES = 64 * 1024;
 function address(value: unknown): value is Address { return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value); }
 function hex(value: unknown): value is Hex { return typeof value === "string" && /^0x[a-fA-F0-9]*$/.test(value); }
 function object(value: unknown): Record<string, unknown> { return value && typeof value === "object" ? value as Record<string, unknown> : {}; }
-function metadataUrls(agent: Record<string, unknown>): string[] { const metadata = object(agent.metadata), execution = object(metadata.execution); return [metadata.execution_capabilities_url, metadata.execution_capability_url, execution.execution_capabilities_url, execution.execution_capability_url, execution.capabilities_url, execution.capability_url].filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => value.trim()); }
+function normalizeUrl(value: unknown): string | null { if (typeof value !== "string" || !value.trim()) return null; try { const url = new URL(value.trim()); url.hash = ""; return url.toString().replace(/\/$/, ""); } catch { return null; } }
+function capabilityUrls(agent: Record<string, unknown>): string[] {
+  const metadata = object(agent.metadata), execution = object(metadata.execution);
+  const declared = [
+    metadata.execution_capabilities_url,
+    metadata.execution_capability_url,
+    execution.execution_capabilities_url,
+    execution.execution_capability_url,
+    execution.capabilities_url,
+    execution.capability_url,
+  ];
+  const endpoints = Array.isArray(agent.__endpoint_urls) ? agent.__endpoint_urls : [];
+  const generated = endpoints.flatMap((value) => {
+    const base = normalizeUrl(value);
+    if (!base) return [];
+    const candidates = new Set<string>();
+    candidates.add(`${base}/execution-capabilities`);
+    candidates.add(`${base}/erc8183/execution-capabilities`);
+    if (base.endsWith("/erc8183")) candidates.add(`${base}/execution-capabilities`);
+    return [...candidates];
+  });
+  return [...new Set([...declared.map(normalizeUrl).filter((value): value is string => Boolean(value)), ...generated])];
+}
+function unwrapCapability(value: Record<string, unknown>): Record<string, unknown> {
+  const nested = [value.capability, value.execution_capability, value.execution_capabilities].map(object);
+  for (const candidate of nested) {
+    if (Object.keys(candidate).length) return candidate;
+  }
+  return value;
+}
 async function capability(agent: Record<string, unknown>): Promise<{ descriptor: Record<string, unknown>; source_url: string; capital_token: Address } | null> {
   const { data: endpoints, error } = await serverClient().from("agent_endpoints").select("endpoint_url").eq("agent_id", String(agent.id || "")).limit(20);
   if (error) throw new Error(error.message);
-  const candidates = [...new Set([...metadataUrls(agent), ...(endpoints || []).map((e) => `${String(e.endpoint_url).replace(/\/+$/, "")}/execution-capabilities`)])];
+  const agentWithEndpoints = { ...agent, __endpoint_urls: (endpoints || []).map((e) => e.endpoint_url) };
+  const candidates = capabilityUrls(agentWithEndpoints);
   for (const candidate of candidates) {
     try {
       const response = await fetch(candidate, { headers: { Accept: "application/json" } });
       if (!response.ok) continue;
       const raw = await response.text();
       if (new TextEncoder().encode(raw).byteLength > MAX_CAPABILITY_BYTES) continue;
-      const value = object(raw ? JSON.parse(raw) : null);
+      const value = unwrapCapability(object(raw ? JSON.parse(raw) : null));
       const market = object(value.execution_market);
       const marketToken = market.token_in;
       const spendToken = value.spend_token;
       const token = address(marketToken) ? marketToken : address(spendToken) ? spendToken : null;
-      if (value.network !== "bsc-testnet" || Number(value.chainId ?? value.chain_id) !== 97 || value.execution !== "altana-scoped-session" || value.wallet_provider !== "altana" || value.authorization_model !== "scoped_session" || value.private_key_exposed !== false || !address(value.session_key_address) || !hex(value.session_key_public_key) || !Array.isArray(value.allowed_targets) || !Array.isArray(value.allowed_selectors) || !value.allowed_targets.length || !value.allowed_selectors.length || !token) continue;
+      const chainId = Number(value.chainId ?? value.chain_id);
+      if (value.network !== "bsc-testnet" || chainId !== 97 || value.execution !== "altana-scoped-session" || value.wallet_provider !== "altana" || value.authorization_model !== "scoped_session" || value.private_key_exposed !== false || !address(value.session_key_address) || !hex(value.session_key_public_key) || value.session_key_public_key.length < 4 || !Array.isArray(value.allowed_targets) || !Array.isArray(value.allowed_selectors) || !value.allowed_targets.length || !value.allowed_selectors.length || !token) continue;
+      if (!value.allowed_targets.every(address) || !value.allowed_selectors.every(hex)) continue;
       return { descriptor: value, source_url: candidate, capital_token: token };
-    } catch { /* Try next declared capability endpoint. */ }
+    } catch { /* Try every declared and convention-based capability endpoint. */ }
   }
   return null;
 }
