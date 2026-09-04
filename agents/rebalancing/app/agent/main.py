@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 import json
+import os
 from typing import Any
 
 from agents.shared.execution_authorization import wait_for_execution_authorization
 from app.agent.execution import execute_testnet_swap
+
+
+CONTROLLED_TOKEN_IN = "0x8d008B313C1d6C7fE2982F62d32Da7507cF43551"  # CAKE2
+CONTROLLED_TOKEN_OUT = "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd"  # WBNB
+CONTROLLED_FEE = 2500
+CONTROLLED_AMOUNT_IN_RAW = "1000000000000000000"
+CONTROLLED_MINIMUM_OUT_RAW = "0"
 
 
 def _obj(value: Any) -> dict[str, Any]:
@@ -27,6 +35,16 @@ def _params(job: dict[str, Any]) -> dict[str, Any]:
     market = merged.get("execution_market")
     if isinstance(market, dict): merged = {**merged, **market}
     return merged
+
+
+def _execution_config(p: dict[str, Any]) -> dict[str, str | int]:
+    return {
+        "token_in": str(p.get("token_in") or CONTROLLED_TOKEN_IN).strip(),
+        "token_out": str(p.get("token_out") or os.getenv("ALTANA_DEFAULT_TOKEN_OUT") or CONTROLLED_TOKEN_OUT).strip(),
+        "amount_in_raw": str(p.get("amount_in") or p.get("execution_amount_raw") or os.getenv("REBALANCING_TESTNET_EXECUTION_AMOUNT_RAW") or CONTROLLED_AMOUNT_IN_RAW).strip(),
+        "amount_out_minimum_raw": str(p.get("amount_out_minimum") or p.get("amount_out_minimum_raw") or os.getenv("ALTANA_TESTNET_AMOUNT_OUT_MINIMUM_RAW") or CONTROLLED_MINIMUM_OUT_RAW).strip(),
+        "fee": int(p.get("fee") or os.getenv("ALTANA_SWAP_FEE") or CONTROLLED_FEE),
+    }
 
 
 def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -57,6 +75,7 @@ def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     execution_status = "observed"
     transaction_hash = None
     authorization: dict[str, Any] = {"required": False, "obtained": False, "status": "not_required"}
+    execution_config = _execution_config(p)
 
     if action != "hold":
         try:
@@ -86,10 +105,10 @@ def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         }
 
         wallet = str(granted.get("execution_wallet") or "").strip()
-        token_in = str(granted.get("capital_token") or p.get("token_in") or "").strip()
-        token_out = str(p.get("token_out") or "").strip()
-        amount_in = str(p.get("amount_in") or p.get("execution_amount_raw") or "").strip()
-        minimum_out = str(p.get("amount_out_minimum") or p.get("amount_out_minimum_raw") or "0").strip()
+        token_in = str(granted.get("capital_token") or execution_config["token_in"]).strip()
+        token_out = str(execution_config["token_out"]).strip()
+        amount_in = str(execution_config["amount_in_raw"]).strip()
+        minimum_out = str(execution_config["amount_out_minimum_raw"]).strip()
 
         if not wallet or not token_in or not token_out or not amount_in:
             raise RuntimeError("Rebalancing execution requires an authorized execution wallet, token_in, token_out and amount_in; no result will be submitted")
@@ -102,7 +121,7 @@ def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
                 token_out=token_out,
                 amount_in=amount_in,
                 amount_out_minimum=minimum_out,
-                fee=int(p.get("fee", 2500)),
+                fee=int(execution_config["fee"]),
             )
         except Exception as exc:
             raise RuntimeError(f"Rebalancing execution failed; result will not be submitted: {exc}") from exc
@@ -126,10 +145,17 @@ def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             "edge_ratio": max(0.0, edge_ratio),
         },
         "decision": {"action": action, "target_lower": target_lower, "target_upper": target_upper},
+        "execution_plan": {
+            "token_in": execution_config["token_in"],
+            "token_out": execution_config["token_out"],
+            "amount_in_raw": execution_config["amount_in_raw"],
+            "amount_out_minimum_raw": execution_config["amount_out_minimum_raw"],
+            "fee": execution_config["fee"],
+        },
         "execution": execution if action != "hold" else "observation_only",
         "execution_status": execution_status,
         "authorization": authorization,
-        "note": "State-changing execution requires a request-scoped Altana session verified by AgentMarket before the standalone provider executes.",
+        "note": "State-changing execution requires a request-scoped Altana session verified by AgentMarket before the standalone provider executes. Controlled Rebalancing Testnet execution defaults are CAKE2 -> WBNB, 1 token unit, fee 2500.",
     }
     return json.dumps(payload, separators=(",", ":")), {
         "execution_status": execution_status,
