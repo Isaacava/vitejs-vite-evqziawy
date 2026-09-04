@@ -13,8 +13,7 @@ export default function ExecutionCapitalRequestGate({ jobId, chainJobId, onReque
     let active = true;
     void (async () => {
       try {
-        const target = chainJobId || jobId;
-        const response = await fetch(`/api/testnet?route=execution-capital-requirement&job=${encodeURIComponent(target)}`, { credentials: "include", cache: "no-store" });
+        const response = await fetch(`/api/testnet?route=execution-capital-requirement&job=${encodeURIComponent(jobId)}`, { credentials: "include", cache: "no-store" });
         const body = await response.json().catch(() => null) as Requirement & { error?: string };
         if (!response.ok) throw new Error(body?.error || "Unable to resolve execution token");
         if (active) setRequirement(body);
@@ -23,7 +22,7 @@ export default function ExecutionCapitalRequestGate({ jobId, chainJobId, onReque
       }
     })();
     return () => { active = false; };
-  }, [jobId, chainJobId]);
+  }, [jobId]);
 
   const symbol = requirement?.execution_capital?.symbol || requirement?.execution_market?.token_in_symbol || "execution token";
 
@@ -71,7 +70,7 @@ export default function ExecutionCapitalRequestGate({ jobId, chainJobId, onReque
           <h3 className="font-display text-[18px] font-bold m-0">Authorize the agent before it executes</h3>
           <p className="text-[11px] text-inksoft mt-1.5 max-w-[620px]">The ERC-8183 job is confirmed. AgentMarket prepares a request-scoped Altana session only for a provider that explicitly advertises this capability. No execution token is transferred by this step.</p>
         </div>
-        <span className={`font-mono text-[9px] px-2.5 py-1 rounded-lg ${status === "requested" ? "status-green" : status === "not_required" ? "status-green" : "status-brass"}`}>{status === "requested" ? "READY" : status === "not_required" ? "NOT REQUIRED" : status.toUpperCase()}</span>
+        <span className={`font-mono text-[9px] px-2.5 py-1 rounded-lg ${status === "requested" || status === "not_required" ? "status-green" : "status-brass"}`}>{status === "requested" ? "READY" : status === "not_required" ? "NOT REQUIRED" : status.toUpperCase()}</span>
       </div>
 
       <div className="grid sm:grid-cols-3 gap-3 mt-5">
