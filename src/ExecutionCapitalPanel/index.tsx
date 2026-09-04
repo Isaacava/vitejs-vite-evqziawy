@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Address, Hex } from "viem";
 import type { ExecutionCapitalRequest } from "../lib/executionCapital";
 import { getExecutionCapability, TESTNET_U_TOKEN_ADDRESS } from "../lib/executionCapital";
-import ExecutionCapitalCard, { type OnchainExecutionSummary } from "../ExecutionCapitalCard";
+import ExecutionCapitalCard from "../ExecutionCapitalCard";
 import ExecutionCapitalRequestGate from "../ExecutionCapitalRequestGate";
 import AltanaWalletGate from "../AltanaWalletGate";
 import AltanaSessionGrantGate from "../AltanaSessionGrantGate";
@@ -45,8 +45,7 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
         setState(body);
         setError("");
         setLoading(false);
-        const funded = Boolean(body?.erc8183?.funded);
-        if (!body?.erc8183?.submitted && funded) timer = window.setTimeout(() => void refresh(), 3000);
+        if (!body?.erc8183?.submitted && body?.erc8183?.funded) timer = window.setTimeout(() => void refresh(), 3000);
       } catch (cause) {
         if (!active) return;
         setError(cause instanceof Error ? cause.message : "Unable to resolve the provider execution state");
@@ -63,7 +62,6 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
   const needsRequest = Boolean(stateChanging && state?.authorization_required && !request && state?.erc8183?.funded);
   const requestActive = Boolean(request && (request.status === "requested" || request.status === "authorized" || request.status === "active"));
   const requestCapability = capability && capability.session_key_address && capability.session_key_public_key ? capability : null;
-
   const hideLegacyFooter = observationOnly || Boolean(state && !stateChanging && !request);
 
   return (
@@ -84,9 +82,7 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
           </div>
           {state?.provider_evidence?.verified && <p className="mt-3 mb-0 text-[10px] text-inksoft">The provider deliverable was independently captured and verified. AgentMarket will not manufacture an Altana session or execution-capital request for an observation-only result.</p>}
         </section>
-      ) : (
-        <ExecutionCapitalCard request={request} jobBudget={jobBudget} jobCurrency={jobCurrency} />
-      )}
+      ) : <ExecutionCapitalCard request={request} jobBudget={jobBudget} jobCurrency={jobCurrency} />}
 
       {loading && <div className="rounded-[16px_8px_18px_9px] border border-line bg-paper p-4 text-[10px] text-inksoft">Detecting the provider execution mode…</div>}
       {error && <div className="rounded-[16px_8px_18px_9px] border border-[#cfad9f] bg-rustsoft p-4 text-[10.5px] text-rust">Unable to resolve universal execution state: {error}</div>}
@@ -112,7 +108,7 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
             allowedSelectors={requestCapability.allowed_selectors as readonly Hex[]}
             capitalAmount={BigInt(/^[0-9]+$/.test(request.capital_requested || "") ? request.capital_requested! : "1")}
             capitalToken={(request.capital_token || TESTNET_U_TOKEN_ADDRESS) as Address}
-            capitalSymbol={request.capital_token_symbol || "execution token"}
+            capitalSymbol="execution token"
             capitalDecimals={18}
             purpose={request.purpose}
             durationSeconds={request.requested_duration_seconds || request.duration_seconds || 86400}
@@ -139,14 +135,9 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
       )}
 
       {!request && observationOnly && <div className="text-[10px] text-inksoft">No execution-capital request is needed for this observation-only provider result. The ERC-8183 job budget remains separate.</div>}
-
       {state?.execution_capital?.status === "required_not_requested" && !needsRequest && <div className="text-[10px] text-inksoft">Execution capital was detected as required, but the live job is not currently in a state where AgentMarket can request it.</div>}
-
       {state?.capability_discovery?.advertised_url && !observationOnly && <div className="text-[9.5px] text-inksoft break-all">Provider-declared authorization discovery: <span className="font-mono">{state.capability_discovery.advertised_url}</span></div>}
-
-      {!observationOnly && state?.erc8183?.submitted && request == null && (
-        <div className="text-[10px] text-inksoft">The ERC-8183 job is already submitted. Execution authorization remains optional provider evidence and is not shown as pending.</div>
-      )}
+      {!observationOnly && state?.erc8183?.submitted && request == null && <div className="text-[10px] text-inksoft">The ERC-8183 job is already submitted. Execution authorization remains optional provider evidence and is not shown as pending.</div>}
     </div>
   );
 }
