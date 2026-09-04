@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 from urllib.request import Request as UrlRequest, urlopen
+from urllib.parse import urlencode
 from fastapi import FastAPI, HTTPException, Request
 from bnbagent import EVMWalletProvider
 from bnbagent.erc8183 import ERC8183JobOps, funded_job_watcher
@@ -49,13 +50,21 @@ async def on_funded(job:dict[str,Any])->None:
     _runtime["last_funded_job"]={"timestamp":int(time.time()),"job_id":job_id};pending=load_pending(job_id)
     if not _job_matches_agent(job,has_pending=pending is not None):
         logging.info("%s ignoring funded job=%s because on-chain provider does not match this agent",DISPLAY_NAME,job_id);return
-    if pending is not None:deliverable,metadata=pending
-    else:module=importlib.import_module("app.agent.main");deliverable,metadata=await asyncio.to_thread(module.fulfill_job,job)
-    status=str(metadata.get("execution_status") or "").lower()
-    if status not in {"observed","evaluated","planned","executed"}:raise RuntimeError("Agent did not produce an accepted execution status")
-    _runtime["last_execution"]={"timestamp":int(time.time()),"job_id":job_id,"status":status,"tx_hash":metadata.get("transaction_hash")};tx_hash=await submit(job_id,deliverable,metadata);_runtime["last_submission"]={"timestamp":int(time.time()),"job_id":job_id,"tx_hash":tx_hash};_runtime["last_error"]=None
-def proxy_get(path:str)->dict[str,Any]:
-    with urlopen(EXECUTION_URL+path,timeout=10) as response:payload=json.loads(response.read().decode())
+    try:
+        if pending is not None:deliverable,metadata=pending
+        else:
+            module=importlib.import_module("app.agent.main");deliverable,metadata=await asyncio.to_thread(module.fulfill_job,job)
+        status=str(metadata.get("execution_status") or "").lower()
+        if status not in {"observed","executed"}:raise RuntimeError("Health Guardian did not produce an accepted execution status")
+        if status=="executed" and not metadata.get("transaction_hash"):raise RuntimeError("Health Guardian execution reported executed but no transaction hash was returned; refusing submission")
+        _runtime["last_execution"]={"timestamp":int(time.time()),"job_id":job_id,"status":status,"tx_hash":metadata.get("transaction_hash")};tx_hash=await submit(job_id,deliverable,metadata);_runtime["last_submission"]={"timestamp":int(time.time()),"job_id":job_id,"tx_hash":tx_hash};_runtime["last_error"]=None
+    except Exception as exc:
+        _runtime["last_error"]={"timestamp":int(time.time()),"job_id":job_id,"error":str(exc)}
+        logging.error("%s job=%s not submitted: %s",DISPLAY_NAME,job_id,exc)
+def proxy_get(path:str,query:dict[str,str]|None=None)->dict[str,Any]:
+    url=EXECUTION_URL+path
+    if query:url+=("&" if "?" in url else "?")+urlencode({k:v for k,v in query.items() if v})
+    with urlopen(url,timeout=10) as response:payload=json.loads(response.read().decode())
     if not isinstance(payload,dict):raise RuntimeError("invalid execution response")
     return payload
 def proxy_post(path:str,body:dict[str,Any])->dict[str,Any]:
@@ -79,7 +88,11 @@ async def root():return {"status":"ok","service":f"{DISPLAY_NAME} ERC-8183 provi
 @app.get("/erc8183/status")
 async def status():return {"status":"ok","agent_kind":KIND,"agent_address":provider_address(),"commerce_address":str(_ops.erc8183_client.commerce.address),"router_address":str(_ops.erc8183_client.router.address),"policy_address":str(_ops.erc8183_client.policy.address),"service_price":SERVICE_PRICE,"payment_token":payment_token(),"poll_interval":POLL_INTERVAL,"execution_service":EXECUTION_URL}
 @app.get("/erc8183/execution-capabilities")
-async def execution_capabilities():return proxy_get("/execution-capabilities")
+async def execution_capabilities(request:Request):
+    job_id=request.query_params.get("job_id") or request.query_params.get("jobId")
+    if not job_id:raise HTTPException(status_code=400,detail="job_id is required")
+    try:return proxy_get("/execution-capabilities",{"job_id":job_id})
+    except Exception as exc:raise HTTPException(status_code=502,detail=str(exc)) from exc
 @app.post("/erc8183/preflight")
 async def preflight(request:Request):
     body=await request.json()
@@ -87,4 +100,5 @@ async def preflight(request:Request):
     try:return proxy_post("/preflight",body)
     except Exception as exc:raise HTTPException(status_code=409,detail=str(exc)) from exc
 @app.post("/erc8183/negotiate")
-async def negotiate(request:Request):return {"accepted":True,"quote_id":f"{KIND}-{int(time.time())}","price":str(SERVICE_PRICE),"currency":payment_token() or "testnet-settlement-token","quote_expires_at":int(time.time())+300,"chain_id":CHAIN_ID,"network":NETWORK,"environment":"testnet","provider_address":provider_address()}
+async def negotiate(request:Request):
+    return {"accepted":True,"quote_id":f"{KIND}-{int(time.time())}","price":str(SERVICE_PRICE),"currency":payment_token() or "testnet-settlement-token","quote_expires_at":int(time.time())+300,"chain_id":CHAIN_ID,"network":NETWORK,"environment":"testnet","provider_address":provider_address()}
