@@ -6,6 +6,7 @@ import os
 from typing import Any
 
 from app.agent.execution import execute_testnet_swap
+from shared.execution_authorization import wait_for_execution_authorization
 
 
 def _obj(value: Any) -> dict[str, Any]:
@@ -49,38 +50,35 @@ def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     target_lower = current_tick - width / 2 if action != "hold" else tick_lower
     target_upper = current_tick + width / 2 if action != "hold" else tick_upper
 
-    execute_requested = str(p.get("execute", "")).lower() in {"1", "true", "yes"}
-
-    # A state-changing rebalancing decision is never valid as an observation-only submission.
-    if action != "hold" and not execute_requested:
-        raise RuntimeError(
-            f"Rebalancing decision '{action}' requires execution authorization and an execution token before submission"
-        )
-
     execution = None
     execution_status = "observed"
     transaction_hash = None
+    authorization = None
 
-    if execute_requested:
-        if action == "hold":
-            raise ValueError("Rebalancing execution requested but the strategy decision is hold")
+    if action != "hold":
+        job_id = int(job.get("jobId", job.get("id", 0)))
+        provider_address = str(job.get("provider") or os.getenv("AGENT_PROVIDER_ADDRESS") or "").strip()
+        if not provider_address:
+            raise RuntimeError("State-changing execution requires the provider address for job-scoped authorization")
 
-        wallet = str(p.get("execution_wallet") or p.get("user_altana_wallet") or "").strip()
-        token_in = str(p.get("token_in") or os.getenv("ALTANA_SESSION_SPEND_TOKEN") or "").strip()
+        # Never infer authorization from job parameters. Wait for AgentMarket to
+        # report a verified, job-scoped Altana authorization before executing.
+        authorization = wait_for_execution_authorization(job_id, provider_address)
+
+        wallet = str(authorization.get("execution_wallet") or p.get("execution_wallet") or p.get("user_altana_wallet") or "").strip()
+        token_in = str(authorization.get("capital_token") or p.get("token_in") or os.getenv("ALTANA_SESSION_SPEND_TOKEN") or "").strip()
         token_out = str(p.get("token_out") or os.getenv("ALTANA_SWAP_TOKEN_OUT") or "").strip()
         amount_in = str(p.get("amount_in") or "").strip()
         minimum_out = str(p.get("amount_out_minimum") or "0").strip()
 
         if not wallet or not token_in or not token_out or not amount_in:
             raise RuntimeError(
-                "Rebalancing execution requires execution_wallet, token_in, token_out and amount_in; no result will be submitted"
+                "Rebalancing execution is authorized but requires execution_wallet, token_in, token_out and amount_in; no result will be submitted"
             )
-        if not os.getenv("ALTANA_SESSION_SPEND_TOKEN") and not p.get("token_in"):
-            raise RuntimeError("Execution token authorization is missing; request the scoped execution token before submission")
 
         try:
             execution = execute_testnet_swap(
-                job_id=int(job.get("jobId", job.get("id", 0))),
+                job_id=job_id,
                 wallet_address=wallet,
                 token_in=token_in,
                 token_out=token_out,
@@ -112,8 +110,13 @@ def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "decision": {"action": action, "target_lower": target_lower, "target_upper": target_upper},
         "execution": execution if action != "hold" else "observation_only",
         "execution_status": execution_status,
-        "authorization": {"required": action != "hold", "obtained": bool(execution), "token": token_in if execution else None},
-        "note": "State-changing execution is permitted only through the agent's allowlisted Altana scoped Testnet session and must succeed before result submission.",
+        "authorization": {
+            "required": action != "hold",
+            "obtained": authorization is not None,
+            "token": str(authorization.get("capital_token")) if authorization else None,
+            "status": "verified" if authorization else "not_required",
+        },
+        "note": "State-changing execution is permitted only after AgentMarket reports a verified job-scoped authorization through the provider's allowlisted execution session; execution must succeed before result submission.",
     }
     return json.dumps(payload, separators=(",", ":")), {
         "execution_status": execution_status,
