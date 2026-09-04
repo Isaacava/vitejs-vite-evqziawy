@@ -3,11 +3,33 @@ import { useEffect, useRef, useState } from "react";
 type Props = { jobId: string; chainJobId?: string; jobBudget?: string | number | null; jobCurrency?: string; onRequested?: () => void };
 type Requirement = { execution_capital?: { token?: string; symbol?: string; required_amount?: string }; execution_market?: { token_in_symbol?: string; token_out_symbol?: string; fee?: number | null } };
 
+type JobLookup = { chain?: { chain_job_id?: number | null }; job?: { chain_job_id?: number | null } };
+
 export default function ExecutionCapitalRequestGate({ jobId, chainJobId, onRequested }: Props) {
+  const [resolvedChainJobId, setResolvedChainJobId] = useState(chainJobId || "");
   const [requirement, setRequirement] = useState<Requirement | null>(null);
   const [status, setStatus] = useState<"idle" | "submitting" | "requested" | "not_required" | "error">("idle");
   const [error, setError] = useState("");
   const startedRef = useRef(false);
+
+  useEffect(() => {
+    if (chainJobId) {
+      setResolvedChainJobId(chainJobId);
+      return;
+    }
+    let active = true;
+    void (async () => {
+      try {
+        const response = await fetch(`/api/jobs?id=${encodeURIComponent(jobId)}`, { credentials: "include", cache: "no-store" });
+        const body = await response.json().catch(() => null) as JobLookup | null;
+        const liveId = body?.chain?.chain_job_id ?? body?.job?.chain_job_id;
+        if (active && liveId !== null && liveId !== undefined) setResolvedChainJobId(String(liveId));
+      } catch {
+        // The gate will remain blocked until a live ERC-8183 job id is known.
+      }
+    })();
+    return () => { active = false; };
+  }, [jobId, chainJobId]);
 
   useEffect(() => {
     let active = true;
@@ -27,7 +49,7 @@ export default function ExecutionCapitalRequestGate({ jobId, chainJobId, onReque
   const symbol = requirement?.execution_capital?.symbol || requirement?.execution_market?.token_in_symbol || "execution token";
 
   async function requestCapital() {
-    if (!chainJobId) {
+    if (!resolvedChainJobId) {
       setStatus("error");
       setError("A confirmed ERC-8183 chain job ID is required before execution authorization can be prepared.");
       return;
@@ -37,7 +59,7 @@ export default function ExecutionCapitalRequestGate({ jobId, chainJobId, onReque
     try {
       const response = await fetch("/api/testnet?route=execution-authorization-prepare", {
         method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ job_id: jobId, chain_job_id: chainJobId, capital_requested: 1, purpose: "Agent execution", duration_seconds: 24 * 60 * 60 }),
+        body: JSON.stringify({ job_id: jobId, chain_job_id: resolvedChainJobId, capital_requested: 1, purpose: "Agent execution", duration_seconds: 24 * 60 * 60 }),
       });
       const body = await response.json().catch(() => null) as { error?: string; required?: boolean; request?: unknown } | null;
       if (!response.ok) throw new Error(body?.error || "Unable to prepare execution authorization");
@@ -54,13 +76,13 @@ export default function ExecutionCapitalRequestGate({ jobId, chainJobId, onReque
   }
 
   useEffect(() => {
-    if (startedRef.current || !chainJobId) return;
+    if (startedRef.current || !resolvedChainJobId) return;
     startedRef.current = true;
     void requestCapital();
-    // Preparation is automatic only for a confirmed job. It does not transfer
-    // capital or execute anything; Passkey approval happens in the next gate.
+    // Preparation never transfers execution capital or submits a job. The next
+    // step is the explicit Altana Passkey authorization gate.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobId, chainJobId]);
+  }, [jobId, resolvedChainJobId]);
 
   return (
     <section className="border border-line rounded-[16px_8px_18px_9px] bg-paper p-5">
