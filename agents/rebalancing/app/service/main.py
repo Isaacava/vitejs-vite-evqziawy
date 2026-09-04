@@ -48,8 +48,7 @@ def _job_matches_agent(job:dict[str,Any],has_pending:bool=False)->bool:
     if has_pending:return True
     assigned=_job_provider(job)
     if not assigned:
-        logging.warning("%s funded job=%s has no provider assignment in watcher payload; refusing to execute",DISPLAY_NAME,job.get("jobId"))
-        return False
+        logging.warning("%s funded job=%s has no provider assignment in watcher payload; refusing to execute",DISPLAY_NAME,job.get("jobId")); return False
     return assigned.lower()==provider_address().lower()
 async def submit(job_id:int,deliverable:str,metadata:dict[str,Any]):
     save_pending(job_id,deliverable,metadata); result=await _ops.submit_result(job_id,deliverable); tx_hash=getattr(result,"hash",None)
@@ -62,14 +61,25 @@ async def on_funded(job:dict[str,Any])->None:
     _runtime["last_funded_job"]={"timestamp":int(time.time()),"job_id":job_id}
     pending=load_pending(job_id)
     if not _job_matches_agent(job,has_pending=pending is not None):
-        logging.info("%s ignoring funded job=%s because on-chain provider does not match this agent",DISPLAY_NAME,job_id)
-        return
-    if pending is not None:deliverable,metadata=pending
-    else:
-        module=importlib.import_module("app.agent.main"); deliverable,metadata=await asyncio.to_thread(module.fulfill_job,job)
-    status=str(metadata.get("execution_status") or "").lower()
-    if status not in {"observed","evaluated","planned","executed"}:raise RuntimeError("Agent did not produce an accepted execution status")
-    _runtime["last_execution"]={"timestamp":int(time.time()),"job_id":job_id,"status":status,"tx_hash":metadata.get("transaction_hash")}; tx_hash=await submit(job_id,deliverable,metadata); _runtime["last_submission"]={"timestamp":int(time.time()),"job_id":job_id,"tx_hash":tx_hash}; _runtime["last_error"]=None
+        logging.info("%s ignoring funded job=%s because on-chain provider does not match this agent",DISPLAY_NAME,job_id); return
+    try:
+        if pending is not None: deliverable,metadata=pending
+        else:
+            module=importlib.import_module("app.agent.main"); deliverable,metadata=await asyncio.to_thread(module.fulfill_job,job)
+        status=str(metadata.get("execution_status") or "").lower()
+        # Only a completed execution or a genuinely observational/hold result may be submitted.
+        # Never submit a planned state-changing decision.
+        decision=str(metadata.get("decision") or "").lower()
+        if status == "planned" or (decision in {"move_range","widen"} and status != "executed"):
+            raise RuntimeError(f"Rebalancing decision '{decision or 'state-changing'}' requires successful execution before ERC-8183 submission")
+        if status not in {"observed","executed"}:
+            raise RuntimeError("Rebalancing agent did not produce an accepted terminal execution status")
+        if status == "executed" and not metadata.get("transaction_hash"):
+            raise RuntimeError("Rebalancing execution reported executed but no transaction hash was returned; refusing submission")
+        _runtime["last_execution"]={"timestamp":int(time.time()),"job_id":job_id,"status":status,"tx_hash":metadata.get("transaction_hash")}; tx_hash=await submit(job_id,deliverable,metadata); _runtime["last_submission"]={"timestamp":int(time.time()),"job_id":job_id,"tx_hash":tx_hash}; _runtime["last_error"]=None
+    except Exception as exc:
+        _runtime["last_error"]={"timestamp":int(time.time()),"job_id":job_id,"error":str(exc)}
+        logging.error("%s job=%s not submitted: %s",DISPLAY_NAME,job_id,exc)
 def proxy_get(path:str,query:dict[str,str]|None=None)->dict[str,Any]:
     url=EXECUTION_URL+path
     if query:url += ("&" if "?" in url else "?") + urlencode({k:v for k,v in query.items() if v})
@@ -109,12 +119,9 @@ async def execution_capabilities(request:Request):
 @app.get("/erc8183/job/{job_id}/response")
 async def job_response(job_id:int):
     path=response_path(job_id)
-    try:
-        body=path.read_bytes()
-    except FileNotFoundError:
-        return JSONResponse({"error":"submitted response not found","job_id":job_id},status_code=404)
-    except OSError as exc:
-        return JSONResponse({"error":f"unable to read submitted response: {exc}","job_id":job_id},status_code=500)
+    try:body=path.read_bytes()
+    except FileNotFoundError:return JSONResponse({"error":"submitted response not found","job_id":job_id},status_code=404)
+    except OSError as exc:return JSONResponse({"error":f"unable to read submitted response: {exc}","job_id":job_id},status_code=500)
     return Response(content=body,media_type="application/json",headers={"cache-control":"no-store"})
 @app.post("/erc8183/preflight")
 async def preflight(request:Request):
