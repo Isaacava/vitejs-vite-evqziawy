@@ -117,29 +117,6 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
           setJobScopedAuthorization(null);
         }
 
-        if (!request && !requestAttempted && resolvedMarketplaceJobId && !/^\d+$/.test(resolvedMarketplaceJobId) && response.ok && body?.status === "not_requested") {
-          requestAttempted = true;
-          const prepareResponse = await fetch("/api/testnet?route=execution-authorization-prepare", {
-            method: "POST",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              job_id: resolvedMarketplaceJobId,
-              chain_job_id: Number(chainJobId),
-              capital_requested: 1,
-              purpose: "Agent execution",
-              duration_seconds: 86400,
-            }),
-          });
-          const prepared = await prepareResponse.json().catch(() => null) as { status?: string; created?: boolean; required?: boolean } | null;
-          if (prepareResponse.ok && (prepared?.created || prepared?.status === "requested" || prepared?.status === "authorized" || prepared?.required)) {
-            const followUp = await fetch(`/api/testnet?route=execution-authorization-status&job=${encodeURIComponent(chainJobId)}`, { credentials: "include", cache: "no-store" });
-            const followUpBody = await followUp.json().catch(() => null) as { status?: string; authorization?: JobScopedAuthorization | null } | null;
-            if (active && followUp.ok && followUpBody?.status === "job_scoped_authorized" && followUpBody.authorization?.source === "erc8183_job_context") {
-              setJobScopedAuthorization(followUpBody.authorization);
-            }
-          }
-        }
       } catch {
         if (active) setJobScopedAuthorization(null);
       } finally {
