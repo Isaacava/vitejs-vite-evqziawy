@@ -24,6 +24,7 @@ type ProviderOperation = {
 type OperationResponse = {
   status: number;
   body: unknown;
+  rawText: string;
   endpoint: string;
   method: string;
   transport: string;
@@ -135,8 +136,6 @@ async function manifestOperationFor(endpoint: EndpointRecord, action: ProviderAc
 }
 
 export async function resolveProviderOperation(endpoint: EndpointRecord, action: ProviderAction): Promise<ProviderOperation | null> {
-  // The provider manifest is authoritative. AgentMarket learns the operation URL,
-  // HTTP method, transport and schemas from the agent instead of guessing them.
   try {
     const declared = await manifestOperationFor(endpoint, action);
     if (declared) return declared;
@@ -160,8 +159,6 @@ export async function resolveProviderOperation(endpoint: EndpointRecord, action:
     .find(Boolean) as ProviderOperation | undefined;
   if (discovered) return discovered;
 
-  // Standards fallback is retained only when the stored provider explicitly declares
-  // ERC-8183. This never treats an agent category or identity as proof of protocol support.
   if (endpoint.protocol.toLowerCase() === "erc8183") {
     const base = endpoint.endpoint_url.replace(/\/+$/, "");
     if (action === "quote") return {
@@ -217,10 +214,10 @@ async function requestJson(operation: ProviderOperation, body: Record<string, un
       body: requestBody,
       signal: controller.signal,
     });
-    const raw = await response.text();
+    const rawText = await response.text();
     let parsed: unknown = {};
-    try { parsed = raw ? JSON.parse(raw) : {}; } catch { parsed = { raw }; }
-    return { status: response.status, body: parsed, endpoint, method: operation.method, transport: operation.transport };
+    try { parsed = rawText ? JSON.parse(rawText) : {}; } catch { parsed = { raw: rawText }; }
+    return { status: response.status, body: parsed, rawText, endpoint, method: operation.method, transport: operation.transport };
   } finally { clearTimeout(timer); }
 }
 
@@ -238,10 +235,10 @@ async function requestA2A(operation: ProviderOperation, body: Record<string, unk
       body: JSON.stringify(requestPayload),
       signal: controller.signal,
     });
-    const raw = await response.text();
+    const rawText = await response.text();
     let parsed: unknown = {};
-    try { parsed = raw ? JSON.parse(raw) : {}; } catch { parsed = { raw }; }
-    return { status: response.status, body: parsed, endpoint: operation.endpoint, method: "POST", transport: "a2a" };
+    try { parsed = rawText ? JSON.parse(rawText) : {}; } catch { parsed = { raw: rawText }; }
+    return { status: response.status, body: parsed, rawText, endpoint: operation.endpoint, method: "POST", transport: "a2a" };
   } finally { clearTimeout(timer); }
 }
 
@@ -257,10 +254,10 @@ async function requestMcp(operation: ProviderOperation, body: Record<string, unk
       body: JSON.stringify({ jsonrpc: "2.0", id: `agentmarket-${Date.now()}`, method: "tools/call", params: { name: toolName, arguments: selectBody(operation.action, body) } }),
       signal: controller.signal,
     });
-    const raw = await response.text();
+    const rawText = await response.text();
     let parsed: unknown = {};
-    try { parsed = raw ? JSON.parse(raw) : {}; } catch { parsed = { raw }; }
-    return { status: response.status, body: parsed, endpoint: operation.endpoint, method: "POST", transport: "mcp" };
+    try { parsed = rawText ? JSON.parse(rawText) : {}; } catch { parsed = { raw: rawText }; }
+    return { status: response.status, body: parsed, rawText, endpoint: operation.endpoint, method: "POST", transport: "mcp" };
   } finally { clearTimeout(timer); }
 }
 
