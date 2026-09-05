@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from execution_client import execute_testnet_swap as _execute_testnet_swap
+from agents.execution_client import execute_testnet_swap as _execute_testnet_swap
 
 
 def execute_testnet_swap(
