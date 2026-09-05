@@ -19,6 +19,42 @@ function decisionUrls(base: string, jobId: number): string[] {
   return urls;
 }
 
+function resolveAdvertisedEndpoint(base: string, advertised: string, jobId: number): string | null {
+  if (!advertised || typeof advertised !== "string") return null;
+  const normalized = advertised.replace("{job_id}", String(jobId)).replace("{jobId}", String(jobId));
+  try {
+    return new URL(normalized, `${base.replace(/\/+$/, "")}/`).toString();
+  } catch {
+    return null;
+  }
+}
+
+async function discoverDecisionUrls(base: string, jobId: number): Promise<string[]> {
+  const clean = base.replace(/\/+$/, "");
+  try {
+    const response = await fetch(clean, { headers: { Accept: "application/json" }, cache: "no-store" });
+    if (response.ok) {
+      const manifest = object(await response.json());
+      const endpoints = object(manifest.endpoints);
+      const advertised = [
+        endpoints.decision,
+        endpoints.execution_decision,
+        endpoints.executionDecision,
+        manifest.decision_url,
+        manifest.execution_decision_url,
+      ];
+      const resolved = advertised
+        .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+        .map((value) => resolveAdvertisedEndpoint(clean, value, jobId))
+        .filter((value): value is string => Boolean(value));
+      return [...new Set(resolved)];
+    }
+  } catch {
+    // Fall back to explicit metadata/protocol routes below.
+  }
+  return [];
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") { res.setHeader("Allow", "GET"); return res.status(405).json({ error: "Method not allowed" }); }
   try {
@@ -46,8 +82,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ...metadataUrls(agent as Record<string, unknown>),
       ...(endpoints || []).map((entry) => String(entry.endpoint_url || "").trim()).filter(Boolean),
     ])];
-    const candidates = bases.flatMap((base) => decisionUrls(base, chainJobId));
-    for (const candidate of candidates) {
+    const candidates = [] as string[];
+    for (const base of bases) {
+      candidates.push(...await discoverDecisionUrls(base, chainJobId));
+      candidates.push(...decisionUrls(base, chainJobId));
+    }
+
+    for (const candidate of [...new Set(candidates)]) {
       try {
         const response = await fetch(candidate, { headers: { Accept: "application/json" }, cache: "no-store" });
         if (!response.ok) continue;
