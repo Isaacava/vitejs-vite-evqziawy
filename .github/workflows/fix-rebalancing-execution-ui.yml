@@ -17,14 +17,14 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
-          import re
           p = Path('src/ExecutionCapitalCard.tsx')
           s = p.read_text()
-          pattern = re.compile(r'\n        if \(!request && !requestAttempted && resolvedMarketplaceJobId && !/\\d\+\$/\.test\(resolvedMarketplaceJobId\) && response\.ok && body\?\.status === "not_requested"\) \{.*?\n        \}', re.S)
-          s2, n = pattern.subn('', s, count=1)
-          if n != 1:
+          start = s.find('        if (!request && !requestAttempted && resolvedMarketplaceJobId')
+          end = s.find('      } catch {', start)
+          if start < 0 or end < 0:
             raise SystemExit('Expected implicit execution-capital request block was not found')
-          p.write_text(s2)
+          s = s[:start] + s[end:]
+          p.write_text(s)
       - name: Commit and remove fixer
         run: |
           git config user.name github-actions[bot]
@@ -32,5 +32,5 @@ jobs:
           git add src/ExecutionCapitalCard.tsx
           git commit -m "Fix Rebalancing execution UI [rebalancing-ui-fix]"
           git rm .github/workflows/fix-rebalancing-execution-ui.yml
-          git commit -m "Remove temporary Rebalancing UI fixer [rebalancing-ui-fix]" || true
+          git commit -m "Remove temporary Rebalancing UI fixer [rebalancing-ui-fix]"
           git push origin main
