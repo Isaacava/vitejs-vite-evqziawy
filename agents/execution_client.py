@@ -31,7 +31,7 @@ def resolve_job_execution_wallet(*, job_id: int, explicit_wallet: str | None = N
         )
 
     try:
-        with urlopen(f"{provider_url}/erc8183/status", timeout=10) as response:
+        with urlopen(f"{provider_url}/status", timeout=10) as response:
             provider_status = json.loads(response.read().decode("utf-8"))
     except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
         raise RuntimeError("Unable to resolve the provider wallet needed to verify job-scoped execution authorization") from exc
