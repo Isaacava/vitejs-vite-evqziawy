@@ -36,6 +36,7 @@ ENV PORT=8000
 ENV AGENT_APP_MODULE=app.service.main:app
 ENV GRID_EXECUTION_INTERNAL_URL=http://127.0.0.1:8788
 
+# Rebuild with the shared ERC-8004 provider-root registration so AgentMarket can discover this service.
 EXPOSE 8000
 
 CMD ["/app/start_agent.sh"]
