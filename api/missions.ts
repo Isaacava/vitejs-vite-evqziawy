@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { getAuthenticatedUser, serverClient } from "./_auth.js";
+import { getAuthenticatedUser, serverClient } from "../server/api-helpers/auth.js";
 import { parseMarketplaceIntent } from "../src/lib/intent.js";
 
 function text(value: unknown, maxLength: number) {
