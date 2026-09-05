@@ -36,9 +36,6 @@ function validAddress(value: unknown): value is Address {
 function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
-function isUuid(value: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-}
 function formatRaw(raw: bigint, decimals: number) {
   return formatUnits(raw, decimals);
 }
@@ -103,6 +100,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!agent || agent.chain !== "bsc-testnet" || !validAddress(agent.owner)) return res.status(409).json({ error: "Selected provider is not a valid Testnet agent" });
     if (agent.verification_status === "revoked") return res.status(409).json({ error: "Selected provider identity is revoked" });
 
+    // Hiring is deliberately independent of provider capability endpoints and registry health.
+    // An agent may be temporarily unavailable or may use a non-AgentMarket capability API;
+    // neither condition should prevent an ERC-8183 job from being created.
     const { data: endpoint, error: endpointError } = await supabase
       .from("agent_endpoints")
       .select("status,last_checked_at,endpoint_url,protocol")
@@ -111,7 +111,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .limit(1)
       .maybeSingle();
     if (endpointError) throw new Error(endpointError.message);
-    if (!endpoint?.endpoint_url || endpoint.status !== "online") return res.status(409).json({ error: "Provider is no longer healthy on Testnet" });
+    const endpointOnline = endpoint?.status === "online";
+    const providerEndpoint = typeof endpoint?.endpoint_url === "string" && endpoint.endpoint_url.trim() ? endpoint.endpoint_url.trim() : null;
+    const providerProtocol = typeof endpoint?.protocol === "string" && endpoint.protocol.trim() ? endpoint.protocol.trim() : null;
 
     const token = await client.readContract({ address: COMMERCE, abi: COMMERCE_ABI, functionName: "paymentToken" });
     const [decimals, symbol, balance, allowance, policy] = await Promise.all([
@@ -139,8 +141,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       currency: quote.currency,
       goal: quote.goal,
       params: quote.request_metadata,
-      provider_endpoint: endpoint.endpoint_url,
-      provider_protocol: endpoint.protocol,
+      provider_endpoint: providerEndpoint,
+      provider_protocol: providerProtocol,
       execution_authorization: {
         mode: "optional",
         provider_must_not_be_blocked_by_marketplace_capability_discovery: true,
@@ -197,6 +199,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         chain_id: CHAIN_ID,
         authorization_in_job_context: false,
         optional: true,
+        provider_endpoint_online: endpointOnline,
       },
       job_description: description,
       wallet_steps: [
@@ -220,8 +223,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         protocol: "erc-8183",
         agent_blocker: false,
         execution_capability_discovery_required_before_hire: false,
+        endpoint_health_required_before_hire: false,
       },
-      note: "AgentMarket hires the provider through ERC-8183 first. Altana execution capability is optional at hiring time and is not used as an agent onboarding blocker.",
+      note: "AgentMarket hires the provider through ERC-8183 first. Altana execution capability, wallet provisioning, endpoint health, and provider-specific APIs are optional at hiring time and must not block job creation.",
     });
   } catch (error) {
     return res.status(400).json({ error: error instanceof Error ? error.message : "Unable to prepare the accepted Testnet quote" });
