@@ -101,7 +101,7 @@ async function discoverOperations(endpoint: Record<string, unknown>) {
   const operations: Record<string, OperationSnapshot> = {};
   for (const action of ["quote", "decision", "authorization", "preflight", "execute", "result", "health"] as const) {
     try {
-      const operation = await resolveProviderOperation(endpoint as never, action);
+      const operation = await resolveProviderOperation(endpoint as never, action as never);
       operations[action] = operation ? {
         endpoint: operation.endpoint,
         method: operation.method,
@@ -240,7 +240,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    const summary = results.reduce(
+    const summary = results.reduce<Record<string, number>>(
       (acc, row) => {
         acc.total += 1;
         const status = typeof row.status === "string" ? row.status : "offline";
@@ -263,7 +263,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (row.manifest && (row.manifest as Record<string, unknown>).synthetic === true) acc.syntheticManifests += 1;
         return acc;
       },
-      { total: 0, online: 0, degraded: 0, offline: 0, validManifests: 0, syntheticManifests: 0, hireable: 0, capabilityProfiles: 0, providersWithQuote: 0, reachableQuote: 0, providersWithDecision: 0, providersWithPreflight: 0, providersWithExecute: 0, providersWithResult: 0, reachableResult: 0, providersWithHealth: 0 } as Record<string, number>,
+      { total: 0, online: 0, degraded: 0, offline: 0, validManifests: 0, syntheticManifests: 0, hireable: 0, capabilityProfiles: 0, providersWithQuote: 0, reachableQuote: 0, providersWithDecision: 0, providersWithPreflight: 0, providersWithExecute: 0, providersWithResult: 0, providersWithHealth: 0 },
     );
 
     return res.status(200).json({
