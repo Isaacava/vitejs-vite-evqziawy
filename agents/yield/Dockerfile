@@ -12,7 +12,7 @@ RUN python -m pip install --no-cache-dir --upgrade pip && python -m pip install 
 COPY agents/yield/ ./agents/yield/
 COPY agents/execution_client.py ./agents/execution_client.py
 COPY agents/erc8004_register.py ./erc8004_register.py
-COPY agents/start_agent.sh ./start_agent.sh
+COPY agents/start_agent_v2.sh ./start_agent.sh
 RUN chmod +x /app/start_agent.sh
 COPY --from=execution-build /execution/package.json /execution/package.json
 COPY --from=execution-build /execution/package-lock.json /execution/package-lock.json
@@ -26,6 +26,6 @@ ENV EXECUTION_PORT=8788
 ENV EXECUTION_AGENT_KIND=yield
 ENV AGENT_APP_MODULE=app.service.open_main:app
 ENV ALTANA_EXECUTION_INTERNAL_URL=http://127.0.0.1:8788
-# Rebuild with the shared ERC-8004 provider-root registration so AgentMarket can discover this service.
+# Shared provider manifest launcher: /agent.json + /erc8183/agent.json.
 EXPOSE 8000
 CMD ["/app/start_agent.sh"]
