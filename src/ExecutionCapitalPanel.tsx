@@ -14,6 +14,7 @@ type Props = {
   request: ExecutionCapitalRequest | null;
   jobBudget: string | number | null;
   jobCurrency: string;
+  chainJobId?: number | string | null;
 };
 
 type ExecutionRequirement = {
@@ -45,33 +46,6 @@ const publicClient = createPublicClient({
   transport: http("https://bsc-testnet-rpc.publicnode.com"),
 });
 
-const ERC20_STATE_ABI = [
-  {
-    type: "function",
-    name: "balanceOf",
-    stateMutability: "view",
-    inputs: [{ name: "account", type: "address" }],
-    outputs: [{ name: "balance", type: "uint256" }],
-  },
-  {
-    type: "function",
-    name: "allowance",
-    stateMutability: "view",
-    inputs: [
-      { name: "owner", type: "address" },
-      { name: "spender", type: "address" },
-    ],
-    outputs: [{ name: "remaining", type: "uint256" }],
-  },
-  {
-    type: "function",
-    name: "decimals",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "uint8" }],
-  },
-] as const;
-
 function parseCapitalAmount(value: string | null) {
   if (!value || !/^\d+$/.test(value)) return null;
   try { const amount = BigInt(value); return amount > 0n ? amount : null; } catch { return null; }
@@ -100,7 +74,7 @@ function requestedRawAmount(value: string | null, decimals: number) {
   }
 }
 
-export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency }: Props) {
+export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency, chainJobId }: Props) {
   const capability = getExecutionCapability(request);
   const capitalAmount = parseCapitalAmount(request?.capital_requested || null);
   const [requirement, setRequirement] = useState<ExecutionRequirement | null>(null);
@@ -115,8 +89,12 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
   const [fundingError, setFundingError] = useState("");
   const [fundingTx, setFundingTx] = useState<string>("");
 
+  const resolvedJobId = chainJobId !== null && chainJobId !== undefined && String(chainJobId).trim()
+    ? String(chainJobId).trim()
+    : request?.job_id || new URLSearchParams(window.location.search).get("job")?.trim() || "";
+
   useEffect(() => {
-    const jobId = request?.job_id || new URLSearchParams(window.location.search).get("job")?.trim() || "";
+    const jobId = resolvedJobId;
     if (!jobId) return;
     let active = true;
     let timer: number | undefined;
@@ -153,10 +131,10 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
     };
     void refresh();
     return () => { active = false; if (timer) window.clearTimeout(timer); };
-  }, [request?.job_id]);
+  }, [resolvedJobId]);
 
   useEffect(() => {
-    const jobId = request?.job_id || new URLSearchParams(window.location.search).get("job")?.trim() || "";
+    const jobId = resolvedJobId;
     if (!jobId) return;
     let active = true;
     const refresh = async () => {
@@ -173,11 +151,11 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
     void refresh();
     const timer = window.setInterval(() => void refresh(), 10_000);
     return () => { active = false; window.clearInterval(timer); };
-  }, [request?.job_id]);
+  }, [resolvedJobId]);
 
   useEffect(() => {
     if (request || requestCreated) { setLiveFunded(false); return; }
-    const jobId = new URLSearchParams(window.location.search).get("job")?.trim() || "";
+    const jobId = resolvedJobId;
     if (!jobId) { setLiveFunded(false); return; }
     let active = true;
     let timer: number | undefined;
@@ -201,7 +179,7 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
     };
     void checkLiveState();
     return () => { active = false; if (timer) window.clearTimeout(timer); };
-  }, [request, requestCreated]);
+  }, [resolvedJobId, request, requestCreated]);
 
   const capitalToken = normalizedCapitalToken(request, requirement);
   const capitalSymbol = requirement?.execution_capital?.symbol || requirement?.execution_market?.token_in_symbol || (request ? "CAKE2" : "execution token");
@@ -279,7 +257,7 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
 
   return (
     <div className="mb-6 space-y-4">
-      <ExecutionCapitalCard request={request} jobBudget={jobBudget} jobCurrency={jobCurrency} onchainExecution={onchainExecution} />
+      <ExecutionCapitalCard request={request} jobBudget={jobBudget} jobCurrency={jobCurrency} chainJobId={resolvedJobId} onchainExecution={onchainExecution} />
 
       {!submitted && request && (request.status === "authorized" || request.status === "active") && request.user_execution_wallet && (needsFunding || needsAllowance) && (
         <section className="border border-[#cfad9f] bg-rustsoft text-rust rounded-[16px_8px_18px_9px] p-5">
@@ -290,48 +268,47 @@ export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency 
           {approvalSpender && <div className="mt-2 text-[9.5px] break-all">Approval spender: <span className="font-mono">{approvalSpender}</span></div>}
           {!approvalSpender && capability?.allowed_targets && capability.allowed_targets.length > 1 && <div className="mt-2 text-[9.5px]">AgentMarket could not select a unique ERC-20 approval spender from the declared execution scope, so no allowance transaction is offered.</div>}
           {fundingError && <div className="mt-3 border border-[#cfad9f] bg-paper px-3 py-2 rounded-lg text-[10.5px]">{fundingError}</div>}
-          {fundingTx && <a className="mt-3 inline-block font-mono text-[9px] text-brass break-all" href={`https://testnet.bscscan.com/tx/${fundingTx}`} target="_blank" rel="noreferrer">Execution readiness transaction ↗</a>}
-          <button type="button" onClick={() => void repairFunding()} disabled={fundingBusy || !approvalSpender || requiredRaw === null} className="mt-4 font-display font-bold text-[11px] px-4 py-2.5 bg-ink text-paperhi btn-asym">{fundingBusy ? "Repairing execution readiness…" : needsAllowance ? `Approve ${capitalDisplayAmount} ${capitalSymbol} for the authorized session →` : `Repair execution readiness for the authorized session →`}</button>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            {needsFunding && <a href={fundingLink} className="btn-asym inline-flex bg-ink px-4 py-2 font-display text-[11px] font-bold text-paperhi no-underline">Fund execution wallet →</a>}
+            {needsAllowance && <button type="button" onClick={repairFunding} disabled={fundingBusy || !approvalSpender} className="btn-asym inline-flex bg-brass px-4 py-2 font-display text-[11px] font-bold text-ink disabled:opacity-50">{fundingBusy ? "Preparing approval…" : "Approve execution token"}</button>}
+            {fundingTx && <a href={`https://testnet.bscscan.com/tx/${fundingTx}`} target="_blank" rel="noreferrer" className="text-[10px] font-bold text-brass no-underline">View funding tx ↗</a>}
+          </div>
         </section>
       )}
 
-      {!request && liveFunded && !requestCreated && (() => {
-        const jobId = new URLSearchParams(window.location.search).get("job")?.trim() || "";
-        return jobId ? <ExecutionCapitalRequestGate jobId={jobId} jobBudget={jobBudget} jobCurrency={jobCurrency} onRequested={() => setRequestCreated(true)} /> : null;
-      })()}
-
-      {!request && !liveFunded && liveStateError && <section className="border border-[#cfad9f] bg-rustsoft text-rust rounded-[16px_8px_18px_9px] p-4 text-[10.5px]">Unable to confirm the live Funded state right now. The execution-capital request remains unavailable until the chain state can be verified.</section>}
-
-      {requirementError && !submitted && <section className="border border-[#cfad9f] bg-rustsoft text-rust rounded-[16px_8px_18px_9px] p-4 text-[10.5px]">Unable to resolve the agent's execution-token requirement yet: {requirementError}</section>}
-
-      {request && request.status === "requested" && !capability && <section className="border border-line rounded-[16px_8px_18px_9px] bg-paper p-5"><small className="block font-mono text-[8.5px] uppercase tracking-widest text-brass mb-1.5">Execution Capital · Provider Capability</small><h3 className="font-display text-[17px] font-bold m-0">Waiting for a valid execution scope</h3><p className="text-[10.5px] text-inksoft mt-1.5 max-w-[680px]">AgentMarket has not received a valid BSC Testnet Altana capability descriptor for this request. No session grant is shown until the provider publishes a public session key, target allowlist, and selector allowlist.</p></section>}
-
-      {request && request.status === "requested" && capabilityWithMarket && (
-        <>
-          <AltanaWalletGate />
-          {capitalAmount ? (
-            <AltanaSessionGrantGate
-              requestId={request.id}
-              agentSessionAddress={capabilityWithMarket.session_key_address as Address}
-              agentSessionPublicKey={capabilityWithMarket.session_key_public_key as Hex}
-              allowedCalls={capabilityWithMarket.allowed_targets as readonly Address[]}
-              allowedSelectors={capabilityWithMarket.allowed_selectors as readonly Hex[]}
-              capitalAmount={capitalAmount}
-              capitalToken={capitalToken as Address}
-              capitalSymbol={capitalSymbol}
-              capitalDecimals={capitalDecimals}
-              purpose={request.purpose}
-              durationSeconds={request.requested_duration_seconds || request.duration_seconds || 86400}
-              capabilitySource={capabilityWithMarket.source_url}
-            />
-          ) : (
-            <section className="border border-[#cfad9f] bg-rustsoft text-rust rounded-[16px_8px_18px_9px] bg-rustsoft p-5 text-[11px]">Execution capital was requested with a non-integer amount that the current Altana spend-permission adapter cannot safely encode. The request remains un-authorized.</section>
-          )}
-          <div className="text-[10px] text-inksoft">Agent execution token: <strong>{capitalDisplayAmount} {capitalSymbol}</strong> · <a className="text-brass" href={fundingLink}>Get {capitalSymbol} on PancakeSwap Testnet →</a></div>
-        </>
-      )}
-
-      {request && capability && (request.status === "authorized" || request.status === "active") && !needsFunding && !needsAllowance && <ExecutionCapitalLivePanel request={request} />}
+      {request && <ExecutionCapitalLivePanel request={request} onchainExecution={onchainExecution} />}
+      {!request && liveStateError && <div className="text-[10px] text-rust">{liveStateError}</div>}
+      {!request && requirementError && <div className="text-[10px] text-rust">{requirementError}</div>}
+      {!request && liveFunded && <ExecutionCapitalRequestGate jobId={resolvedJobId} />}
+      {!request && !liveFunded && resolvedJobId && <AltanaWalletGate jobId={resolvedJobId} />}
+      {!request && requestCreated && <AltanaSessionGrantGate jobId={resolvedJobId} />}
     </div>
   );
 }
+
+const ERC20_STATE_ABI = [
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "balance", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "allowance",
+    stateMutability: "view",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "spender", type: "address" },
+    ],
+    outputs: [{ name: "remaining", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "decimals",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint8" }],
+  },
+] as const;
