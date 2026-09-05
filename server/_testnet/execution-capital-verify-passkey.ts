@@ -133,7 +133,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       session_key_public_key: capability.session_key_public_key,
       session_key_id: sessionKeyId,
       session_expiry: expiry,
-      capital_token: capitalToken || evidence.capital_token || capability.execution_market?.token_in || null,
+      capital_token: capitalToken || evidence.capital_token || object(capability.execution_market).token_in || null,
       capital_amount_raw: capitalAmountRaw || evidence.capital_amount_raw || null,
       wallet_provider: "altana",
       authorization_model: "scoped_session",
