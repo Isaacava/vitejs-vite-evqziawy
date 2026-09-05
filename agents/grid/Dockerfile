@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY agents/grid/app ./app
 COPY agents/erc8004_register.py ./erc8004_register.py
-COPY agents/start_agent.sh ./start_agent.sh
+COPY agents/start_agent_v2.sh ./start_agent.sh
 RUN chmod +x /app/start_agent.sh
 
 COPY --from=execution-build /execution/package.json /execution/package.json
@@ -36,7 +36,7 @@ ENV PORT=8000
 ENV AGENT_APP_MODULE=app.service.main:app
 ENV GRID_EXECUTION_INTERNAL_URL=http://127.0.0.1:8788
 
-# Rebuild with the shared ERC-8004 provider-root registration so AgentMarket can discover this service.
+# Shared provider manifest launcher: /agent.json + /erc8183/agent.json.
 EXPOSE 8000
 
 CMD ["/app/start_agent.sh"]
