@@ -1,8 +1,8 @@
 """Agent-owned bridge from a funded Grid job to the local Altana executor.
 
-This module deliberately depends only on the Grid job payload and Grid's own
-execution service. It does not call AgentMarket APIs or require marketplace
-secrets.
+The user-controlled Altana execution wallet must establish the ERC-20 allowance
+before the agent session is granted. The autonomous Grid session executes only
+the allowlisted PancakeSwap router call; it never attempts ERC-20 approve().
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ DEFAULT_ROUTER = "0x9a489505a00cE272eAa5e07Dba6491314CaE3796"
 DEFAULT_TOKEN_IN = "0x8d008B313C1d6C7fE2982F62d32Da7507cF43551"
 DEFAULT_TOKEN_OUT = "0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd"
 DEFAULT_FEE = 2500
-APPROVE_SELECTOR = "0x095ea7b3"
+SWAP_SELECTOR = "0x04e45aaf"
 
 
 def _env(name: str, default: str | None = None) -> str | None:
@@ -80,7 +80,12 @@ def _job_execution_wallet(job: dict[str, Any], params: dict[str, Any]) -> str:
 
 
 async def execute_grid_trade(job: dict[str, Any]) -> dict[str, Any]:
-    """Run Grid's own BSC Testnet execution path with the job-bound Altana session."""
+    """Run Grid's own BSC Testnet execution path with the job-bound Altana session.
+
+    ERC-20 allowance is a user-wallet preparation step. The agent session is
+    deliberately limited to the PancakeSwap router swap call so Altana's
+    on-chain target scope and the local selector guardian agree.
+    """
     params = _job_execution_parameters(job)
     market = params.get("execution_market") if isinstance(params.get("execution_market"), dict) else params
     try:
@@ -143,30 +148,23 @@ async def execute_grid_trade(job: dict[str, Any]) -> dict[str, Any]:
 
         checks = result.get("checks") if isinstance(result.get("checks"), dict) else {}
         if checks.get("token_in_balance_ok") is False:
-            raise RuntimeError(f"Grid execution preflight rejected the job because the wallet balance is below amountIn")
+            raise RuntimeError("Grid execution preflight rejected the job because the wallet balance is below amountIn")
+        if checks.get("token_in_allowance_ok") is False or result.get("requires_approval") is True:
+            raise RuntimeError(
+                "Grid execution wallet allowance is below amountIn. The user must approve the PancakeSwap router allowance before the Altana agent session can execute; the agent will not submit ERC-20 approve()."
+            )
 
         swap_call = result.get("call")
         if not isinstance(swap_call, dict) or not swap_call.get("to") or not swap_call.get("data"):
             raise RuntimeError("Grid execution preflight did not return executable swap calldata")
-
-        calls: list[dict[str, Any]] = []
-        if result.get("requires_approval"):
-            approval_call = result.get("approval_call")
-            if not isinstance(approval_call, dict) or not approval_call.get("to") or not approval_call.get("data"):
-                raise RuntimeError("Grid preflight requires approval but did not return approval calldata")
-            if str(approval_call.get("to")).lower() != token_in.lower():
-                raise RuntimeError("Grid approval target does not match tokenIn")
-            if str(approval_call.get("data"))[:10].lower() != APPROVE_SELECTOR:
-                raise RuntimeError("Grid approval calldata is not the ERC-20 approve selector")
-            calls.append(approval_call)
-
-        calls.append(swap_call)
-        if len(calls) > 2:
-            raise RuntimeError("Grid execution produced too many calls for the bounded approval + swap flow")
+        if str(swap_call.get("to")).lower() != router.lower():
+            raise RuntimeError("Grid swap target does not match the declared PancakeSwap router")
+        if str(swap_call.get("data"))[:10].lower() != SWAP_SELECTOR:
+            raise RuntimeError(f"Grid swap calldata uses unexpected selector; expected {SWAP_SELECTOR}")
 
         execute_response = await client.post(
             f"{base_url}/execute-configured",
-            json={"job_id": job_id, "wallet_address": wallet_address, "calls": calls},
+            json={"job_id": job_id, "wallet_address": wallet_address, "calls": [swap_call]},
         )
         try:
             execute_body = execute_response.json()
