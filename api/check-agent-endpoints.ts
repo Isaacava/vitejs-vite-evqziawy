@@ -8,6 +8,14 @@ const REQUEST_TIMEOUT_MS = 8_000;
 
 type OperationSnapshot = Record<string, unknown> | null;
 
+type OperationCheck = {
+  checkedUrl: string | null;
+  method: string | null;
+  reachable: boolean;
+  statusCode: number | null;
+  latencyMs: number;
+};
+
 function getServiceClient() {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -26,9 +34,15 @@ async function probeUrl(url: string, method = "GET") {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
+    const normalizedMethod = method.toUpperCase();
+    const needsBody = ["POST", "PUT", "PATCH"].includes(normalizedMethod);
     const response = await fetch(url, {
-      method,
-      headers: { Accept: "application/json,text/plain;q=0.9,*/*;q=0.8" },
+      method: normalizedMethod,
+      headers: {
+        Accept: "application/json,text/plain;q=0.9,*/*;q=0.8",
+        ...(needsBody ? { "Content-Type": "application/json" } : {}),
+      },
+      body: needsBody ? "{}" : undefined,
       signal: controller.signal,
     });
     return { ok: response.ok, statusCode: response.status, latencyMs: Date.now() - started, checkedUrl: url };
@@ -45,7 +59,7 @@ async function probeEndpoint(endpointUrl: string, declaredHealth: OperationSnaps
   const declaredUrl = declaredHealth && typeof declaredHealth.endpoint === "string" ? declaredHealth.endpoint : null;
   const declaredMethod = declaredHealth && typeof declaredHealth.method === "string" ? declaredHealth.method : "GET";
   if (declaredUrl) {
-    const probe = await probeUrl(declaredUrl, declaredMethod === "GET" ? "GET" : declaredMethod);
+    const probe = await probeUrl(declaredUrl, declaredMethod);
     if (probe.ok) return { status: "online", ...probe } as const;
     if (probe.statusCode !== null && probe.statusCode >= 500) return { status: "degraded", ...probe } as const;
     return { status: "offline", ...probe } as const;
@@ -59,6 +73,28 @@ async function probeEndpoint(endpointUrl: string, declaredHealth: OperationSnaps
     if (probe.statusCode !== null && probe.statusCode >= 500) return { status: "degraded", ...probe } as const;
   }
   return { status: "offline", statusCode: null, latencyMs: 0, checkedUrl: null } as const;
+}
+
+function materializeProbeUrl(url: string) {
+  return url.replace(/\{[^}]+\}/g, "0");
+}
+
+async function checkOperation(operation: OperationSnapshot): Promise<OperationCheck> {
+  if (!operation || typeof operation.endpoint !== "string") {
+    return { checkedUrl: null, method: null, reachable: false, statusCode: null, latencyMs: 0 };
+  }
+  const method = typeof operation.method === "string" ? operation.method : "GET";
+  const checkedUrl = materializeProbeUrl(operation.endpoint);
+  const probe = await probeUrl(checkedUrl, method);
+  // Any HTTP response means the route is reachable. 4xx is allowed here because
+  // a route can legitimately reject a probe payload or a placeholder job id.
+  return {
+    checkedUrl,
+    method,
+    reachable: probe.statusCode !== null && probe.statusCode < 500,
+    statusCode: probe.statusCode,
+    latencyMs: probe.latencyMs,
+  };
 }
 
 async function discoverOperations(endpoint: Record<string, unknown>) {
@@ -81,6 +117,18 @@ async function discoverOperations(endpoint: Record<string, unknown>) {
   return operations;
 }
 
+async function checkOperations(operations: Record<string, OperationSnapshot>) {
+  const checks: Record<string, OperationCheck> = {};
+  for (const action of ["quote", "decision", "authorization", "preflight", "execute", "result", "health"] as const) {
+    checks[action] = await checkOperation(operations[action]);
+  }
+  return checks;
+}
+
+function requiredChecksPass(requiredOperations: string[], checks: Record<string, OperationCheck>) {
+  return requiredOperations.every((action) => checks[action]?.reachable === true);
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") {
     res.setHeader("Allow", "GET");
@@ -101,6 +149,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     for (const endpoint of endpoints ?? []) {
       const manifest = await discoverAgentProviderManifest(endpoint as never);
       const operations = await discoverOperations(endpoint as Record<string, unknown>);
+      const operationChecks = await checkOperations(operations);
       const probe = await probeEndpoint(endpoint.endpoint_url, operations.health);
       const capabilitySnapshot = await discoverAgentCapabilities(
         { id: endpoint.agent_id, agent_id: endpoint.agent_id, metadata: manifest ? manifestToMetadata(manifest) : {} },
@@ -113,10 +162,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         : endpoint.protocol;
       const requiredOperations = manifest ? requiredHiringOperations(manifest, protocol) : [];
       const missingRequiredOperations = requiredOperations.filter((action) => !operations[action]);
+      const unreachableRequiredOperations = requiredOperations.filter((action) => operationChecks[action]?.reachable !== true);
       const hireable = Boolean(
         manifest
         && probe.status === "online"
         && missingRequiredOperations.length === 0
+        && unreachableRequiredOperations.length === 0
         && manifest.capabilities.length > 0,
       );
       const now = new Date().toISOString();
@@ -131,11 +182,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         capabilities_discovered_at: capabilitySnapshot.discovered_at,
         capabilities_discovery_source: "agentmarket_runtime_discovery",
         operations,
+        operation_checks: operationChecks,
         operations_discovered_at: now,
         hireability: {
           protocol,
           required_operations: requiredOperations,
           missing_operations: missingRequiredOperations,
+          unreachable_operations: unreachableRequiredOperations,
           healthy: probe.status === "online",
           hireable,
           evaluated_at: now,
@@ -170,11 +223,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           name: manifest.name,
           version: manifest.version,
           protocols: manifest.protocols,
+          synthetic: manifest.metadata?.synthetic_manifest === true,
+          discovery: manifest.discovery,
         } : null,
-        hireability: { protocol, requiredOperations, missingRequiredOperations, hireable },
+        hireability: {
+          protocol,
+          requiredOperations,
+          missingRequiredOperations,
+          unreachableRequiredOperations,
+          hireable,
+        },
         capabilitySources: capabilitySnapshot.source_urls,
         capabilityCount: capabilitySnapshot.capabilities.length,
         operations,
+        operationChecks,
       });
     }
 
@@ -184,6 +246,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const status = typeof row.status === "string" ? row.status : "offline";
         if (status in acc) acc[status] += 1;
         const operations = row.operations && typeof row.operations === "object" ? row.operations as Record<string, unknown> : {};
+        const operationChecks = row.operationChecks && typeof row.operationChecks === "object" ? row.operationChecks as Record<string, OperationCheck> : {};
         const hireability = row.hireability && typeof row.hireability === "object" ? row.hireability as Record<string, unknown> : {};
         const capabilities = Number(row.capabilityCount || 0);
         if (capabilities > 0) acc.capabilityProfiles += 1;
@@ -193,11 +256,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (operations.execute) acc.providersWithExecute += 1;
         if (operations.result) acc.providersWithResult += 1;
         if (operations.health) acc.providersWithHealth += 1;
+        if (requiredChecksPass(["quote"], operationChecks)) acc.reachableQuote += 1;
+        if (requiredChecksPass(["result"], operationChecks)) acc.reachableResult += 1;
         if (hireability.hireable === true) acc.hireable += 1;
         if (row.manifest) acc.validManifests += 1;
+        if (row.manifest && (row.manifest as Record<string, unknown>).synthetic === true) acc.syntheticManifests += 1;
         return acc;
       },
-      { total: 0, online: 0, degraded: 0, offline: 0, validManifests: 0, hireable: 0, capabilityProfiles: 0, providersWithQuote: 0, providersWithDecision: 0, providersWithPreflight: 0, providersWithExecute: 0, providersWithResult: 0, providersWithHealth: 0 } as Record<string, number>,
+      { total: 0, online: 0, degraded: 0, offline: 0, validManifests: 0, syntheticManifests: 0, hireable: 0, capabilityProfiles: 0, providersWithQuote: 0, reachableQuote: 0, providersWithDecision: 0, providersWithPreflight: 0, providersWithExecute: 0, providersWithResult: 0, reachableResult: 0, providersWithHealth: 0 } as Record<string, number>,
     );
 
     return res.status(200).json({
@@ -205,7 +271,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       checkedAt: new Date().toISOString(),
       summary,
       results,
-      note: "AgentMarket uses agent-provider/v1 manifests as the primary source for provider operations and health. Protocol-specific fallbacks are compatibility-only; hireability requires a valid manifest, healthy provider, and the required declared operation set.",
+      note: "AgentMarket uses agent-provider/v1 manifests when available and synthesizes a compatibility manifest from legacy ERC-8183 provider roots when necessary. Health and required hiring operations are actively probed; protocol fallbacks remain compatibility-only.",
     });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Unexpected server error" });
