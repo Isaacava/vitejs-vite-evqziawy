@@ -348,11 +348,23 @@ async def receive_execution_authorization(job_id: int, request: Request):
     return {"ok": True, "accepted": True, "job_id": job_id, "decision": decision, "execution_authorization": authorization}
 
 
+async def _execution_capabilities_response(request: Request) -> dict[str, Any]:
+    job_id = request.query_params.get("job_id") or request.query_params.get("jobId")
+    if not job_id:
+        return {"error": "job_id is required"}
+    return proxy_get("/execution-capabilities", {"job_id": job_id})
+
+
 @app.get("/erc8183/execution-capabilities")
 async def execution_capabilities(request: Request):
-    job_id = request.query_params.get("job_id") or request.query_params.get("jobId")
-    if not job_id: return JSONResponse({"error": "job_id is required"}, status_code=400)
-    try: return proxy_get("/execution-capabilities", {"job_id": job_id})
+    try: return await _execution_capabilities_response(request)
+    except Exception as exc: raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/erc8183/erc8183/execution-capabilities")
+async def execution_capabilities_compat(request: Request):
+    """Compatibility alias for clients that accidentally prefix the ERC-8183 route twice."""
+    try: return await _execution_capabilities_response(request)
     except Exception as exc: raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
