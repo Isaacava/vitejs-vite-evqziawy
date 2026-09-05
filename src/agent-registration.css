@@ -25,6 +25,9 @@
 .agent-register-fields input, .agent-register-fields select, .agent-register-wide input, .agent-register-wide textarea { width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:16px; background:#fbfaf5; color:var(--ink); padding:14px 15px; font:500 15px/1.35 Inter, sans-serif; outline:none; }
 .agent-register-fields input:focus, .agent-register-fields select:focus, .agent-register-wide input:focus, .agent-register-wide textarea:focus { border-color: rgba(162,118,53,.7); box-shadow:0 0 0 3px rgba(162,118,53,.08); }
 .agent-register-wide textarea { resize:vertical; min-height:110px; }
+.agent-register-inline { display:grid; grid-template-columns:1fr auto; gap:10px; align-items:center; }
+.agent-register-inline input { min-width:0; }
+.agent-register-inline .agent-register-secondary { white-space:nowrap; }
 .agent-register-alert { border-radius:16px; padding:14px 16px; font-size:14px; line-height:1.45; }
 .agent-register-alert-error { background: rgba(154,77,63,.08); border:1px solid rgba(154,77,63,.25); color:var(--rust); }
 .agent-register-alert-success { background: rgba(35,116,90,.08); border:1px solid rgba(35,116,90,.25); color:var(--green); }
@@ -33,6 +36,7 @@
 .agent-register-secondary { color:var(--ink); border:1px solid var(--line); background:transparent; }
 .agent-register-primary { border:0; background:var(--ink); color:#fff; box-shadow: 0 8px 24px rgba(23,32,30,.15); }
 .agent-register-primary:disabled { opacity:.55; cursor:wait; }
+.agent-register-secondary:disabled { opacity:.55; cursor:wait; }
 .agent-register-curve { position:absolute; pointer-events:none; border:1px solid rgba(23,32,30,.08); }
 .agent-register-curve-a { width:620px; height:620px; right:-320px; top:340px; border-radius:48% 52% 38% 62% / 62% 42% 58% 38%; transform:rotate(17deg); }
 .agent-register-curve-b { width:420px; height:760px; left:-250px; bottom:-340px; border-radius:62% 38% 58% 42% / 40% 60% 40% 60%; transform:rotate(-21deg); }
@@ -43,6 +47,7 @@
   .agent-register-hero { grid-template-columns:1fr; gap:28px; padding-top:54px; }
   .agent-register-fields { grid-template-columns:1fr; }
   .agent-register-card-offset { margin-left:0; }
+  .agent-register-inline { grid-template-columns:1fr; }
 }
 
 @media (max-width: 560px) {
