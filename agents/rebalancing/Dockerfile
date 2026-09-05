@@ -24,7 +24,9 @@ ENV PYTHONPATH=/app/agents/rebalancing:/app
 ENV PORT=8000
 ENV EXECUTION_PORT=8788
 ENV EXECUTION_AGENT_KIND=rebalancing
-ENV AGENT_APP_MODULE=app.service.main:app
+# Use the dedicated open entrypoint. It removes the legacy pre-job capability gate
+# instead of relying on a startup monkeypatch.
+ENV AGENT_APP_MODULE=app.service.open_main:app
 ENV ALTANA_EXECUTION_INTERNAL_URL=http://127.0.0.1:8788
 EXPOSE 8000
 CMD ["/app/start_agent.sh"]
