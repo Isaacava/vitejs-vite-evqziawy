@@ -4,6 +4,8 @@ import { bscTestnet } from "viem/chains";
 import { getAuthenticatedUser, serverClient } from "../../src/server/authHandlers.js";
 import { invokeProviderOperation, resolveProviderOperation } from "./provider-operation.js";
 
+type EndpointRecord = { endpoint_url: string; protocol: string; status: string; metadata?: unknown; version?: string | null };
+
 const COMMERCE = "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address;
 const COMMERCE_ABI = [{
   type: "function", name: "getJob", stateMutability: "view", inputs: [{ name: "jobId", type: "uint256" }],
@@ -17,45 +19,17 @@ const COMMERCE_ABI = [{
 
 const publicClient = createPublicClient({ chain: bscTestnet, transport: http(process.env.BSC_TESTNET_RPC_URL || "https://bsc-testnet-rpc.publicnode.com") });
 
-function decodeBase64(value: string): Uint8Array {
-  const binary = atob(value); const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
+function decodeBase64(value: string): Uint8Array { const binary = atob(value); const bytes = new Uint8Array(binary.length); for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i); return bytes; }
 function parseContent(bytes: Uint8Array): unknown { const text = new TextDecoder().decode(bytes); try { return JSON.parse(text); } catch { return text; } }
 function object(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function isHash(value: unknown): value is Hex { return typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value); }
-function findTransactionHash(value: unknown): Hex | null {
-  if (isHash(value)) return value;
-  if (typeof value === "string") { try { return findTransactionHash(JSON.parse(value)); } catch { return null; } }
-  if (!value || typeof value !== "object") return null;
-  const record = object(value);
-  for (const key of ["transaction_hash", "transactionHash", "tx_hash", "txHash"]) if (isHash(record[key])) return record[key];
-  for (const key of ["execution_result", "receipt", "response", "content", "result"]) { const nested = findTransactionHash(record[key]); if (nested) return nested; }
-  return null;
-}
-async function bridgeDeliverableTransactionPointer(supabase: ReturnType<typeof serverClient>, jobId: number, content: unknown) {
-  const transactionHash = findTransactionHash(content); if (!transactionHash) return;
-  const { data: request, error: requestError } = await supabase.from("execution_capital_requests").select("id").eq("job_id", jobId).order("created_at", { ascending: false }).limit(1).maybeSingle();
-  if (requestError) throw new Error(requestError.message); if (!request?.id) return;
-  const { error: evidenceError } = await supabase.from("execution_capital_execution_evidence").upsert({
-    execution_capital_request_id: request.id, job_id: jobId, chain_id: 97, execution_id: `deliverable-pointer-${jobId}`, calls_id: null,
-    executor_status: "candidate_from_verified_deliverable", transaction_hash: transactionHash, receipt: null, receipt_verified: false, calls: [], source: "verified_deliverable_pointer",
-  }, { onConflict: "execution_capital_request_id,execution_id" });
-  if (evidenceError) throw new Error(evidenceError.message);
-}
-function resultLooksUsable(value: unknown) {
-  if (!value || typeof value !== "object") return false;
-  const body = object(value);
-  return body.result !== undefined || body.output !== undefined || body.content !== undefined || body.deliverable !== undefined || body.status !== undefined || body.transaction_hash !== undefined || body.transactionHash !== undefined;
-}
-function responseToContent(rawText: string): unknown { try { return rawText ? JSON.parse(rawText) : {}; } catch { return rawText; } }
+function findTransactionHash(value: unknown): Hex | null { if (isHash(value)) return value; if (typeof value === "string") { try { return findTransactionHash(JSON.parse(value)); } catch { return null; } } if (!value || typeof value !== "object") return null; const record = object(value); for (const key of ["transaction_hash", "transactionHash", "tx_hash", "txHash"]) if (isHash(record[key])) return record[key]; for (const key of ["execution_result", "receipt", "response", "content", "result"]) { const nested = findTransactionHash(record[key]); if (nested) return nested; } return null; }
+async function bridgeDeliverableTransactionPointer(supabase: ReturnType<typeof serverClient>, jobId: number, content: unknown) { const transactionHash = findTransactionHash(content); if (!transactionHash) return; const { data: request, error: requestError } = await supabase.from("execution_capital_requests").select("id").eq("job_id", jobId).order("created_at", { ascending: false }).limit(1).maybeSingle(); if (requestError) throw new Error(requestError.message); if (!request?.id) return; const { error: evidenceError } = await supabase.from("execution_capital_execution_evidence").upsert({ execution_capital_request_id: request.id, job_id: jobId, chain_id: 97, execution_id: `deliverable-pointer-${jobId}`, calls_id: null, executor_status: "candidate_from_verified_deliverable", transaction_hash: transactionHash, receipt: null, receipt_verified: false, calls: [], source: "verified_deliverable_pointer" }, { onConflict: "execution_capital_request_id,execution_id" }); if (evidenceError) throw new Error(evidenceError.message); }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
   const auth = await getAuthenticatedUser(req); if (!auth) return res.status(401).json({ error: "Authentication required" });
-  const rawJobId = typeof req.query.job === "string" ? req.query.job : "";
-  if (!/^\d+$/.test(rawJobId)) return res.status(400).json({ error: "Invalid chain job ID" });
+  const rawJobId = typeof req.query.job === "string" ? req.query.job : ""; if (!/^\d+$/.test(rawJobId)) return res.status(400).json({ error: "Invalid chain job ID" });
 
   try {
     const chainJob: any = await publicClient.readContract({ address: COMMERCE, abi: COMMERCE_ABI, functionName: "getJob", args: [BigInt(rawJobId)] });
@@ -66,7 +40,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const supabase = serverClient();
     const { data: agent, error: agentError } = await supabase.from("agents").select("id,agent_id,owner,uri,name,metadata").ilike("owner", String(chainJob.provider)).limit(1).maybeSingle();
     if (agentError) throw new Error(agentError.message);
-
     const { data: archived, error: archiveError } = await supabase.from("erc8183_deliverable_archives").select("chain_id,commerce_address,job_id,provider_address,client_address,submission_tx_hash,onchain_deliverable_hash,captured_at,capture_source,provider_endpoint,content_type,response_bytes,content_base64,verified,verification_error").eq("chain_id", 97).ilike("commerce_address", COMMERCE).eq("job_id", Number(chainJob.id)).maybeSingle();
     if (archiveError) throw new Error(archiveError.message);
 
@@ -84,26 +57,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (endpointError) throw new Error(endpointError.message);
     let lastError = archived?.verification_error ?? "Provider result is not available yet.";
 
-    for (const endpoint of endpoints || []) {
-      const operation = await resolveProviderOperation(endpoint as Record<string, unknown>, "result");
+    for (const endpoint of (endpoints || []) as EndpointRecord[]) {
+      const operation = await resolveProviderOperation(endpoint, "result");
       if (!operation) continue;
       try {
         const result = await invokeProviderOperation(operation, { chain_job_id: Number(chainJob.id), job_id: rawJobId, agent_id: agent.agent_id, client_wallet: auth.user.wallet_address, network: "bsc-testnet" });
-        if (!resultLooksUsable(result.body)) { lastError = "Provider result operation returned no usable result payload."; continue; }
-
-        const content = responseToContent(result.rawText);
         const bytes = new TextEncoder().encode(result.rawText);
+        const content = parseContent(bytes);
         const computedHash = keccak256(bytes) as Hex;
         const verified = String(chainJob.deliverable).toLowerCase() === computedHash.toLowerCase();
         if (verified) await bridgeDeliverableTransactionPointer(supabase, Number(chainJob.id), content);
-
-        return res.status(200).json({
-          ok: true, chain_job_id: Number(chainJob.id), chain_status: Number(chainJob.status), provider: chainJob.provider, client: chainJob.client,
-          submitted_at: Number(chainJob.submittedAt), onchain_deliverable_hash: chainJob.deliverable, computed_deliverable_hash: computedHash, verified,
-          response_bytes: bytes.length, endpoint: result.endpoint, agent_id: agent.agent_id, agent_name: agent.name, content,
-          evidence_source: "provider_declared_operation", operation: { action: operation.action, endpoint: operation.endpoint, method: operation.method, transport: operation.transport, name: operation.name },
-          archive_available: Boolean(archived), verification_error: verified ? null : `Hash mismatch: computed ${computedHash}, on-chain ${chainJob.deliverable}`,
-        });
+        return res.status(200).json({ ok: true, chain_job_id: Number(chainJob.id), chain_status: Number(chainJob.status), provider: chainJob.provider, client: chainJob.client, submitted_at: Number(chainJob.submittedAt), onchain_deliverable_hash: chainJob.deliverable, computed_deliverable_hash: computedHash, verified, response_bytes: bytes.length, endpoint: result.endpoint, agent_id: agent.agent_id, agent_name: agent.name, content, evidence_source: "provider_declared_operation", operation: { action: operation.action, endpoint: operation.endpoint, method: operation.method, transport: operation.transport, name: operation.name }, archive_available: Boolean(archived), verification_error: verified ? null : `Hash mismatch: computed ${computedHash}, on-chain ${chainJob.deliverable}` });
       } catch (error) { lastError = error instanceof Error ? error.message : "Provider result operation failed"; }
     }
 
