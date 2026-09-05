@@ -10,6 +10,35 @@ function address(value: unknown): value is Address { return typeof value === "st
 function hex(value: unknown): value is Hex { return typeof value === "string" && /^0x[a-fA-F0-9]*$/.test(value); }
 function object(value: unknown): Record<string, unknown> { return value && typeof value === "object" ? value as Record<string, unknown> : {}; }
 
+async function deliverToProvider(jobId: number, agentId: string, authorization: Record<string, unknown>, supabase: ReturnType<typeof serverClient>): Promise<string> {
+  const { data: agent, error: agentError } = await supabase.from("agents").select("id,metadata").eq("id", agentId).maybeSingle();
+  if (agentError) throw new Error(agentError.message);
+  if (!agent) throw new Error("Provider agent not found for authorization delivery");
+  const metadata = object(agent.metadata);
+  const execution = object(metadata.execution);
+  const { data: endpoints, error: endpointError } = await supabase.from("agent_endpoints").select("endpoint_url").eq("agent_id", String(agent.id)).limit(20);
+  if (endpointError) throw new Error(endpointError.message);
+  const bases = [...new Set([
+    metadata.execution_authorization_url,
+    execution.execution_authorization_url,
+    ...(endpoints || []).map((entry) => String(entry.endpoint_url || "").trim()).filter(Boolean),
+  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => value.replace(/\/+$/, "")))];
+  const candidates = bases.flatMap((base) => base.endsWith("/erc8183") ? [`${base}/job/${jobId}/execution-authorization`] : [`${base}/job/${jobId}/execution-authorization`, `${base}/erc8183/job/${jobId}/execution-authorization`]);
+  for (const candidate of [...new Set(candidates)]) {
+    try {
+      const response = await fetch(candidate, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ execution_authorization: authorization }),
+      });
+      if (!response.ok) continue;
+      const body = object(await response.json());
+      if (body.accepted === true) return candidate;
+    } catch { /* Try the next declared provider endpoint. */ }
+  }
+  throw new Error("Verified authorization could not be delivered to the provider's ERC-8183 execution endpoint");
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const auth = await getAuthenticatedUser(req);
@@ -29,13 +58,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const capitalAmountRaw = req.body?.capital_amount_raw;
     const renewal = req.body?.renewal === true;
 
-    if (!requestId || !address(wallet) || !/^0x[a-fA-F0-9]{64}$/.test(String(sessionKeyId || "")) || !address(signerAddress) || !Number.isInteger(expiry)) {
-      return res.status(400).json({ error: "request_id, user_execution_wallet, signer_address, 32-byte session_key_id, and session_expiry are required" });
-    }
+    if (!requestId || !address(wallet) || !/^0x[a-fA-F0-9]{64}$/.test(String(sessionKeyId || "")) || !address(signerAddress) || !Number.isInteger(expiry)) return res.status(400).json({ error: "request_id, user_execution_wallet, signer_address, 32-byte session_key_id, and session_expiry are required" });
     if (grantTxHash !== undefined && grantTxHash !== null && grantTxHash !== "" && !hex(grantTxHash)) return res.status(400).json({ error: "session_grant_tx_hash is invalid" });
-    for (const [name, value] of [["capital_funding_tx_hash", capitalFundingTxHash], ["allowance_tx_hash", allowanceTxHash]] as const) {
-      if (value !== undefined && value !== null && value !== "" && !hex(value)) return res.status(400).json({ error: `${name} is invalid` });
-    }
+    for (const [name, value] of [["capital_funding_tx_hash", capitalFundingTxHash], ["allowance_tx_hash", allowanceTxHash]] as const) if (value !== undefined && value !== null && value !== "" && !hex(value)) return res.status(400).json({ error: `${name} is invalid` });
     if (capitalToken !== undefined && capitalToken !== null && capitalToken !== "" && !address(capitalToken)) return res.status(400).json({ error: "capital_token is invalid" });
     if (capitalAmountRaw !== undefined && capitalAmountRaw !== null && capitalAmountRaw !== "" && (!/^\d+$/.test(String(capitalAmountRaw)) || BigInt(String(capitalAmountRaw)) <= 0n)) return res.status(400).json({ error: "capital_amount_raw is invalid" });
     if (allowanceSpender !== undefined && allowanceSpender !== null && allowanceSpender !== "" && !address(allowanceSpender)) return res.status(400).json({ error: "allowance_spender is invalid" });
@@ -51,15 +76,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (jobError) return res.status(500).json({ error: jobError.message });
     if (!job || !auth.user.wallet_address || String(job.client_wallet || "").toLowerCase() !== auth.user.wallet_address.toLowerCase()) return res.status(403).json({ error: "You do not own this execution authorization request" });
     if (!job.chain_job_id) return res.status(409).json({ error: "The execution authorization request is not attached to an ERC-8183 chain job" });
-
-    // Ownership must be established before the idempotent authorized fast-path.
     if (request.status === "authorized" && !renewal) return res.status(200).json({ ok: true, authorized: true, request });
 
-    const { data: persistentWallet, error: persistentWalletError } = await supabase
-      .from("altana_execution_wallets")
-      .select("wallet_address,signer_address,chain_id,wallet_provider,authorization_model,status")
-      .eq("user_id", auth.user.id)
-      .maybeSingle();
+    const { data: persistentWallet, error: persistentWalletError } = await supabase.from("altana_execution_wallets").select("wallet_address,signer_address,chain_id,wallet_provider,authorization_model,status").eq("user_id", auth.user.id).maybeSingle();
     if (persistentWalletError) return res.status(500).json({ error: persistentWalletError.message });
     if (!persistentWallet) return res.status(409).json({ error: "No persistent Altana execution wallet is registered for this AgentMarket account" });
     if (persistentWallet.status !== "active") return res.status(409).json({ error: `The persistent Altana execution wallet is ${persistentWallet.status} and cannot authorize a new session` });
@@ -75,7 +94,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (String(capability.network || "").toLowerCase() !== "bsc-testnet" || Number(capability.chain_id ?? capability.chainId) !== 97) return res.status(409).json({ error: "The agent capability is not for BSC Testnet" });
     if (String(capability.execution || "") !== "altana-scoped-session" || String(capability.wallet_provider || "") !== "altana" || String(capability.authorization_model || "") !== "scoped_session") return res.status(409).json({ error: "The agent capability does not use the required Altana scoped-session model" });
     if (capability.private_key_exposed !== false) return res.status(409).json({ error: "The agent capability must not expose a private key" });
-
     const expectedSessionKeyId = keccak256(capability.session_key_public_key as Hex);
     if (String(sessionKeyId).toLowerCase() !== expectedSessionKeyId.toLowerCase()) return res.status(409).json({ error: "The granted session key ID does not match the agent's advertised public session key" });
 
@@ -100,27 +118,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       capital_amount_raw: capitalAmountRaw || evidence.capital_amount_raw || null,
       authorization_renewal: renewal,
     };
-    const updateQuery = supabase.from("execution_capital_requests").update({
-      user_execution_wallet: wallet,
-      agent_session_key: capability.session_key_address,
-      session_key_id: sessionKeyId,
-      session_expires_at: new Date(expiry * 1000).toISOString(),
-      capital_authorized: request.capital_requested,
-      authorization_verified_at: now,
-      authorized_at: now,
-      session_grant_tx_hash: grantTxHash || request.session_grant_tx_hash || null,
-      status: "authorized",
-      evidence: nextEvidence,
-      updated_at: now,
-    }).eq("id", requestId);
+    const updateQuery = supabase.from("execution_capital_requests").update({ user_execution_wallet: wallet, agent_session_key: capability.session_key_address, session_key_id: sessionKeyId, session_expires_at: new Date(expiry * 1000).toISOString(), capital_authorized: request.capital_requested, authorization_verified_at: now, authorized_at: now, session_grant_tx_hash: grantTxHash || request.session_grant_tx_hash || null, status: "authorized", evidence: nextEvidence, updated_at: now }).eq("id", requestId);
     if (!renewal) updateQuery.eq("status", "requested");
     const { data: updated, error: updateError } = await updateQuery.select("*").maybeSingle();
     if (updateError) return res.status(500).json({ error: updateError.message });
-    if (!updated) {
-      const { data: current } = await supabase.from("execution_capital_requests").select("*").eq("id", requestId).maybeSingle();
-      return res.status(200).json({ ok: true, authorized: current?.status === "authorized", request: current });
-    }
-    return res.status(200).json({ ok: true, authorized: true, request: updated });
+    const authorizedRequest = updated || (await supabase.from("execution_capital_requests").select("*").eq("id", requestId).maybeSingle()).data;
+    if (!authorizedRequest || authorizedRequest.status !== "authorized") return res.status(409).json({ error: "Authorization was verified but the execution request could not be persisted" });
+
+    const task = await supabase.from("mission_tasks").select("agent_id").eq("id", job.mission_task_id).maybeSingle();
+    if (task.error || !task.data?.agent_id) return res.status(409).json({ error: task.error?.message || "Job does not identify a provider agent" });
+    const executionAuthorization = {
+      execution_wallet: wallet,
+      session_key_address: capability.session_key_address,
+      session_key_public_key: capability.session_key_public_key,
+      session_key_id: sessionKeyId,
+      session_expiry: expiry,
+      capital_token: capitalToken || evidence.capital_token || capability.execution_market?.token_in || null,
+      capital_amount_raw: capitalAmountRaw || evidence.capital_amount_raw || null,
+      wallet_provider: "altana",
+      authorization_model: "scoped_session",
+      chain_id: 97,
+      allowed_targets: Array.isArray(capability.allowed_targets) ? capability.allowed_targets : [],
+      allowed_selectors: Array.isArray(capability.allowed_selectors) ? capability.allowed_selectors : [],
+      session_binding: "erc8183_job_id",
+    };
+    let delivery: string;
+    try { delivery = await deliverToProvider(Number(job.chain_job_id), String(task.data.agent_id), executionAuthorization, supabase); }
+    catch (error) { return res.status(202).json({ ok: true, authorized: true, provider_delivery: false, request: authorizedRequest, error: error instanceof Error ? error.message : "Provider authorization delivery failed; retry authorization verification" }); }
+
+    return res.status(200).json({ ok: true, authorized: true, provider_delivery: true, provider_endpoint: delivery, request: authorizedRequest });
   } catch (error) {
     return res.status(409).json({ error: error instanceof Error ? error.message : "Execution authorization verification failed" });
   }
