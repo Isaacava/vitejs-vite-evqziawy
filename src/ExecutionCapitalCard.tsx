@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState } from "./react-shim";
 import type { ExecutionCapitalRequest } from "./lib/executionCapital";
 import { displayObservedNumber, isVerifiedAuthorization } from "./lib/executionCapital";
 
@@ -87,18 +87,27 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
     }
     let active = true;
     let timer: number | undefined;
+    let requestAttempted = false;
     const refresh = async () => {
       if (!active) return;
       setAuthorizationLookupPending(true);
       try {
         let chainJobId = /^\d+$/.test(marketplaceJobId) ? marketplaceJobId : "";
+        let resolvedMarketplaceJobId = marketplaceJobId;
         if (!chainJobId) {
           const jobResponse = await fetch(`/api/jobs?id=${encodeURIComponent(marketplaceJobId)}`, { credentials: "include", cache: "no-store" });
           const jobBody = await jobResponse.json().catch(() => null) as Record<string, any> | null;
           if (!jobResponse.ok) throw new Error(jobBody?.error || "Unable to load job context");
           chainJobId = String(jobBody?.chain?.chain_job_id ?? jobBody?.job?.chain_job_id ?? "").trim();
+        } else {
+          const jobResponse = await fetch(`/api/jobs?id=${encodeURIComponent(marketplaceJobId)}`, { credentials: "include", cache: "no-store" });
+          const jobBody = await jobResponse.json().catch(() => null) as Record<string, any> | null;
+          if (jobResponse.ok) {
+            resolvedMarketplaceJobId = String(jobBody?.job?.id ?? jobBody?.id ?? marketplaceJobId).trim();
+          }
         }
         if (!chainJobId || !/^\d+$/.test(chainJobId)) throw new Error("No ERC-8183 chain job is available yet");
+
         const response = await fetch(`/api/testnet?route=execution-authorization-status&job=${encodeURIComponent(chainJobId)}`, { credentials: "include", cache: "no-store" });
         const body = await response.json().catch(() => null) as { status?: string; authorization?: JobScopedAuthorization | null } | null;
         if (!active) return;
@@ -106,6 +115,30 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
           setJobScopedAuthorization(body.authorization);
         } else {
           setJobScopedAuthorization(null);
+        }
+
+        if (!request && !requestAttempted && resolvedMarketplaceJobId && !/^\d+$/.test(resolvedMarketplaceJobId) && response.ok && body?.status === "not_requested") {
+          requestAttempted = true;
+          const prepareResponse = await fetch("/api/testnet?route=execution-authorization-prepare", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              job_id: resolvedMarketplaceJobId,
+              chain_job_id: Number(chainJobId),
+              capital_requested: 1,
+              purpose: "Agent execution",
+              duration_seconds: 86400,
+            }),
+          });
+          const prepared = await prepareResponse.json().catch(() => null) as { status?: string; created?: boolean; required?: boolean } | null;
+          if (prepareResponse.ok && (prepared?.created || prepared?.status === "requested" || prepared?.status === "authorized" || prepared?.required)) {
+            const followUp = await fetch(`/api/testnet?route=execution-authorization-status&job=${encodeURIComponent(chainJobId)}`, { credentials: "include", cache: "no-store" });
+            const followUpBody = await followUp.json().catch(() => null) as { status?: string; authorization?: JobScopedAuthorization | null } | null;
+            if (active && followUp.ok && followUpBody?.status === "job_scoped_authorized" && followUpBody.authorization?.source === "erc8183_job_context") {
+              setJobScopedAuthorization(followUpBody.authorization);
+            }
+          }
         }
       } catch {
         if (active) setJobScopedAuthorization(null);
@@ -116,7 +149,7 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
     };
     void refresh();
     return () => { active = false; if (timer) window.clearTimeout(timer); };
-  }, [marketplaceJobId]);
+  }, [marketplaceJobId, request]);
 
   const authorizationVerified = request ? isVerifiedAuthorization(request) : false;
   const hasJobScopedAuthorization = Boolean(
