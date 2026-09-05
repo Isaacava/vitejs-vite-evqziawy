@@ -9,6 +9,10 @@ from typing import Any
 
 from agents.execution_client import execute_testnet_swap as _execute_testnet_swap
 
+# Deployment marker: the watched rebalancing tree must redeploy after the
+# job-scoped authorization pipeline changes on the marketplace side.
+EXECUTION_AUTH_MODE = "erc8183-job-scoped-v1"
+
 
 def execute_testnet_swap(
     *,
