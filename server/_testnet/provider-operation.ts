@@ -1,4 +1,5 @@
 import { discoverAgentCapabilities } from "./agent-capabilities.js";
+import { discoverAgentProviderManifest, manifestOperation, manifestToMetadata } from "./agent-provider-manifest.js";
 
 type EndpointRecord = {
   endpoint_url: string;
@@ -38,17 +39,8 @@ function text(value: unknown) {
 
 function actionMatches(action: ProviderOperation["action"], capability: Record<string, unknown>) {
   const metadata = object(capability.metadata);
-  const haystack = [
-    capability.name,
-    capability.description,
-    capability.kind,
-    metadata.operation,
-    metadata.action,
-    metadata.capability,
-    metadata.skill_id,
-    metadata.task,
-  ].map(text).filter(Boolean).join(" ");
-
+  const haystack = [capability.name, capability.description, capability.kind, metadata.operation, metadata.action, metadata.capability, metadata.skill_id, metadata.task]
+    .map(text).filter(Boolean).join(" ");
   if (action === "quote") return /(quote|pricing|price|estimate|negotiate|cost)/i.test(haystack);
   if (action === "execute") return /(execute|execution|run|submit|start|invoke|task)/i.test(haystack);
   if (action === "preflight") return /(preflight|preview|validate|check|dry.?run)/i.test(haystack);
@@ -59,9 +51,7 @@ function actionMatches(action: ProviderOperation["action"], capability: Record<s
 function methods(value: unknown) {
   if (typeof value === "string") return [value.trim().toUpperCase()];
   if (!Array.isArray(value)) return [] as string[];
-  return value
-    .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-    .map((item) => item.toUpperCase());
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.toUpperCase());
 }
 
 function urlIsHttp(value: unknown): value is string {
@@ -78,16 +68,12 @@ function normalizeOperation(action: ProviderOperation["action"], value: Record<s
   const endpoint = [value.endpoint, value.endpoint_url, value.url, value.serviceEndpoint, value.service_endpoint, value.uri]
     .find((candidate): candidate is string => urlIsHttp(candidate)) || "";
   if (!endpoint) return null;
-
   const transport = typeof value.transport === "string"
     ? value.transport.trim().toLowerCase()
-    : typeof value.protocol === "string"
-      ? value.protocol.trim().toLowerCase()
-      : "http";
+    : typeof value.protocol === "string" ? value.protocol.trim().toLowerCase() : "http";
   const declaredMethods = methods(value.methods ?? value.method);
   const method = declaredMethods.find((candidate) => ["GET", "POST", "PUT", "PATCH", "DELETE"].includes(candidate)) || "POST";
   const inputSchema = value.input_schema ?? value.inputSchema ?? value.request_schema ?? value.requestSchema ?? null;
-
   return {
     action,
     endpoint,
@@ -100,13 +86,8 @@ function normalizeOperation(action: ProviderOperation["action"], value: Record<s
 }
 
 function explicitOperations(metadata: Record<string, unknown>, action: ProviderOperation["action"]) {
-  const values = [
-    metadata.operations,
-    metadata.provider_operations,
-    metadata.providerOperations,
-    metadata.actions,
-    metadata.services,
-  ].flatMap((candidate) => Array.isArray(candidate) ? candidate : []);
+  const values = [metadata.operations, metadata.provider_operations, metadata.providerOperations, metadata.actions, metadata.services]
+    .flatMap((candidate) => Array.isArray(candidate) ? candidate : []);
   return values.flatMap((candidate) => {
     if (!candidate || typeof candidate !== "object") return [];
     const value = candidate as Record<string, unknown>;
@@ -124,23 +105,55 @@ function explicitOperations(metadata: Record<string, unknown>, action: ProviderO
   });
 }
 
+async function manifestOperationFor(endpoint: EndpointRecord, action: ProviderOperation["action"]): Promise<ProviderOperation | null> {
+  const manifest = await discoverAgentProviderManifest(endpoint);
+  if (!manifest) return null;
+  const operation = manifestOperation(manifest, action);
+  if (!operation) return null;
+  const metadata = {
+    ...(operation.metadata || {}),
+    manifest: manifestToMetadata(manifest),
+    source: "agent-provider-manifest",
+  };
+  return {
+    action,
+    endpoint: operation.url,
+    method: operation.method,
+    transport: operation.transport,
+    name: operation.name || action,
+    inputSchema: operation.inputSchema || null,
+    metadata,
+  };
+}
+
 export async function resolveProviderOperation(endpoint: EndpointRecord, action: ProviderOperation["action"]): Promise<ProviderOperation | null> {
+  // The provider manifest is authoritative. AgentMarket learns the operation URL,
+  // HTTP method, transport and schemas from the agent instead of guessing them.
+  try {
+    const declared = await manifestOperationFor(endpoint, action);
+    if (declared) return declared;
+  } catch {
+    // Compatibility paths below keep older providers working while they migrate.
+  }
+
   const endpointMetadata = object(endpoint.metadata);
   const direct = explicitOperations(endpointMetadata, action)
     .map((value) => normalizeOperation(action, value))
     .find(Boolean) as ProviderOperation | undefined;
   if (direct) return direct;
 
-  const snapshot = await discoverAgentCapabilities({ id: "runtime", agent_id: "runtime", metadata: endpointMetadata }, [endpoint as Record<string, unknown>]);
+  const snapshot = await discoverAgentCapabilities(
+    { id: "runtime", agent_id: "runtime", metadata: endpointMetadata },
+    [endpoint as Record<string, unknown>],
+  );
   const discovered = snapshot.capabilities
     .filter((capability) => actionMatches(action, capability as unknown as Record<string, unknown>))
     .map((capability) => normalizeOperation(action, capability as unknown as Record<string, unknown>))
     .find(Boolean) as ProviderOperation | undefined;
   if (discovered) return discovered;
 
-  // ERC-8183 remains a standards-based fallback only when the provider explicitly
-  // advertises that protocol. AgentMarket never assumes a provider is ERC-8183 from
-  // its name, category, or identity alone.
+  // Standards fallback is retained only when the stored provider explicitly declares
+  // ERC-8183. This never treats an agent category or identity as proof of protocol support.
   if (endpoint.protocol.toLowerCase() === "erc8183") {
     const base = endpoint.endpoint_url.replace(/\/+$/, "");
     if (action === "quote") return {
@@ -154,6 +167,12 @@ export async function resolveProviderOperation(endpoint: EndpointRecord, action:
     };
   }
   return null;
+}
+
+export function validateRequiredProviderOperation(operation: ProviderOperation | null, action: ProviderOperation["action"]) {
+  if (!operation) return { ok: false, reason: `${action} is not declared or discoverable` };
+  if (!urlIsHttp(operation.endpoint)) return { ok: false, reason: `${action} endpoint is invalid` };
+  return { ok: true, reason: null };
 }
 
 function selectBody(action: ProviderOperation["action"], body: Record<string, unknown>) {
@@ -178,9 +197,7 @@ async function requestJson(operation: ProviderOperation, body: Record<string, un
       const url = new URL(endpoint);
       for (const [key, value] of Object.entries(body)) {
         if (value === undefined || value === null) continue;
-        if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
-          url.searchParams.set(key, String(value));
-        }
+        if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") url.searchParams.set(key, String(value));
       }
       endpoint = url.toString();
     } else {
@@ -196,24 +213,16 @@ async function requestJson(operation: ProviderOperation, body: Record<string, un
     let parsed: unknown = {};
     try { parsed = raw ? JSON.parse(raw) : {}; } catch { parsed = { raw }; }
     return { status: response.status, body: parsed, endpoint, method: operation.method, transport: operation.transport };
-  } finally {
-    clearTimeout(timer);
-  }
+  } finally { clearTimeout(timer); }
 }
 
 async function requestA2A(operation: ProviderOperation, body: Record<string, unknown>): Promise<OperationResponse> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   const metadata = object(operation.metadata);
-  const rpcMethod = typeof metadata.rpc_method === "string" && metadata.rpc_method.trim()
-    ? metadata.rpc_method.trim()
-    : "message/send";
-  const envelope = metadata.request_envelope && typeof metadata.request_envelope === "object"
-    ? object(metadata.request_envelope)
-    : null;
-  const requestPayload = envelope
-    ? { ...envelope, ...body }
-    : { method: rpcMethod, action: operation.action, ...body };
+  const rpcMethod = typeof metadata.rpc_method === "string" && metadata.rpc_method.trim() ? metadata.rpc_method.trim() : "message/send";
+  const envelope = metadata.request_envelope && typeof metadata.request_envelope === "object" ? object(metadata.request_envelope) : null;
+  const requestPayload = envelope ? { ...envelope, ...body } : { method: rpcMethod, action: operation.action, ...body };
   try {
     const response = await fetch(operation.endpoint, {
       method: "POST",
@@ -225,9 +234,7 @@ async function requestA2A(operation: ProviderOperation, body: Record<string, unk
     let parsed: unknown = {};
     try { parsed = raw ? JSON.parse(raw) : {}; } catch { parsed = { raw }; }
     return { status: response.status, body: parsed, endpoint: operation.endpoint, method: "POST", transport: "a2a" };
-  } finally {
-    clearTimeout(timer);
-  }
+  } finally { clearTimeout(timer); }
 }
 
 async function requestMcp(operation: ProviderOperation, body: Record<string, unknown>): Promise<OperationResponse> {
@@ -246,9 +253,7 @@ async function requestMcp(operation: ProviderOperation, body: Record<string, unk
     let parsed: unknown = {};
     try { parsed = raw ? JSON.parse(raw) : {}; } catch { parsed = { raw }; }
     return { status: response.status, body: parsed, endpoint: operation.endpoint, method: "POST", transport: "mcp" };
-  } finally {
-    clearTimeout(timer);
-  }
+  } finally { clearTimeout(timer); }
 }
 
 export async function invokeProviderOperation(operation: ProviderOperation, body: Record<string, unknown>): Promise<OperationResponse> {
