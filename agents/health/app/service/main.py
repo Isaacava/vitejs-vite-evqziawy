@@ -105,3 +105,5 @@ async def job_response(job_id:int):
     try:content=response_path(job_id).read_bytes()
     except FileNotFoundError as exc:raise HTTPException(status_code=404,detail="No deliverable found for this job") from exc
     return Response(content=content,media_type="application/json",headers={"cache-control":"no-store"})
+
+# Railway health checks must not be delayed by the background ERC-8004 registration started by the service command.
