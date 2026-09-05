@@ -1,0 +1,30 @@
+name: Sync ERC-8183 Testnet State
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Call AgentMarket ERC-8183 sync endpoint
+        env:
+          VERCEL_APP_URL: ${{ secrets.VERCEL_APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VERCEL_APP_URL:-}" ]; then
+            echo "VERCEL_APP_URL repository secret is required"
+            exit 1
+          fi
+          if [ -z "${CRON_SECRET:-}" ]; then
+            echo "CRON_SECRET repository secret is required"
+            exit 1
+          fi
+          curl --fail-with-body --silent --show-error \
+            --retry 3 --retry-delay 5 \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${VERCEL_APP_URL%/}/api/erc8183-indexer"
