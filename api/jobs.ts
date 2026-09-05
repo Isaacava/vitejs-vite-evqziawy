@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createPublicClient, formatUnits, http, type Address } from "viem";
 import { bscTestnet } from "viem/chains";
-import { getAuthenticatedUser, serverClient } from "./_auth.js";
+import { getAuthenticatedUser, serverClient } from "../server/api-helpers/auth.js";
 
 const ACTIONS = new Set(["accept", "start", "submit", "approve", "reject", "cancel"]);
 const COMMERCE = "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address;
