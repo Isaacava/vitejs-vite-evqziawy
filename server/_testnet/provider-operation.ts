@@ -184,6 +184,21 @@ function selectBody(action: ProviderAction, body: Record<string, unknown>) {
   return { action, ...body, request: body };
 }
 
+function materializeEndpoint(endpoint: string, body: Record<string, unknown>) {
+  return endpoint.replace(/\{(job_id|jobId|chain_job_id|chainJobId|id)\}/g, (match, key: string) => {
+    const aliases: Record<string, string[]> = {
+      job_id: ["job_id", "chain_job_id", "chainJobId", "jobId"],
+      jobId: ["jobId", "job_id", "chain_job_id", "chainJobId"],
+      chain_job_id: ["chain_job_id", "job_id", "chainJobId", "jobId"],
+      chainJobId: ["chainJobId", "chain_job_id", "jobId", "job_id"],
+      id: ["job_id", "chain_job_id", "jobId", "chainJobId", "id"],
+    };
+    const value = aliases[key]?.map((candidate) => body[candidate]).find((candidate) => candidate !== undefined && candidate !== null);
+    if (value === undefined) throw new Error(`Provider operation endpoint contains unresolved placeholder ${match}`);
+    return encodeURIComponent(String(value));
+  });
+}
+
 function responseBodyEnvelope(body: unknown) {
   const root = object(body);
   for (const key of ["data", "result", "response", "quote", "output", "job", "operation_result"]) {
@@ -196,7 +211,7 @@ async function requestJson(operation: ProviderOperation, body: Record<string, un
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    let endpoint = operation.endpoint;
+    let endpoint = materializeEndpoint(operation.endpoint, body);
     let requestBody: string | undefined;
     if (operation.method === "GET") {
       const url = new URL(endpoint);
@@ -229,7 +244,7 @@ async function requestA2A(operation: ProviderOperation, body: Record<string, unk
   const envelope = metadata.request_envelope && typeof metadata.request_envelope === "object" ? object(metadata.request_envelope) : null;
   const requestPayload = envelope ? { ...envelope, ...body } : { method: rpcMethod, action: operation.action, ...body };
   try {
-    const response = await fetch(operation.endpoint, {
+    const response = await fetch(materializeEndpoint(operation.endpoint, body), {
       method: "POST",
       headers: { Accept: "application/json", "Content-Type": "application/json" },
       body: JSON.stringify(requestPayload),
@@ -238,7 +253,7 @@ async function requestA2A(operation: ProviderOperation, body: Record<string, unk
     const rawText = await response.text();
     let parsed: unknown = {};
     try { parsed = rawText ? JSON.parse(rawText) : {}; } catch { parsed = { raw: rawText }; }
-    return { status: response.status, body: parsed, rawText, endpoint: operation.endpoint, method: "POST", transport: "a2a" };
+    return { status: response.status, body: parsed, rawText, endpoint: materializeEndpoint(operation.endpoint, body), method: "POST", transport: "a2a" };
   } finally { clearTimeout(timer); }
 }
 
@@ -248,7 +263,8 @@ async function requestMcp(operation: ProviderOperation, body: Record<string, unk
   const metadata = object(operation.metadata);
   const toolName = typeof metadata.tool_name === "string" ? metadata.tool_name : operation.name;
   try {
-    const response = await fetch(operation.endpoint, {
+    const endpoint = materializeEndpoint(operation.endpoint, body);
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: { Accept: "application/json", "Content-Type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: `agentmarket-${Date.now()}`, method: "tools/call", params: { name: toolName, arguments: selectBody(operation.action, body) } }),
@@ -257,7 +273,7 @@ async function requestMcp(operation: ProviderOperation, body: Record<string, unk
     const rawText = await response.text();
     let parsed: unknown = {};
     try { parsed = rawText ? JSON.parse(rawText) : {}; } catch { parsed = { raw: rawText }; }
-    return { status: response.status, body: parsed, rawText, endpoint: operation.endpoint, method: "POST", transport: "mcp" };
+    return { status: response.status, body: parsed, rawText, endpoint, method: "POST", transport: "mcp" };
   } finally { clearTimeout(timer); }
 }
 
