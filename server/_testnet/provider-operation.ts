@@ -9,8 +9,10 @@ type EndpointRecord = {
   version?: string | null;
 };
 
+type ProviderAction = "quote" | "decision" | "authorization" | "execute" | "preflight" | "result" | "health";
+
 type ProviderOperation = {
-  action: "quote" | "execute" | "preflight" | "result" | "health";
+  action: ProviderAction;
   endpoint: string;
   method: string;
   transport: string;
@@ -37,11 +39,13 @@ function text(value: unknown) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
-function actionMatches(action: ProviderOperation["action"], capability: Record<string, unknown>) {
+function actionMatches(action: ProviderAction, capability: Record<string, unknown>) {
   const metadata = object(capability.metadata);
   const haystack = [capability.name, capability.description, capability.kind, metadata.operation, metadata.action, metadata.capability, metadata.skill_id, metadata.task]
     .map(text).filter(Boolean).join(" ");
   if (action === "quote") return /(quote|pricing|price|estimate|negotiate|cost)/i.test(haystack);
+  if (action === "decision") return /(decision|approve|reject|verdict|evaluate|policy)/i.test(haystack);
+  if (action === "authorization") return /(authorization|authorize|permission|session|grant|credential)/i.test(haystack);
   if (action === "execute") return /(execute|execution|run|submit|start|invoke|task)/i.test(haystack);
   if (action === "preflight") return /(preflight|preview|validate|check|dry.?run)/i.test(haystack);
   if (action === "result") return /(result|status|retrieve|job|output|deliver|artifact)/i.test(haystack);
@@ -64,7 +68,7 @@ function urlIsHttp(value: unknown): value is string {
   }
 }
 
-function normalizeOperation(action: ProviderOperation["action"], value: Record<string, unknown>): ProviderOperation | null {
+function normalizeOperation(action: ProviderAction, value: Record<string, unknown>): ProviderOperation | null {
   const endpoint = [value.endpoint, value.endpoint_url, value.url, value.serviceEndpoint, value.service_endpoint, value.uri]
     .find((candidate): candidate is string => urlIsHttp(candidate)) || "";
   if (!endpoint) return null;
@@ -85,7 +89,7 @@ function normalizeOperation(action: ProviderOperation["action"], value: Record<s
   };
 }
 
-function explicitOperations(metadata: Record<string, unknown>, action: ProviderOperation["action"]) {
+function explicitOperations(metadata: Record<string, unknown>, action: ProviderAction) {
   const values = [metadata.operations, metadata.provider_operations, metadata.providerOperations, metadata.actions, metadata.services]
     .flatMap((candidate) => Array.isArray(candidate) ? candidate : []);
   return values.flatMap((candidate) => {
@@ -94,18 +98,22 @@ function explicitOperations(metadata: Record<string, unknown>, action: ProviderO
     const declaredAction = text(value.action || value.operation || value.name || value.kind || value.capability || value.skill || value.task);
     const actionMatch = action === "quote"
       ? /(quote|pricing|price|estimate|negotiate|cost)/i.test(declaredAction)
-      : action === "execute"
-        ? /(execute|execution|run|submit|start|invoke|task)/i.test(declaredAction)
-        : action === "preflight"
-          ? /(preflight|preview|validate|check|dry.?run)/i.test(declaredAction)
-          : action === "result"
-            ? /(result|status|retrieve|job|output|deliver|artifact)/i.test(declaredAction)
-            : /(health|ready|readiness|ping)/i.test(declaredAction);
+      : action === "decision"
+        ? /(decision|approve|reject|verdict|evaluate|policy)/i.test(declaredAction)
+        : action === "authorization"
+          ? /(authorization|authorize|permission|session|grant|credential)/i.test(declaredAction)
+          : action === "execute"
+            ? /(execute|execution|run|submit|start|invoke|task)/i.test(declaredAction)
+            : action === "preflight"
+              ? /(preflight|preview|validate|check|dry.?run)/i.test(declaredAction)
+              : action === "result"
+                ? /(result|status|retrieve|job|output|deliver|artifact)/i.test(declaredAction)
+                : /(health|ready|readiness|ping)/i.test(declaredAction);
     return actionMatch ? [value] : [];
   });
 }
 
-async function manifestOperationFor(endpoint: EndpointRecord, action: ProviderOperation["action"]): Promise<ProviderOperation | null> {
+async function manifestOperationFor(endpoint: EndpointRecord, action: ProviderAction): Promise<ProviderOperation | null> {
   const manifest = await discoverAgentProviderManifest(endpoint);
   if (!manifest) return null;
   const operation = manifestOperation(manifest, action);
@@ -126,7 +134,7 @@ async function manifestOperationFor(endpoint: EndpointRecord, action: ProviderOp
   };
 }
 
-export async function resolveProviderOperation(endpoint: EndpointRecord, action: ProviderOperation["action"]): Promise<ProviderOperation | null> {
+export async function resolveProviderOperation(endpoint: EndpointRecord, action: ProviderAction): Promise<ProviderOperation | null> {
   // The provider manifest is authoritative. AgentMarket learns the operation URL,
   // HTTP method, transport and schemas from the agent instead of guessing them.
   try {
@@ -169,13 +177,13 @@ export async function resolveProviderOperation(endpoint: EndpointRecord, action:
   return null;
 }
 
-export function validateRequiredProviderOperation(operation: ProviderOperation | null, action: ProviderOperation["action"]) {
+export function validateRequiredProviderOperation(operation: ProviderOperation | null, action: ProviderAction) {
   if (!operation) return { ok: false, reason: `${action} is not declared or discoverable` };
   if (!urlIsHttp(operation.endpoint)) return { ok: false, reason: `${action} endpoint is invalid` };
   return { ok: true, reason: null };
 }
 
-function selectBody(action: ProviderOperation["action"], body: Record<string, unknown>) {
+function selectBody(action: ProviderAction, body: Record<string, unknown>) {
   return { action, ...body, request: body };
 }
 
