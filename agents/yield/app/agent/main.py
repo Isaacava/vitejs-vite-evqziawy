@@ -13,6 +13,10 @@ def _obj(value: Any) -> dict[str, Any]:
 def _params(job: dict[str,Any])->dict[str,Any]:
     merged={**_obj(job.get("metadata")),**_obj(job.get("description"))}
     if isinstance(merged.get("params"),dict): merged={**merged,**merged["params"]}
+    execution=merged.get("execution")
+    if isinstance(execution,dict): merged={**merged,**execution}
+    market=merged.get("execution_market")
+    if isinstance(market,dict): merged={**merged,**market}
     return merged
 def fulfill_job(job: dict[str,Any])->tuple[str,dict[str,Any]]:
     p=_params(job); opportunities=p.get("opportunities")
@@ -27,8 +31,13 @@ def fulfill_job(job: dict[str,Any])->tuple[str,dict[str,Any]]:
     valid.sort(key=lambda item:(item["apr"],str(item.get("protocol",""))),reverse=True); winner=valid[0]
     execution=None; execution_status="evaluated"; transaction_hash=None
     if str(p.get("execute","")).lower() in {"1","true","yes"}:
-        wallet=str(p.get("execution_wallet") or p.get("user_altana_wallet") or "").strip(); token_in=str(p.get("token_in") or os.getenv("ALTANA_SESSION_SPEND_TOKEN") or "").strip(); token_out=str(p.get("token_out") or os.getenv("ALTANA_SWAP_TOKEN_OUT") or "").strip(); amount_in=str(p.get("amount_in") or "").strip()
-        if not wallet or not token_in or not token_out or not amount_in: raise ValueError("Executing Yield jobs require execution_wallet, token_in, token_out and amount_in")
-        execution=execute_testnet_swap(job_id=int(job.get("jobId",job.get("id",0))),wallet_address=wallet,token_in=token_in,token_out=token_out,amount_in=amount_in,amount_out_minimum=str(p.get("amount_out_minimum") or "0"),fee=int(p.get("fee",2500))); execution_status="executed"; transaction_hash=execution.get("transaction_hash")
-    payload={"agent":"agentmarket-yield-test","job_id":str(job.get("jobId",job.get("id",""))),"network":"bsc-testnet","task":"yield_optimisation","selection":{"protocol":winner.get("protocol"),"market":winner.get("market"),"apr":winner["apr"],"target":winner.get("target")},"candidates":[{"protocol":i.get("protocol"),"market":i.get("market"),"apr":i["apr"]} for i in valid],"execution":execution or "observation_and_route_plan","note":"State-changing yield execution is permitted only through the agent's allowlisted Altana scoped Testnet session."}
+        try: job_id=int(job.get("jobId",job.get("id",0)))
+        except (TypeError,ValueError) as exc: raise ValueError("Executing Yield jobs require a valid ERC-8183 jobId") from exc
+        if job_id<=0: raise ValueError("Executing Yield jobs require a positive ERC-8183 jobId")
+        wallet_value=str(p.get("execution_wallet") or p.get("user_altana_wallet") or "").strip(); wallet=wallet_value if wallet_value.startswith("0x") and len(wallet_value)==42 else None
+        token_in=str(p.get("token_in") or "").strip(); token_out=str(p.get("token_out") or "").strip(); amount_in=str(p.get("amount_in") or "").strip()
+        if not token_in or not token_out or not amount_in: raise ValueError("Executing Yield jobs require token_in, token_out and amount_in")
+        execution=execute_testnet_swap(job_id=job_id,wallet_address=wallet,token_in=token_in,token_out=token_out,amount_in=amount_in,amount_out_minimum=str(p.get("amount_out_minimum") or "0"),fee=int(p.get("fee",2500))); execution_status="executed"; transaction_hash=execution.get("transaction_hash")
+        if not transaction_hash: raise RuntimeError("Yield execution returned no transaction hash")
+    payload={"agent":"agentmarket-yield-test","job_id":str(job.get("jobId",job.get("id",""))),"network":"bsc-testnet","task":"yield_optimisation","selection":{"protocol":winner.get("protocol"),"market":winner.get("market"),"apr":winner["apr"],"target":winner.get("target")},"candidates":[{"protocol":i.get("protocol"),"market":i.get("market"),"apr":i["apr"]} for i in valid],"execution":execution or "observation_and_route_plan","note":"Mission creation does not require an Altana session. State-changing yield execution resolves the later job-scoped Altana authorization and uses the authorized wallet only after allowance is present."}
     return json.dumps(payload,separators=(",",":")),{"execution_status":execution_status,"transaction_hash":transaction_hash,"selected_apr":winner["apr"]}
