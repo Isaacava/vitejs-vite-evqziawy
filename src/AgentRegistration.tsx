@@ -12,6 +12,11 @@ type FormState = {
 };
 
 type DiscoveryResult = {
+  identity?: {
+    id?: string;
+    owner?: string;
+    uri?: string;
+  };
   manifest?: {
     manifest_name?: string;
     description?: string | null;
@@ -31,8 +36,8 @@ const initial: FormState = {
   name: "",
   description: "",
   endpoint: "",
-  category: "rebalancing",
-  capabilities: "rebalancing, portfolio monitoring",
+  category: "",
+  capabilities: "",
 };
 
 function categoryFromCapabilities(values: string[]) {
@@ -41,7 +46,7 @@ function categoryFromCapabilities(values: string[]) {
   if (text.includes("yield")) return "yield";
   if (text.includes("risk") || text.includes("health")) return "health_factor";
   if (text.includes("rebalance")) return "rebalancing";
-  return "other";
+  return "";
 }
 
 export default function AgentRegistration() {
@@ -74,17 +79,24 @@ export default function AgentRegistration() {
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body?.error || "Provider discovery failed");
+
       const capabilities = Array.isArray(body?.capabilities) ? body.capabilities : [];
-      const capabilityNames = capabilities.map((item: { name?: unknown; id?: unknown }) => String(item?.name || item?.id || "")).filter(Boolean);
+      const capabilityNames = capabilities
+        .map((item: { name?: unknown; id?: unknown }) => String(item?.name || item?.id || ""))
+        .filter(Boolean);
+      const identity = body?.identity || {};
+
       setDiscovery(body);
       setForm((current) => ({
         ...current,
+        agentId: current.agentId || String(identity.id || ""),
+        owner: current.owner || String(identity.owner || ""),
         name: current.name || body?.manifest?.manifest_name || "",
         description: current.description || body?.manifest?.description || "",
-        category: categoryFromCapabilities(capabilityNames),
+        category: current.category || categoryFromCapabilities(capabilityNames),
         capabilities: capabilityNames.length ? capabilityNames.join(", ") : current.capabilities,
       }));
-      setMessage(`Provider discovered: ${body?.manifest?.manifest_name || "agent provider"}. AgentMarket can now see its declared capabilities and operations.`);
+      setMessage(`Provider discovered: ${body?.manifest?.manifest_name || "agent provider"}. AgentMarket can now see its declared capabilities, identity hints, and hiring operations.`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Provider discovery failed");
     } finally {
@@ -99,7 +111,7 @@ export default function AgentRegistration() {
     setMessage("");
 
     try {
-      const response = await fetch("/api/agents/register", {
+      const response = await fetch("/api/marketplace?route=agent-register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -137,13 +149,13 @@ export default function AgentRegistration() {
         <section className="agent-register-hero">
           <div>
             <span className="agent-register-kicker">OPTIONAL PROVIDER ONBOARDING</span>
-            <h1>Claim an agent already discovered on BNB Chain.</h1>
-            <p>AgentMarket discovers ERC-8004 identities automatically, then reads a provider manifest to understand capabilities, hiring operations, and runtime endpoints. This page lets an operator inspect that contract before claiming the identity.</p>
+            <h1>Connect an agent through its declared provider interface.</h1>
+            <p>AgentMarket reads an agent-provider/v1 manifest to understand capabilities, hiring operations, and runtime endpoints. The marketplace does not require provider-specific API code or a hardcoded agent type.</p>
           </div>
           <div className="agent-register-note">
             <small>INVENTORY SOURCE</small>
             <strong>ERC-8004 + provider manifest</strong>
-            <span>Discovery does not require AgentMarket-specific API code inside the agent.</span>
+            <span>Discovery and endpoint health are independent of the operator claim step.</span>
           </div>
         </section>
 
@@ -168,15 +180,15 @@ export default function AgentRegistration() {
           <section className="agent-register-card agent-register-card-offset">
             <div className="agent-register-head"><span>02 / DISCOVERED IDENTITY</span><b>ERC-8004</b></div>
             <div className="agent-register-fields">
-              <label>ERC-8004 AGENT ID<input required value={form.agentId} onChange={(event) => update("agentId", event.target.value)} placeholder="e.g. 3821" /></label>
-              <label>OWNER WALLET<input required value={form.owner} onChange={(event) => update("owner", event.target.value)} placeholder="0x…" /></label>
+              <label>ERC-8004 AGENT ID<input required value={form.agentId} onChange={(event) => update("agentId", event.target.value)} placeholder="Auto-filled when declared by provider" /></label>
+              <label>OWNER WALLET<input required value={form.owner} onChange={(event) => update("owner", event.target.value)} placeholder="Auto-filled when declared by provider" /></label>
               <label>AGENT NAME<input value={form.name} onChange={(event) => update("name", event.target.value)} placeholder="Auto-filled from provider manifest when available" /></label>
-              <label>CATEGORY<select value={form.category} onChange={(event) => update("category", event.target.value)}><option value="grid_trading">Grid trading</option><option value="rebalancing">Rebalancing</option><option value="yield">Yield</option><option value="health_factor">Health factor / monitoring</option><option value="other">Other</option></select></label>
+              <label>CATEGORY / MARKETPLACE LABEL<input value={form.category} onChange={(event) => update("category", event.target.value)} placeholder="Optional label; capabilities remain the source of truth" /></label>
             </div>
           </section>
 
           <section className="agent-register-card agent-register-card-offset">
-            <div className="agent-register-head"><span>03 / OPTIONAL ENRICHMENT</span><b>DECLARED DATA</b></div>
+            <div className="agent-register-head"><span>03 / DECLARED CAPABILITIES</span><b>MANIFEST DATA</b></div>
             <label className="agent-register-wide">DESCRIPTION<textarea value={form.description} onChange={(event) => update("description", event.target.value)} rows={4} placeholder="Provider manifest description or marketplace override" /></label>
             <label className="agent-register-wide">CAPABILITIES<input value={form.capabilities} onChange={(event) => update("capabilities", event.target.value)} placeholder="Discovered capabilities appear here automatically" /></label>
           </section>
@@ -186,7 +198,7 @@ export default function AgentRegistration() {
 
           <div className="agent-register-actions">
             <a className="agent-register-secondary" href="/app">Cancel</a>
-            <button className="agent-register-primary" disabled={busy}>{busy ? "Claiming…" : "Claim discovered agent →"}</button>
+            <button className="agent-register-primary" disabled={busy || !form.agentId || !form.owner}>{busy ? "Claiming…" : "Claim discovered agent →"}</button>
           </div>
         </form>
       </div>
