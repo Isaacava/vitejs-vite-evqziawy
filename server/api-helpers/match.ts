@@ -1,9 +1,9 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
-import { parseMarketplaceIntent } from "../src/lib/intent.js";
-import { readAgentOnchainStats, type OnchainAgentStats } from "../src/server/testnetOnchain.js";
-import { selectAgentAdapter } from "../src/lib/agentAdapter.js";
-import type { AgentCapabilitySnapshot } from "../src/lib/agentCapability.js";
+import { parseMarketplaceIntent } from "../../src/lib/intent.js";
+import { readAgentOnchainStats, type OnchainAgentStats } from "../../src/server/testnetOnchain.js";
+import { selectAgentAdapter } from "../../src/lib/agentAdapter.js";
+import type { AgentCapabilitySnapshot } from "../../src/lib/agentCapability.js";
 
 type CachedOnchainStats = {
   source: "erc8183_commerce" | "erc8183_commerce_provider_wallet";
@@ -62,7 +62,7 @@ function capabilitySnapshot(agent: AgentRow): AgentCapabilitySnapshot {
   const capabilities = Array.isArray(metadata.capabilities) ? metadata.capabilities : [];
   const sourceUrls = Array.isArray(metadata.capabilities_source_urls) ? metadata.capabilities_source_urls.filter((value): value is string => typeof value === "string") : [];
   const discoveredAt = typeof metadata.capabilities_discovered_at === "string" ? metadata.capabilities_discovered_at : new Date(0).toISOString();
-  return { agent_id: agent.agent_id, discovered_at: discoveredAt, source_urls: sourceUrls, capabilities: capabilities.filter((value): value is import("../src/lib/agentCapability.js").AgentCapability => Boolean(value && typeof value === "object")) };
+  return { agent_id: agent.agent_id, discovered_at: discoveredAt, source_urls: sourceUrls, capabilities: capabilities.filter((value): value is import("../../src/lib/agentCapability.js").AgentCapability => Boolean(value && typeof value === "object")) };
 }
 
 function scoreAgent(agent: AgentRow, intent: ReturnType<typeof parseMarketplaceIntent>, endpoint: EndpointRow | undefined, reputationRows: ReputationRow[], onchain: OnchainAgentStats | null) {
