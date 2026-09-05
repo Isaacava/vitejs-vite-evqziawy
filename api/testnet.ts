@@ -18,6 +18,7 @@ async function loadHandler(route: string): Promise<Handler | null> {
     case "execution-authorization-prepare": return (await import("../server/_testnet/execution-authorization-prepare.js")).default as Handler;
     case "execution-authorization-status": return (await import("../server/_testnet/execution-authorization-status.js")).default as Handler;
     case "execution-wallet": return (await import("../server/_testnet/execution-wallet.js")).default as Handler;
+    case "provider-operations": return (await import("../server/_testnet/provider-operations.js")).default as Handler;
     case "job-result": return (await import("../server/_testnet/job-result.js")).default as Handler;
     case "job-status": return (await import("../server/_testnet/job-status.js")).default as Handler;
     case "jobs-history": return (await import("../server/_testnet/jobs-history.js")).default as Handler;
