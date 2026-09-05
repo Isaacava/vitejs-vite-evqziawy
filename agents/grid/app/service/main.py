@@ -164,7 +164,7 @@ async def _on_funded(job: dict[str, Any]) -> None:
         tx_hash = await _submit(job_id, deliverable, metadata)
         _runtime["last_submission"] = {"timestamp": int(time.time()), "job_id": job_id, "tx_hash": tx_hash}
         _runtime["last_error"] = None
-        logger.info("ERC8183_SUBMISSION_CONFIRMED job_id=%s provider=%s tx_hash=%s network=%s chain_id=97", job_id, _provider_address(), tx_hash or "unknown", config["network"],)
+        logger.info("ERC8183_SUBMISSION_CONFIRMED job_id=%s provider=%s tx_hash=%s network=%s chain_id=97", job_id, _provider_address(), tx_hash or "unknown", config["network"])
     except ValueError as exc:
         message = str(exc)
         if message.startswith(("Grid range must", "grid_levels must", "notional must", "max_slippage_bps")):
@@ -237,7 +237,7 @@ async def health() -> dict[str, str]:
 
 @app.get("/erc8183")
 async def erc8183_root() -> dict[str, Any]:
-    return {"status": "ok", "service": "Grid Agent ERC-8183 provider", "network": "bsc-testnet", "chain_id": 97, "agent_address": _provider_address(), "endpoints": {"health": "/erc8183/health", "status": "/erc8183/status", "runtime_status": "/erc8183/runtime-status", "negotiate": "/erc8183/negotiate", "execution_capabilities": "/erc8183/execution-capabilities", "execution_health": "/erc8183/execution-health", "preflight_pancake": "/erc8183/preflight/pancake", "execute": "/erc8183/execute", "receipt": "/erc8183/receipt/{transaction_hash}", "job_response": "/erc8183/job/{job_id}/response"}}
+    return {"status": "ok", "service": "Grid Agent ERC-8183 provider", "network": "bsc-testnet", "chain_id": 97, "agent_address": _provider_address(), "endpoints": {"health": "/erc8183/health", "status": "/erc8183/status", "runtime_status": "/erc8183/runtime-status", "negotiate": "/erc8183/negotiate", "execution_capabilities": "/erc8183/execution-capabilities", "execution_authorization": "/erc8183/job/{job_id}/execution-authorization", "execution_health": "/erc8183/execution-health", "preflight_pancake": "/erc8183/preflight/pancake", "execute": "/erc8183/execute", "receipt": "/erc8183/receipt/{transaction_hash}", "job_response": "/erc8183/job/{job_id}/response"}}
 
 
 @app.get("/erc8183/health")
@@ -269,6 +269,15 @@ async def negotiate(request: Request) -> dict[str, Any]:
 @app.get("/erc8183/execution-capabilities")
 async def execution_capabilities(request: Request) -> Response:
     return await _proxy_execution(request, "/execution-capabilities" + (("?" + request.url.query) if request.url.query else ""))
+
+
+@app.post("/erc8183/job/{job_id}/execution-authorization")
+async def execution_authorization(job_id: int, request: Request) -> Response:
+    if job_id <= 0:
+        raise HTTPException(status_code=400, detail="job_id must be positive")
+    query = request.url.query
+    separator = "&" if query else ""
+    return await _proxy_execution(request, f"/execution-capabilities?job_id={job_id}{separator}{query}" if query else f"/execution-capabilities?job_id={job_id}")
 
 
 @app.get("/erc8183/execution-health")
