@@ -113,7 +113,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const nextName = requestedName || existing.name || manifest.name || `Agent #${agentId}`;
     const nextDescription = requestedDescription || existing.description || manifest.description || null;
     const nextCategory = requestedCategory || existing.category || "other";
-    const nextUri = optionalString((manifest.agent as Record<string, unknown> | undefined)?.uri, 1000) || existing.uri || manifest.manifestUrl;
+    const manifestAgent = manifest.agent && typeof manifest.agent === "object" ? manifest.agent as Record<string, unknown> : {};
+    const nextUri = optionalString(manifestAgent.uri ?? manifestAgent.agent_uri ?? manifestAgent.agentURI, 1000) || existing.uri || manifest.manifestUrl;
     const agentPayload: Record<string, unknown> = {
       name: nextName,
       description: nextDescription,
@@ -121,7 +122,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       uri: nextUri,
       last_indexed_at: existing.source === "indexed" ? existing.last_indexed_at : now,
       metadata: {
-        ...(existing as Record<string, unknown>),
         claim: "self_service",
         claimed_at: now,
         verification: existing.verification_status,
