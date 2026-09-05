@@ -1,6 +1,7 @@
 """Rebalancing strategy for BSC Testnet LP-position jobs."""
 from __future__ import annotations
 import json
+import os
 from typing import Any
 
 from app.agent.execution import execute_testnet_swap
@@ -66,15 +67,17 @@ def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             raise RuntimeError("Rebalancing execution requires a valid ERC-8183 jobId") from exc
         if job_id <= 0:
             raise RuntimeError("Rebalancing execution requires a positive ERC-8183 jobId")
+
         wallet_value = str(p.get("wallet_address") or p.get("execution_wallet") or p.get("user_altana_wallet") or "").strip()
         wallet = wallet_value if _valid_address(wallet_value) else None
-        token_in = str(p.get("token_in") or "").strip()
-        token_out = str(p.get("token_out") or "").strip()
-        amount_in = str(p.get("amount_in") or "").strip()
+        token_in = str(p.get("token_in") or os.getenv("ALTANA_SESSION_SPEND_TOKEN", "")).strip()
+        token_out = str(p.get("token_out") or os.getenv("ALTANA_DEFAULT_TOKEN_OUT", "")).strip()
+        amount_in = str(p.get("amount_in") or os.getenv("REBALANCING_TESTNET_EXECUTION_AMOUNT_RAW", "")).strip()
         minimum_out = str(p.get("amount_out_minimum") or "0").strip()
+        fee_value = p.get("fee") or os.getenv("ALTANA_SWAP_FEE", "2500")
 
         if not _valid_address(token_in) or not _valid_address(token_out) or not amount_in:
-            raise RuntimeError("Rebalancing execution requires token_in, token_out and amount_in; no result will be submitted")
+            raise RuntimeError("Rebalancing execution requires a valid execution token pair and amount; no result will be submitted")
 
         try:
             execution = execute_testnet_swap(
@@ -84,7 +87,7 @@ def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
                 token_out=token_out,
                 amount_in=amount_in,
                 amount_out_minimum=minimum_out,
-                fee=int(p.get("fee", 2500)),
+                fee=int(fee_value),
             )
         except Exception as exc:
             raise RuntimeError(f"Rebalancing execution failed; result will not be submitted: {exc}") from exc
@@ -116,7 +119,7 @@ def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             "status": "user_scoped_altana" if action != "hold" else "not_required",
             "wallet": execution.get("execution_wallet") if isinstance(execution, dict) else None,
         },
-        "note": "Mission creation does not require an Altana session. State-changing execution resolves the later job-scoped Altana authorization record and uses the authorized wallet only after ERC-20 allowance is already present.",
+        "note": "Mission creation does not require an Altana session. State-changing execution uses provider-declared Testnet execution defaults and resolves the later job-scoped Altana authorization record; the authorized wallet must already have the required ERC-20 allowance.",
     }
     return json.dumps(payload, separators=(",", ":")), {
         "execution_status": execution_status,
