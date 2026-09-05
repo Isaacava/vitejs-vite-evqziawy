@@ -185,12 +185,121 @@ function normalizeManifest(raw: JsonObject, manifestUrl: string): AgentProviderM
   };
 }
 
+function metadataCapabilities(endpoint: EndpointRecord): JsonObject[] {
+  const metadata = object(endpoint.metadata);
+  const candidates = [metadata.capabilities, metadata.capability_profile, metadata.provider_capabilities];
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) continue;
+    const values = candidate
+      .filter((value): value is JsonObject => Boolean(value && typeof value === "object" && !Array.isArray(value)))
+      .map(object);
+    if (values.length > 0) return values;
+  }
+  return [];
+}
+
+function syntheticCapability(document: JsonObject, endpoint: EndpointRecord): JsonObject {
+  const metadata = object(endpoint.metadata);
+  const kind = text(document.agent_kind) || text(metadata.agent_kind) || text(document.service) || "agent-provider";
+  const name = text(document.service) || text(document.agent_kind) || kind;
+  return {
+    id: `legacy:${kind}`,
+    kind: "task_submission",
+    name,
+    description: `Legacy ERC-8183 provider capability discovered from ${endpoint.endpoint_url}`,
+    transport: "http",
+    protocol: "erc8183",
+    source_type: "legacy_erc8183_root",
+  };
+}
+
+function normalizeLegacyErc8183Root(raw: JsonObject, endpoint: EndpointRecord, sourceUrl: string): AgentProviderManifest | null {
+  const rawEndpoints = object(raw.endpoints);
+  const endpointEntries = Object.keys(rawEndpoints);
+  const looksLikeErc8183 = endpointEntries.length > 0
+    && (text(raw.service)?.toLowerCase().includes("erc-8183") || text(raw.service)?.toLowerCase().includes("erc8183") || text(raw.network) === "bsc-testnet" || raw.chain_id === 97 || endpointEntries.some((key) => ["negotiate", "execution_capabilities", "job_response"].includes(key)));
+  if (!looksLikeErc8183) return null;
+
+  const endpoints: Record<string, AgentProviderOperation> = {};
+  const aliases: Record<string, OperationName> = {
+    health: "health",
+    quote: "quote",
+    negotiate: "quote",
+    decision: "decision",
+    authorization: "authorization",
+    preflight: "preflight",
+    execute: "execute",
+    result: "result",
+    job_response: "result",
+  };
+
+  for (const key of endpointEntries) {
+    const operation = aliases[key];
+    if (!operation) continue;
+    const normalized = normalizeOperation(rawEndpoints[key], sourceUrl);
+    if (!normalized || endpoints[operation]) continue;
+    endpoints[operation] = normalized;
+  }
+
+  if (!endpoints.health) {
+    const fallback = normalizeOperation("/erc8183/health", sourceUrl);
+    if (fallback) endpoints.health = fallback;
+  }
+  if (!endpoints.quote) {
+    const fallback = normalizeOperation("/erc8183/negotiate", sourceUrl);
+    if (fallback) endpoints.quote = fallback;
+  }
+  if (!endpoints.result) {
+    const fallback = normalizeOperation("/erc8183/job/{job_id}/response", sourceUrl);
+    if (fallback) endpoints.result = fallback;
+  }
+
+  const metadata = object(endpoint.metadata);
+  const capabilities = metadataCapabilities(endpoint);
+  if (capabilities.length === 0) capabilities.push(syntheticCapability(raw, endpoint));
+
+  const name = text(metadata.agent_name) || text(metadata.display_name) || text(raw.service) || text(raw.agent_kind) || "ERC-8183 Provider";
+  const description = text(metadata.description) || text(raw.description) || `Legacy ERC-8183 provider discovered from ${sourceUrl}`;
+  return {
+    spec: "agent-provider/v1",
+    name,
+    description,
+    version: "legacy-erc8183",
+    agent: {
+      address: text(raw.agent_address) || text(raw.provider_address) || null,
+      kind: text(raw.agent_kind) || null,
+    },
+    protocols: ["erc8183"],
+    networks: [{ name: text(raw.network) || "bsc-testnet", chain_id: Number(raw.chain_id || 97) }],
+    capabilities,
+    endpoints,
+    hiring: { protocol: "erc8183", required_operations: ["quote", "result"], compatibility: "legacy-root-discovery" },
+    execution: {
+      mode: endpoints.execute ? "declared-execute" : "provider-watcher",
+      legacy: true,
+    },
+    discovery: {
+      source: "legacy-erc8183-root",
+      synthetic: true,
+    },
+    metadata: {
+      synthetic_manifest: true,
+      source_url: sourceUrl,
+      source_service: text(raw.service) || null,
+    },
+    manifestUrl: sourceUrl,
+    resolvedAt: new Date().toISOString(),
+  };
+}
+
 export async function discoverAgentProviderManifest(endpoint: EndpointRecord): Promise<AgentProviderManifest | null> {
   for (const candidate of manifestCandidates(endpoint)) {
     try {
       const document = await fetchManifest(candidate);
       const manifest = normalizeManifest(document, candidate);
       if (manifest) return manifest;
+      const legacy = normalizeLegacyErc8183Root(document, endpoint, candidate);
+      if (legacy) return legacy;
     } catch {
       // Continue to the next canonical/compatibility candidate.
     }
@@ -223,6 +332,8 @@ export function manifestToMetadata(manifest: AgentProviderManifest) {
     manifest_protocols: manifest.protocols,
     manifest_hiring: manifest.hiring,
     manifest_execution: manifest.execution,
+    manifest_discovery: manifest.discovery,
+    manifest_synthetic: manifest.metadata?.synthetic_manifest === true,
     manifest_endpoints: Object.fromEntries(Object.entries(manifest.endpoints).map(([name, operation]) => [name, {
       endpoint: operation.url,
       method: operation.method,
