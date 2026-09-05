@@ -158,7 +158,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .maybeSingle();
       if (walletError) throw new Error(walletError.message);
       if (!validActiveAltanaWallet(wallet as Record<string, unknown> | null)) {
-        return res.status(409).json({ error: "An active BSC Testnet Altana execution wallet must be provisioned before creating this Grid job; the wallet is bound into the immutable ERC-8183 description." });
+        return res.status(409).json({ error: "An active BSC Testnet Altana execution wallet must be provisioned before creating this Grid job; the wallet is carried in the job-scoped execution authorization." });
       }
       activeAltanaWallet = wallet;
     }
@@ -172,20 +172,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ]);
     const rawBudget = parseUnits(budget, Number(decimals));
     const expiresAt = BigInt(Math.floor(Date.now() / 1000) + 60 * 60);
+    const executionAuthorization = isAltanaAgent(agent as Record<string, unknown>) && activeAltanaWallet
+      ? {
+          version: 1,
+          wallet_provider: "altana",
+          authorization_model: "scoped_session",
+          execution_wallet: activeAltanaWallet.wallet_address,
+          chain_id: 97,
+          allowed_targets: [ROUTER],
+          allowed_selectors: ["0x04e45aaf"],
+          session_binding: "erc8183_job_id",
+        }
+      : undefined;
     const descriptionPayload: Record<string, unknown> = {
-      marketplace: "AgentMarket",
       network: "bsc-testnet",
       chain_id: 97,
-      mission_id: mission.id,
       goal: mission.goal,
-      execution: isAltanaAgent(agent as Record<string, unknown>) && activeAltanaWallet
-        ? {
-            wallet_provider: "altana",
-            authorization_model: "scoped_session",
-            wallet_address: activeAltanaWallet.wallet_address,
-            chain_id: 97,
-          }
-        : undefined,
+      execution_authorization: executionAuthorization,
     };
     const description = JSON.stringify(descriptionPayload);
     const createJobData = encodeFunctionData({ abi: COMMERCE_ABI, functionName: "createJob", args: [agent.owner as Address, ROUTER, expiresAt, description, ROUTER] });
@@ -207,8 +210,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         wallet_address: activeAltanaWallet.wallet_address,
         wallet_provider: activeAltanaWallet.wallet_provider,
         authorization_model: activeAltanaWallet.authorization_model,
-        bound_into_job_description: true,
-      } : { wallet_address: null, bound_into_job_description: false },
+        authorization_in_job_context: true,
+      } : { wallet_address: null, authorization_in_job_context: false },
       expiry: new Date(Number(expiresAt) * 1000).toISOString(),
       wallet_steps: ["createJob", "registerJob using the returned jobId", "setBudget using the returned jobId", BigInt(allowance) < rawBudget ? "approve payment token to Commerce" : "approval already sufficient", "fund using the returned jobId"],
       transactions: {
@@ -219,7 +222,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         fund: { to: COMMERCE, data: fundTemplate, data_builder: "Replace placeholder jobId 0 with the confirmed createJob receipt jobId." },
       },
       note: isAltanaAgent(agent as Record<string, unknown>)
-        ? "Testnet-only preparation for isolated Grid Agent validation. The user's active Altana execution wallet is embedded in the immutable ERC-8183 job description before funding."
+        ? "Testnet-only preparation. Execution authorization is embedded as generic job-scoped context; the agent does not call or depend on AgentMarket for authorization."
         : "Testnet-only preparation for isolated Agent validation. This endpoint does not share production Mainnet contracts.",
     });
   } catch (error) { return res.status(400).json({ error: error instanceof Error ? error.message : "Unable to prepare testnet ERC-8183 job" }); }
