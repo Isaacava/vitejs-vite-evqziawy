@@ -6,6 +6,7 @@ const ZERO_HASH = `0x${"0".repeat(64)}` as Hex;
 
 type SubmittedChainJob = {
   id: bigint;
+  client: Address;
   provider: Address;
   evaluator: Address;
   deliverable: Hex;
@@ -23,22 +24,6 @@ type EvaluationResult = {
 
 function isHash(value: unknown): value is Hex {
   return typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value);
-}
-
-function object(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-}
-
-function resultLooksUsable(value: unknown) {
-  if (!value || typeof value !== "object") return false;
-  const body = object(value);
-  return body.result !== undefined
-    || body.output !== undefined
-    || body.content !== undefined
-    || body.deliverable !== undefined
-    || body.status !== undefined
-    || body.transaction_hash !== undefined
-    || body.transactionHash !== undefined;
 }
 
 function parseResponse(rawText: string): unknown {
@@ -113,20 +98,23 @@ export async function evaluateSubmittedJob(
         chain_job_id: chainJobId,
         job_id: chainJobId,
         agent_id: agent.agent_id,
-        client_wallet: null,
+        client_wallet: chainJob.client,
+        provider_wallet: chainJob.provider,
+        evaluator_wallet: chainJob.evaluator,
         network: "bsc-testnet",
         environment: "testnet",
       });
 
-      if (!resultLooksUsable(result.body) && !result.rawText) {
-        lastError = `Provider result operation ${operation.name || "result"} returned an empty payload.`;
+      const rawText = result.rawText || "";
+      if (!rawText) {
+        lastError = `Provider result operation ${operation.name || "result"} returned an empty response.`;
         continue;
       }
 
-      const bytes = new TextEncoder().encode(result.rawText);
+      const bytes = new TextEncoder().encode(rawText);
       const computedHash = keccak256(bytes).toLowerCase();
       const hashMatches = computedHash === onchainDeliverable;
-      const content = parseResponse(result.rawText);
+      const content = parseResponse(rawText);
 
       const evidence = {
         evaluator: "agentmarket_deterministic_evaluator",
@@ -154,7 +142,7 @@ export async function evaluateSubmittedJob(
         evaluated_at: new Date().toISOString(),
       };
 
-      if (hashMatches && bytes.length > 0) {
+      if (hashMatches) {
         return { verdict: "approve", evidence, content, endpoint: result.endpoint };
       }
 
