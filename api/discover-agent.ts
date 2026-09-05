@@ -12,6 +12,9 @@ function validHttps(value: unknown): value is string {
   }
 }
 
+const DISCOVERY_ACTIONS = ["quote", "decision", "authorization", "preflight", "execute", "result", "health"] as const;
+type DiscoveryAction = typeof DISCOVERY_ACTIONS[number];
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -22,7 +25,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const endpoint = req.body?.endpoint;
     if (!validHttps(endpoint)) return res.status(400).json({ error: "endpoint must be a valid HTTPS URL" });
 
-    const source = { endpoint_url: endpoint.trim(), metadata: {} };
+    const source = { endpoint_url: endpoint.trim(), metadata: {}, protocol: "http", status: "unknown" };
     const manifest = await discoverAgentProviderManifest(source);
     if (!manifest) {
       return res.status(422).json({
@@ -32,12 +35,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    const operations: Record<string, unknown> = {};
-    for (const action of ["quote", "decision", "authorization", "preflight", "execute", "result", "health"] as const) {
+    const operations: Record<DiscoveryAction, unknown> = {
+      quote: null,
+      decision: null,
+      authorization: null,
+      preflight: null,
+      execute: null,
+      result: null,
+      health: null,
+    };
+
+    for (const action of DISCOVERY_ACTIONS) {
       try {
-        const operation = await resolveProviderOperation(source as never, action as never);
+        const operation = await resolveProviderOperation(source, action);
         operations[action] = operation
-          ? { endpoint: operation.endpoint, method: operation.method, transport: operation.transport, name: operation.name ?? null }
+          ? {
+              endpoint: operation.endpoint,
+              method: operation.method,
+              transport: operation.transport,
+              name: operation.name ?? null,
+              input_schema: operation.inputSchema ?? null,
+              metadata: operation.metadata ?? {},
+            }
           : null;
       } catch {
         operations[action] = null;
