@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { ExecutionCapitalRequest } from "./lib/executionCapital";
 import { displayObservedNumber, isVerifiedAuthorization } from "./lib/executionCapital";
 
@@ -37,6 +38,18 @@ export type OnchainExecutionSummary = {
   };
 };
 
+type JobScopedAuthorization = {
+  source?: string;
+  execution_wallet?: string | null;
+  wallet_provider?: string | null;
+  authorization_model?: string | null;
+  chain_id?: number | null;
+  allowed_targets?: string[];
+  allowed_selectors?: string[];
+  session_binding?: string | null;
+  version?: number | null;
+};
+
 type ExecutionCapitalCardProps = {
   request: ExecutionCapitalRequest | null;
   jobBudget: string | number | null;
@@ -60,13 +73,52 @@ function pnlLabel(value?: string | null, token = "CAKE2") {
 }
 
 export default function ExecutionCapitalCard({ request, onchainExecution }: ExecutionCapitalCardProps) {
+  const [jobScopedAuthorization, setJobScopedAuthorization] = useState<JobScopedAuthorization | null>(null);
+  const jobId = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("job")?.trim() || request?.job_id || ""
+    : request?.job_id || "";
+
+  useEffect(() => {
+    if (!jobId || request) {
+      setJobScopedAuthorization(null);
+      return;
+    }
+    let active = true;
+    const refresh = async () => {
+      try {
+        const response = await fetch(`/api/testnet?route=execution-authorization-status&job=${encodeURIComponent(jobId)}`, {
+          credentials: "include",
+          cache: "no-store",
+        });
+        const body = await response.json().catch(() => null) as { status?: string; authorization?: JobScopedAuthorization | null } | null;
+        if (!active) return;
+        if (response.ok && body?.status === "job_scoped_authorized" && body.authorization?.source === "erc8183_job_context") {
+          setJobScopedAuthorization(body.authorization);
+        } else {
+          setJobScopedAuthorization(null);
+        }
+      } catch {
+        if (active) setJobScopedAuthorization(null);
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 5000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [jobId, request]);
+
   const authorizationVerified = request ? isVerifiedAuthorization(request) : false;
+  const hasJobScopedAuthorization = Boolean(
+    jobScopedAuthorization?.source === "erc8183_job_context" &&
+    jobScopedAuthorization.execution_wallet,
+  );
   const rawStatus = request?.status || "not_requested";
   const status = request
     ? rawStatus === "authorized" && !authorizationVerified
       ? "PENDING VERIFICATION"
       : rawStatus.toUpperCase()
-    : "NOT REQUESTED";
+    : hasJobScopedAuthorization
+      ? "JOB-SCOPED AUTHORIZED"
+      : "NOT REQUESTED";
   const executionObserved = Boolean(onchainExecution?.observed && onchainExecution.market?.verified_onchain);
   const deployed = executionObserved
     ? `${onchainExecution?.accounting?.capital_deployed || onchainExecution?.market?.token_in_amount || "—"} ${onchainExecution?.accounting?.capital_deployed_token || onchainExecution?.market?.token_in_symbol || ""}`.trim()
@@ -98,7 +150,7 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
           <strong className="font-display text-[17px] font-bold">{request?.purpose || "Agent execution"}</strong>
           <span className="mt-0.5 block text-[11px] text-inksoft">This capital is separate from the ERC-8183 job payment.</span>
         </div>
-        <span className={`rounded-lg px-2.5 py-1 font-mono text-[9.5px] ${authorizationVerified || status === "ACTIVE" ? "status-green" : "status-brass"}`}>{status.toLowerCase()}</span>
+        <span className={`rounded-lg px-2.5 py-1 font-mono text-[9.5px] ${authorizationVerified || hasJobScopedAuthorization || status === "ACTIVE" ? "status-green" : "status-brass"}`}>{status.toLowerCase()}</span>
       </div>
 
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -145,13 +197,14 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
       )}
 
       <div className="mb-4 flex flex-wrap gap-2">
-        <span className="rounded-full border border-line bg-paperhi px-2 py-1 font-mono text-[9px] text-inksoft">wallet: {request?.wallet_provider || "altana"}</span>
-        <span className="rounded-full border border-line bg-paperhi px-2 py-1 font-mono text-[9px] text-inksoft">authorization: scoped_session</span>
+        <span className="rounded-full border border-line bg-paperhi px-2 py-1 font-mono text-[9px] text-inksoft">wallet: {request?.wallet_provider || jobScopedAuthorization?.wallet_provider || "altana"}</span>
+        <span className="rounded-full border border-line bg-paperhi px-2 py-1 font-mono text-[9px] text-inksoft">authorization: {hasJobScopedAuthorization ? "scoped_session · ERC-8183 job context" : "scoped_session"}</span>
         {request?.duration_seconds !== null && request?.duration_seconds !== undefined && <span className="rounded-full border border-line bg-paperhi px-2 py-1 font-mono text-[9px] text-inksoft">Duration {Math.round(request.duration_seconds / 3600)}h</span>}
       </div>
 
       {sessionGrantProofUrl && <div className="border-t border-dashed border-line pt-3 text-[10px] text-inksoft"><strong className="text-green">Authorization verified</strong><span> · Your execution permission was recorded on BSC Testnet.</span> <a className="font-bold text-brass no-underline" href={sessionGrantProofUrl} target="_blank" rel="noreferrer">View proof ↗</a></div>}
-      {!request && <p className="mb-0 text-[10px] text-inksoft">No execution capital request has been observed yet. ERC-8183 job budget remains separate.</p>}
+      {!request && hasJobScopedAuthorization && <p className="mb-0 text-[10px] text-inksoft">No separate execution capital request has been observed. Job-scoped execution authorization is present in the ERC-8183 context; execution capital remains separate from the job payment.</p>}
+      {!request && !hasJobScopedAuthorization && <p className="mb-0 text-[10px] text-inksoft">No execution capital request has been observed yet. ERC-8183 job budget remains separate.</p>}
       {request && <p className="mb-0 mt-3 text-[10px] text-inksoft">P&amp;L is calculated from independently observed onchain execution evidence. Open positions use a live PancakeSwap V3 mark; realized P&amp;L requires a verified closing execution.</p>}
     </section>
   );
