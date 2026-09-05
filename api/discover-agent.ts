@@ -15,6 +15,14 @@ function validHttps(value: unknown): value is string {
 const DISCOVERY_ACTIONS = ["quote", "decision", "authorization", "preflight", "execute", "result", "health"] as const;
 type DiscoveryAction = typeof DISCOVERY_ACTIONS[number];
 
+function text(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+function object(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -66,6 +74,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const metadata = manifestToMetadata(manifest);
     const protocol = typeof manifest.hiring?.protocol === "string" ? manifest.hiring.protocol : "";
     const required = requiredHiringOperations(manifest, protocol);
+    const agent = object(manifest.agent);
+    const identity = {
+      id: text(agent.id ?? agent.agent_id ?? agent.agentId),
+      owner: text(agent.owner ?? agent.owner_address ?? agent.ownerAddress ?? agent.address),
+      uri: text(agent.uri ?? agent.agent_uri ?? agent.agentURI),
+    };
+
     return res.status(200).json({
       ok: true,
       endpoint: endpoint.trim(),
@@ -78,6 +93,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         execution: manifest.execution ?? {},
         discovery: manifest.discovery ?? {},
       },
+      identity,
       requiredHiringOperations: required,
       operations,
       capabilities: manifest.capabilities,
