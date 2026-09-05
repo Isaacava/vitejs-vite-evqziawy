@@ -33,7 +33,8 @@ def _valid_address(value: str) -> bool:
     return isinstance(value, str) and value.startswith("0x") and len(value) == 42
 
 
-def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+def decide_job(job: dict[str, Any]) -> dict[str, Any]:
+    """Analyze the job without executing or requiring an execution authorization."""
     p = _params(job)
     try:
         current_tick = float(p["current_tick"])
@@ -56,6 +57,28 @@ def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     center = (tick_lower + tick_upper) / 2
     target_lower = current_tick - width / 2 if action != "hold" else tick_lower
     target_upper = current_tick + width / 2 if action != "hold" else tick_upper
+    return {
+        "job_id": str(job.get("jobId", job.get("id", ""))),
+        "network": "bsc-testnet",
+        "task": "rebalancing",
+        "observation": {
+            "current_tick": current_tick,
+            "tick_lower": tick_lower,
+            "tick_upper": tick_upper,
+            "range_width": width,
+            "distance_to_center": abs(current_tick - center),
+            "edge_ratio": max(0.0, edge_ratio),
+        },
+        "decision": {"action": action, "target_lower": target_lower, "target_upper": target_upper},
+        "execution_required": action != "hold",
+        "authorization_required": action != "hold",
+    }
+
+
+def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    p = _params(job)
+    decision_payload = decide_job(job)
+    action = str(decision_payload["decision"]["action"])
 
     execution = None
     execution_status = "observed"
@@ -80,6 +103,8 @@ def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
         if not _valid_address(token_in) or not _valid_address(token_out) or not amount_in:
             raise RuntimeError("Rebalancing execution requires a valid execution token pair and amount; no result will be submitted")
+        if not isinstance(execution_authorization, dict) and wallet is None:
+            raise RuntimeError("Rebalancing state-changing execution is waiting for job-scoped authorization; no result will be submitted")
 
         try:
             execution = execute_testnet_swap(
@@ -102,18 +127,7 @@ def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
     payload = {
         "agent": "rebalancing-test",
-        "job_id": str(job.get("jobId", job.get("id", ""))),
-        "network": "bsc-testnet",
-        "task": "rebalancing",
-        "observation": {
-            "current_tick": current_tick,
-            "tick_lower": tick_lower,
-            "tick_upper": tick_upper,
-            "range_width": width,
-            "distance_to_center": abs(current_tick - center),
-            "edge_ratio": max(0.0, edge_ratio),
-        },
-        "decision": {"action": action, "target_lower": target_lower, "target_upper": target_upper},
+        **decision_payload,
         "execution": execution if action != "hold" else "observation_only",
         "execution_status": execution_status,
         "authorization": {
@@ -128,4 +142,6 @@ def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "execution_status": execution_status,
         "transaction_hash": transaction_hash,
         "decision": action,
+        "execution_required": action != "hold",
+        "authorization_required": action != "hold",
     }
