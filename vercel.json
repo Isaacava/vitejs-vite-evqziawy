@@ -1,7 +1,4 @@
 {
-  "github": {
-    "autoJobCancelation": true
-  },
   "rewrites": [
     { "source": "/api/8004scan", "destination": "/api/marketplace?route=8004scan" },
     { "source": "/api/agents/register", "destination": "/api/marketplace?route=agent-register" },
