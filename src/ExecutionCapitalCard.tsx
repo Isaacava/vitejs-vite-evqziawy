@@ -80,7 +80,7 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
     : request?.job_id || "";
 
   useEffect(() => {
-    if (request || !marketplaceJobId) {
+    if (!marketplaceJobId) {
       setJobScopedAuthorization(null);
       setAuthorizationLookupPending(false);
       return;
@@ -91,12 +91,15 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
       if (!active) return;
       setAuthorizationLookupPending(true);
       try {
-        const jobResponse = await fetch(`/api/jobs?id=${encodeURIComponent(marketplaceJobId)}`, { credentials: "include", cache: "no-store" });
-        const jobBody = await jobResponse.json().catch(() => null) as Record<string, any> | null;
-        if (!jobResponse.ok) throw new Error(jobBody?.error || "Unable to load job context");
-        const chainJobId = jobBody?.chain?.chain_job_id ?? jobBody?.job?.chain_job_id;
-        if (!chainJobId) throw new Error("No ERC-8183 chain job is available yet");
-        const response = await fetch(`/api/testnet?route=execution-authorization-status&job=${encodeURIComponent(String(chainJobId))}`, { credentials: "include", cache: "no-store" });
+        let chainJobId = /^\d+$/.test(marketplaceJobId) ? marketplaceJobId : "";
+        if (!chainJobId) {
+          const jobResponse = await fetch(`/api/jobs?id=${encodeURIComponent(marketplaceJobId)}`, { credentials: "include", cache: "no-store" });
+          const jobBody = await jobResponse.json().catch(() => null) as Record<string, any> | null;
+          if (!jobResponse.ok) throw new Error(jobBody?.error || "Unable to load job context");
+          chainJobId = String(jobBody?.chain?.chain_job_id ?? jobBody?.job?.chain_job_id ?? "").trim();
+        }
+        if (!chainJobId || !/^\d+$/.test(chainJobId)) throw new Error("No ERC-8183 chain job is available yet");
+        const response = await fetch(`/api/testnet?route=execution-authorization-status&job=${encodeURIComponent(chainJobId)}`, { credentials: "include", cache: "no-store" });
         const body = await response.json().catch(() => null) as { status?: string; authorization?: JobScopedAuthorization | null } | null;
         if (!active) return;
         if (response.ok && body?.status === "job_scoped_authorized" && body.authorization?.source === "erc8183_job_context") {
@@ -113,7 +116,7 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
     };
     void refresh();
     return () => { active = false; if (timer) window.clearTimeout(timer); };
-  }, [marketplaceJobId, request?.job_id]);
+  }, [marketplaceJobId]);
 
   const authorizationVerified = request ? isVerifiedAuthorization(request) : false;
   const hasJobScopedAuthorization = Boolean(
@@ -121,12 +124,12 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
     jobScopedAuthorization.execution_wallet,
   );
   const rawStatus = request?.status || "not_requested";
-  const status = request
-    ? rawStatus === "authorized" && !authorizationVerified
-      ? "PENDING VERIFICATION"
-      : rawStatus.toUpperCase()
-    : hasJobScopedAuthorization
-      ? "JOB-SCOPED AUTHORIZED"
+  const status = hasJobScopedAuthorization
+    ? "JOB-SCOPED AUTHORIZED"
+    : request
+      ? rawStatus === "authorized" && !authorizationVerified
+        ? "PENDING VERIFICATION"
+        : rawStatus.toUpperCase()
       : authorizationLookupPending
         ? "SYNCING"
         : "NOT REQUESTED";
@@ -216,7 +219,7 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
       {sessionGrantProofUrl && <div className="border-t border-dashed border-line pt-3 text-[10px] text-inksoft"><strong className="text-green">Authorization verified</strong><span> · Your execution permission was recorded on BSC Testnet.</span> <a className="font-bold text-brass no-underline" href={sessionGrantProofUrl} target="_blank" rel="noreferrer">View proof ↗</a></div>}
       {hasJobScopedAuthorization && <p className="mb-0 text-[10px] text-inksoft">No separate execution capital request has been observed. Job-scoped execution authorization is present in the ERC-8183 context; execution capital remains separate from the job payment.</p>}
       {!request && !hasJobScopedAuthorization && <p className="mb-0 text-[10px] text-inksoft">No execution capital request has been observed yet. ERC-8183 job budget remains separate.</p>}
-      {request && <p className="mb-0 mt-3 text-[10px] text-inksoft">P&amp;L is calculated from independently observed onchain execution evidence. Open positions use a live PancakeSwap V3 mark; realized P&amp;L requires a verified closing execution.</p>}
+      {request && !hasJobScopedAuthorization && <p className="mb-0 mt-3 text-[10px] text-inksoft">P&amp;L is calculated from independently observed onchain execution evidence. Open positions use a live PancakeSwap V3 mark; realized P&amp;L requires a verified closing execution.</p>}
     </section>
   );
 }
