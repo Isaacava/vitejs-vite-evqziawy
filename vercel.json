@@ -5,16 +5,8 @@
       "schedule": "0 2 * * *"
     },
     {
-      "path": "/api/check-agent-endpoints",
-      "schedule": "15 2 * * *"
-    },
-    {
       "path": "/api/erc8183-indexer",
       "schedule": "0 3 * * *"
-    },
-    {
-      "path": "/api/auto-settlement",
-      "schedule": "15 3 * * *"
     }
   ],
   "rewrites": [
