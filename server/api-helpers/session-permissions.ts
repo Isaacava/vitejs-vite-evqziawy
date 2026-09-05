@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { getAuthenticatedUser, serverClient } from "./_auth.js";
+import { getAuthenticatedUser, serverClient } from "./auth.js";
 
 const txHashPattern = /^0x[a-fA-F0-9]{64}$/;
 
