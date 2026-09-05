@@ -70,6 +70,7 @@ def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
         wallet_value = str(p.get("wallet_address") or p.get("execution_wallet") or p.get("user_altana_wallet") or "").strip()
         wallet = wallet_value if _valid_address(wallet_value) else None
+        execution_authorization = p.get("execution_authorization") or p.get("authorization")
         token_in = str(p.get("token_in") or os.getenv("ALTANA_SESSION_SPEND_TOKEN", "")).strip()
         token_out = str(p.get("token_out") or os.getenv("ALTANA_DEFAULT_TOKEN_OUT", "")).strip()
         amount_in = str(p.get("amount_in") or os.getenv("REBALANCING_TESTNET_EXECUTION_AMOUNT_RAW", "")).strip()
@@ -88,6 +89,7 @@ def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
                 amount_in=amount_in,
                 amount_out_minimum=minimum_out,
                 fee=int(fee_value),
+                execution_authorization=execution_authorization,
             )
         except Exception as exc:
             raise RuntimeError(f"Rebalancing execution failed; result will not be submitted: {exc}") from exc
@@ -98,7 +100,7 @@ def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         execution_status = "executed"
 
     payload = {
-        "agent": "agentmarket-rebalancing-test",
+        "agent": "rebalancing-test",
         "job_id": str(job.get("jobId", job.get("id", ""))),
         "network": "bsc-testnet",
         "task": "rebalancing",
@@ -116,10 +118,10 @@ def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "authorization": {
             "required": action != "hold",
             "obtained": action != "hold" and isinstance(execution, dict),
-            "status": "user_scoped_altana" if action != "hold" else "not_required",
+            "status": "job_scoped" if action != "hold" else "not_required",
             "wallet": execution.get("execution_wallet") if isinstance(execution, dict) else None,
         },
-        "note": "Mission creation does not require an Altana session. State-changing execution uses provider-declared Testnet execution defaults and resolves the later job-scoped Altana authorization record; the authorized wallet must already have the required ERC-20 allowance.",
+        "note": "Mission creation is independent of the execution provider. State-changing execution consumes a job-scoped authorization supplied by the hiring client; the agent never queries a marketplace for authorization. The authorized wallet must already have the required ERC-20 allowance.",
     }
     return json.dumps(payload, separators=(",", ":")), {
         "execution_status": execution_status,
