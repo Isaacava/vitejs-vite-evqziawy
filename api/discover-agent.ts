@@ -35,9 +35,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const operations: Record<string, unknown> = {};
     for (const action of ["quote", "decision", "authorization", "preflight", "execute", "result", "health"] as const) {
       try {
-        const operation = await resolveProviderOperation(source as never, action);
+        const operation = await resolveProviderOperation(source as never, action as never);
         operations[action] = operation
-          ? { endpoint: operation.endpoint, method: operation.method, transport: operation.transport, capability: operation.capability ?? null, name: operation.name ?? null }
+          ? { endpoint: operation.endpoint, method: operation.method, transport: operation.transport, name: operation.name ?? null }
           : null;
       } catch {
         operations[action] = null;
