@@ -25,6 +25,7 @@ def _params(job: dict[str, Any]) -> dict[str, Any]:
     if isinstance(execution, dict): merged = {**merged, **execution}
     market = merged.get("execution_market")
     if isinstance(market, dict): merged = {**merged, **market}
+    # Job-scoped authorization is intentionally read from the ERC-8183 job context, not a marketplace API.
     return merged
 
 
