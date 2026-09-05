@@ -75,7 +75,7 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
     setStatus("submitting");
     setError("");
     try {
-      const response = await fetch("/api/testnet/execution-capital", {
+      const response = await fetch("/api/testnet?route=execution-capital", {
         method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ job_id: jobId, capital_requested: amount, purpose: purpose.trim() || "Agent execution", duration_seconds: hours * 60 * 60, wallet_provider: "altana", authorization_model: "scoped_session" }),
       });
