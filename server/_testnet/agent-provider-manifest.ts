@@ -72,6 +72,23 @@ function resolveUrl(value: string, base: string) {
   }
 }
 
+function discoveryBaseCandidates(endpointUrl: string): string[] {
+  try {
+    const parsed = new URL(endpointUrl);
+    const origin = parsed.origin;
+    const pathParts = parsed.pathname.split("/").filter(Boolean);
+    const bases = [origin];
+    for (let length = pathParts.length - 1; length >= 0; length -= 1) {
+      bases.push(`${origin}/${pathParts.slice(0, length).join("/")}`.replace(/\/$/, ""));
+      if (bases.length >= 5) break;
+    }
+    if (pathParts.some((part) => part.toLowerCase() === "erc8183")) bases.unshift(`${origin}/erc8183`);
+    return unique(bases);
+  } catch {
+    return [];
+  }
+}
+
 function manifestCandidates(endpoint: EndpointRecord): string[] {
   const metadata = object(endpoint.metadata);
   const explicit = [
@@ -84,13 +101,24 @@ function manifestCandidates(endpoint: EndpointRecord): string[] {
   ];
 
   const base = endpoint.endpoint_url.replace(/\/+$/, "");
-  return unique([
+  const bases = discoveryBaseCandidates(endpoint.endpoint_url);
+  const candidates: string[] = [
     ...explicit,
     endpoint.endpoint_url,
     `${base}/agent.json`,
     `${base}/.well-known/agent.json`,
     `${base}/.well-known/agent-provider.json`,
-  ]);
+  ];
+
+  for (const candidateBase of bases) {
+    candidates.push(
+      candidateBase,
+      `${candidateBase}/agent.json`,
+      `${candidateBase}/.well-known/agent.json`,
+      `${candidateBase}/.well-known/agent-provider.json`,
+    );
+  }
+  return unique(candidates);
 }
 
 async function fetchManifest(url: string): Promise<JsonObject> {
