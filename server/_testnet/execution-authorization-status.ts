@@ -15,6 +15,47 @@ function recordObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+function parseJsonObject(value: unknown): Record<string, unknown> {
+  if (typeof value !== "string" || !value.trim()) return {};
+  try { return recordObject(JSON.parse(value)); } catch { return {}; }
+}
+
+function validSelector(value: unknown): value is `0x${string}` {
+  return typeof value === "string" && /^0x[a-fA-F0-9]{8}$/.test(value);
+}
+
+function readJobScopedAuthorization(description: unknown) {
+  const payload = parseJsonObject(description);
+  const raw = recordObject(payload.execution_authorization);
+  const executionWallet = address(raw.execution_wallet) ? raw.execution_wallet : null;
+  const allowedTargets = Array.isArray(raw.allowed_targets) ? raw.allowed_targets.filter(address) : [];
+  const allowedSelectors = Array.isArray(raw.allowed_selectors) ? raw.allowed_selectors.filter(validSelector) : [];
+  const walletProvider = String(raw.wallet_provider || "").trim().toLowerCase();
+  const authorizationModel = String(raw.authorization_model || "").trim().toLowerCase();
+  const sessionBinding = String(raw.session_binding || "").trim().toLowerCase();
+  const chainId = Number(raw.chain_id);
+  const authorized = Boolean(
+    executionWallet &&
+    chainId === 97 &&
+    walletProvider === "altana" &&
+    authorizationModel === "scoped_session" &&
+    sessionBinding === "erc8183_job_id" &&
+    allowedTargets.length > 0 &&
+    allowedSelectors.length > 0
+  );
+  return {
+    authorized,
+    executionWallet,
+    version: raw.version ?? null,
+    walletProvider: walletProvider || null,
+    authorizationModel: authorizationModel || null,
+    chainId: Number.isFinite(chainId) ? chainId : null,
+    allowedTargets,
+    allowedSelectors,
+    sessionBinding: sessionBinding || null,
+  };
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") {
     res.setHeader("Allow", "GET");
@@ -24,11 +65,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const jobId = typeof req.query?.job === "string" ? req.query.job.trim() : "";
     const provider = typeof req.query?.provider === "string" ? req.query.provider.trim() : "";
     if (!jobId || !/^\d+$/.test(jobId)) return res.status(400).json({ ok: false, error: "job must be a numeric ERC-8183 job id" });
-    if (!address(provider)) return res.status(400).json({ ok: false, error: "provider must be a valid provider wallet address" });
+    if (provider && !address(provider)) return res.status(400).json({ ok: false, error: "provider must be a valid provider wallet address when supplied" });
 
     const chainJob = await publicClient.readContract({ address: COMMERCE, abi: COMMERCE_ABI, functionName: "getJob", args: [BigInt(jobId)] });
     if (!chainJob || chainJob.id === 0n) return res.status(404).json({ ok: false, error: "ERC-8183 job not found" });
-    if (chainJob.provider.toLowerCase() !== provider.toLowerCase()) return res.status(403).json({ ok: false, error: "Provider does not match the ERC-8183 job" });
+    if (provider && chainJob.provider.toLowerCase() !== provider.toLowerCase()) return res.status(403).json({ ok: false, error: "Provider does not match the ERC-8183 job" });
+
+    const scoped = readJobScopedAuthorization(chainJob.description);
 
     const supabase = serverClient();
     const { data: job, error: jobError } = await supabase
@@ -48,10 +91,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (requestError) return res.status(500).json({ ok: false, error: requestError.message });
 
     if (!request) {
+      if (scoped.authorized) {
+        return res.status(200).json({
+          ok: true,
+          required: false,
+          status: "job_scoped_authorized",
+          request_id: null,
+          erc8183: { job_id: Number(jobId), status: Number(chainJob.status), provider: chainJob.provider },
+          authorization: {
+            source: "erc8183_job_context",
+            execution_wallet: scoped.executionWallet,
+            session_key_id: null,
+            session_key_address: null,
+            session_expiry: null,
+            capital_token: null,
+            capital_authorized: null,
+            wallet_provider: scoped.walletProvider,
+            authorization_model: scoped.authorizationModel,
+            chain_id: scoped.chainId,
+            allowed_targets: scoped.allowedTargets,
+            allowed_selectors: scoped.allowedSelectors,
+            session_binding: scoped.sessionBinding,
+            version: scoped.version,
+          },
+        });
+      }
       return res.status(200).json({
         ok: true,
         required: false,
         status: "not_requested",
+        request_id: null,
         authorization: null,
         erc8183: { job_id: Number(jobId), status: Number(chainJob.status), provider: chainJob.provider },
       });
@@ -70,6 +139,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       erc8183: { job_id: Number(jobId), status: Number(chainJob.status), provider: chainJob.provider },
       authorization: request.status === "authorized"
         ? {
+            source: "execution_capital_request",
             execution_wallet: request.user_execution_wallet || null,
             session_key_id: request.session_key_id || null,
             session_key_address: request.agent_session_key || null,
