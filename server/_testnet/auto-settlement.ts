@@ -184,6 +184,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           args: [BigInt(chainJobId)],
         }) as unknown as {
           id: bigint;
+          client: Address;
           evaluator: Address;
           provider: Address;
           status: number;
