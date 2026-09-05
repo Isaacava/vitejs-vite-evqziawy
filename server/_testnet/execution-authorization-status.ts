@@ -27,32 +27,46 @@ function validSelector(value: unknown): value is `0x${string}` {
 function readJobScopedAuthorization(description: unknown) {
   const payload = parseJsonObject(description);
   const raw = recordObject(payload.execution_authorization);
-  const executionWallet = address(raw.execution_wallet) ? raw.execution_wallet : null;
-  const allowedTargets = Array.isArray(raw.allowed_targets) ? raw.allowed_targets.filter(address) : [];
-  const allowedSelectors = Array.isArray(raw.allowed_selectors) ? raw.allowed_selectors.filter(validSelector) : [];
-  const walletProvider = String(raw.wallet_provider || "").trim().toLowerCase();
-  const authorizationModel = String(raw.authorization_model || "").trim().toLowerCase();
-  const sessionBinding = String(raw.session_binding || "").trim().toLowerCase();
-  const chainId = Number(raw.chain_id);
+  const legacy = recordObject(payload.execution);
+
+  // Jobs created before the generic execution_authorization envelope was introduced
+  // used payload.execution with wallet_address. Treat that immutable on-chain data as
+  // legacy job-scoped context only when the rest of the scoped-session constraints are met.
+  const sourceRaw = Object.keys(raw).length > 0 ? raw : legacy;
+  const executionWallet = address(sourceRaw.execution_wallet)
+    ? sourceRaw.execution_wallet
+    : address(sourceRaw.wallet_address)
+      ? sourceRaw.wallet_address
+      : null;
+  const allowedTargets = Array.isArray(sourceRaw.allowed_targets) ? sourceRaw.allowed_targets.filter(address) : [];
+  const allowedSelectors = Array.isArray(sourceRaw.allowed_selectors) ? sourceRaw.allowed_selectors.filter(validSelector) : [];
+  const walletProvider = String(sourceRaw.wallet_provider || "").trim().toLowerCase();
+  const authorizationModel = String(sourceRaw.authorization_model || "").trim().toLowerCase();
+  const sessionBinding = String(sourceRaw.session_binding || "").trim().toLowerCase();
+  const chainId = Number(sourceRaw.chain_id ?? payload.chain_id);
+
+  const isLegacy = Object.keys(raw).length === 0 && Object.keys(legacy).length > 0;
   const authorized = Boolean(
     executionWallet &&
     chainId === 97 &&
     walletProvider === "altana" &&
     authorizationModel === "scoped_session" &&
-    sessionBinding === "erc8183_job_id" &&
     allowedTargets.length > 0 &&
-    allowedSelectors.length > 0
+    allowedSelectors.length > 0 &&
+    (sessionBinding === "erc8183_job_id" || (isLegacy && !sessionBinding))
   );
+
   return {
     authorized,
     executionWallet,
-    version: raw.version ?? null,
+    version: sourceRaw.version ?? null,
     walletProvider: walletProvider || null,
     authorizationModel: authorizationModel || null,
     chainId: Number.isFinite(chainId) ? chainId : null,
     allowedTargets,
     allowedSelectors,
-    sessionBinding: sessionBinding || null,
+    sessionBinding: sessionBinding || (isLegacy ? "legacy_erc8183_job_context" : null),
+    source: isLegacy ? "legacy_erc8183_job_context" : "erc8183_job_context",
   };
 }
 
@@ -99,7 +113,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           request_id: null,
           erc8183: { job_id: Number(jobId), status: Number(chainJob.status), provider: chainJob.provider },
           authorization: {
-            source: "erc8183_job_context",
+            source: scoped.source,
             execution_wallet: scoped.executionWallet,
             session_key_id: null,
             session_key_address: null,
