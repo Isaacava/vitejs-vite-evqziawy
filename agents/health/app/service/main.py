@@ -81,6 +81,8 @@ app=FastAPI(title=f"{DISPLAY_NAME} Agent",lifespan=lifespan)
 async def health():return {"status":"ok","agent":KIND,"network":NETWORK,"chain_id":CHAIN_ID}
 @app.get("/erc8183")
 async def root():return {"status":"ok","service":f"{DISPLAY_NAME} ERC-8183 provider","agent_kind":KIND,"network":NETWORK,"chain_id":CHAIN_ID,"agent_address":provider_address(),"endpoints":{"health":"/erc8183/health","status":"/erc8183/status","execution_capabilities":"/erc8183/execution-capabilities","preflight":"/erc8183/preflight","job_response":"/erc8183/job/{job_id}/response"}}
+@app.get("/erc8183/health")
+async def erc8183_health():return {"status":"ok","service":f"{DISPLAY_NAME} ERC-8183","agent_kind":KIND,"network":NETWORK,"chain_id":CHAIN_ID,"agent_address":provider_address()}
 @app.get("/erc8183/status")
 async def status():return {"status":"ok","agent_kind":KIND,"agent_address":provider_address(),"commerce_address":str(_ops.erc8183_client.commerce.address),"router_address":str(_ops.erc8183_client.router.address),"policy_address":str(_ops.erc8183_client.policy.address),"service_price":SERVICE_PRICE,"payment_token":payment_token(),"poll_interval":POLL_INTERVAL,"execution_service":EXECUTION_URL}
 @app.get("/erc8183/execution-capabilities")
