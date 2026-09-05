@@ -1,6 +1,8 @@
 name: Index ERC-8004 Agents
 
 on:
+  schedule:
+    - cron: "0 2 * * *"
   workflow_dispatch:
     inputs:
       start_id:
