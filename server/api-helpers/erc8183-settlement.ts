@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createPublicClient, http, type Address, type Hex } from "viem";
 import { bscTestnet } from "viem/chains";
-import { getAuthenticatedUser, serverClient } from "../src/server/authHandlers.js";
+import { getAuthenticatedUser, serverClient } from "./auth.js";
 
 const NETWORK = "bsc-testnet" as const;
 const CHAIN_ID = 97 as const;
