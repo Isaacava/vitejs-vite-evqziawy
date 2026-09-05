@@ -1,6 +1,6 @@
 import { createPublicClient, http, type Address } from "viem";
 import { bscTestnet } from "viem/chains";
-import { buildPancakeApproval, buildPancakeExactInputSingle, buildPancakeTestnetConfig, type PancakeExactInputSingleParams } from "./pancakeSwap.js";
+import { buildPancakeExactInputSingle, buildPancakeTestnetConfig, type PancakeExactInputSingleParams } from "./pancakeSwap.js";
 
 const publicClient = createPublicClient({
   chain: bscTestnet,
@@ -132,67 +132,32 @@ export async function pancakeSwapPreflight(input: Record<string, unknown>) {
 
   if (!selectedPool || !selectedPool.pool) {
     if (existingPools.length === 0) {
-      throw new Error(
-        `No PancakeSwap V3 pool exists for ${tokenIn}/${tokenOut} on BSC Testnet at fee ${fee}. None of the standard V3 fee tiers (100, 500, 2500, 10000) has a deployed pool. The declared execution scope must use a pair/fee with a real V3 pool before a swap can be executed.`,
-      );
+      throw new Error(`No PancakeSwap V3 pool exists for ${tokenIn}/${tokenOut} on BSC Testnet at fee ${fee}. None of the standard V3 fee tiers (100, 500, 2500, 10000) has a deployed pool. The declared execution scope must use a pair/fee with a real V3 pool before a swap can be executed.`);
     }
-
-    const available = existingPools
-      .map((item) => `${item.fee} (${item.pool}, liquidity ${item.liquidity?.toString() ?? "unknown"})`)
-      .join("; ");
-    throw new Error(
-      `No PancakeSwap V3 pool exists for ${tokenIn}/${tokenOut} at the declared fee ${fee}. Available V3 pools: ${available}. The marketplace will not silently change the provider-declared fee scope.`,
-    );
+    const available = existingPools.map((item) => `${item.fee} (${item.pool}, liquidity ${item.liquidity?.toString() ?? "unknown"})`).join("; ");
+    throw new Error(`No PancakeSwap V3 pool exists for ${tokenIn}/${tokenOut} at the declared fee ${fee}. Available V3 pools: ${available}. The marketplace will not silently change the provider-declared fee scope.`);
   }
 
   if (selectedPool.liquidity === null || selectedPool.liquidity === 0n) {
-    throw new Error(
-      `PancakeSwap V3 pool ${selectedPool.pool} exists for ${tokenIn}/${tokenOut} at fee ${fee}, but its active liquidity is zero. The swap cannot be simulated or executed until that pool has usable liquidity.`,
-    );
+    throw new Error(`PancakeSwap V3 pool ${selectedPool.pool} exists for ${tokenIn}/${tokenOut} at fee ${fee}, but its active liquidity is zero. The swap cannot be simulated or executed until that pool has usable liquidity.`);
   }
 
   const [tokenInBalance, tokenInAllowance] = await Promise.all([
-    publicClient.readContract({
-      address: tokenIn,
-      abi: ERC20_STATE_ABI,
-      functionName: "balanceOf",
-      args: [recipient],
-    }),
-    publicClient.readContract({
-      address: tokenIn,
-      abi: ERC20_STATE_ABI,
-      functionName: "allowance",
-      args: [recipient, router],
-    }),
+    publicClient.readContract({ address: tokenIn, abi: ERC20_STATE_ABI, functionName: "balanceOf", args: [recipient] }),
+    publicClient.readContract({ address: tokenIn, abi: ERC20_STATE_ABI, functionName: "allowance", args: [recipient, router] }),
   ]);
 
-  const params: PancakeExactInputSingleParams = {
-    router,
-    tokenIn,
-    tokenOut,
-    fee,
-    recipient,
-    amountIn,
-    amountOutMinimum,
-  };
+  const params: PancakeExactInputSingleParams = { router, tokenIn, tokenOut, fee, recipient, amountIn, amountOutMinimum };
   const call = buildPancakeExactInputSingle(params);
   const tokenInBalanceOk = tokenInBalance >= amountIn;
   const tokenInAllowanceOk = tokenInAllowance >= amountIn;
-  const approvalCall = tokenInAllowanceOk ? null : buildPancakeApproval(tokenIn, router, amountIn.toString());
 
-  if (!tokenInBalanceOk) {
-    throw new Error(`tokenIn balance ${tokenInBalance.toString()} is below amountIn ${amountIn.toString()}`);
-  }
+  if (!tokenInBalanceOk) throw new Error(`tokenIn balance ${tokenInBalance.toString()} is below amountIn ${amountIn.toString()}`);
 
   let simulationData: string | null = null;
   if (tokenInAllowanceOk) {
     try {
-      const simulation = await publicClient.call({
-        account: recipient,
-        to: router,
-        data: call.data,
-        value: call.value ?? 0n,
-      });
+      const simulation = await publicClient.call({ account: recipient, to: router, data: call.data, value: call.value ?? 0n });
       simulationData = simulation.data ?? null;
     } catch (error) {
       throw new Error(`PancakeSwap exactInputSingle simulation reverted: ${describeSimulationError(error)}`);
@@ -211,13 +176,8 @@ export async function pancakeSwapPreflight(input: Record<string, unknown>) {
     selector: call.data.slice(0, 10),
     pool: selectedPool.pool,
     pool_liquidity: selectedPool.liquidity?.toString() ?? null,
-    available_pools: existingPools.map((item) => ({
-      fee: item.fee,
-      pool: item.pool,
-      liquidity: item.liquidity?.toString() ?? null,
-    })),
+    available_pools: existingPools.map((item) => ({ fee: item.fee, pool: item.pool, liquidity: item.liquidity?.toString() ?? null })),
     call,
-    approval_call: approvalCall,
     requires_approval: !tokenInAllowanceOk,
     checks: {
       token_in_balance: tokenInBalance.toString(),
@@ -231,7 +191,7 @@ export async function pancakeSwapPreflight(input: Record<string, unknown>) {
     simulation_return_data: simulationData,
     broadcast: false,
     note: tokenInAllowanceOk
-      ? `Read-only BSC Testnet preflight. The provider defaults to ${config.tokenInSymbol}/${config.tokenOutSymbol}; factory pool discovery, active pool liquidity, balance, allowance and exact swap calldata are checked before simulation.`
-      : `Read-only BSC Testnet preflight. The requested ${config.tokenInSymbol} allowance is below amountIn, so execution must first submit the bounded ERC-20 approval call for exactly ${amountIn.toString()} raw units, then perform the declared swap.` ,
+      ? `Read-only BSC Testnet preflight. Factory pool discovery, active pool liquidity, balance, allowance and exact swap calldata are checked before simulation. The autonomous Altana session is limited to the PancakeSwap router call.`
+      : `Read-only BSC Testnet preflight. The user-controlled execution wallet does not yet have the required router allowance. Approve the exact ${amountIn.toString()} raw units before granting or executing the autonomous Altana session. The agent never submits ERC-20 approve().`,
   };
 }
