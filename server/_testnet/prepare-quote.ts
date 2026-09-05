@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { createPublicClient, encodeFunctionData, formatUnits, http, type Address } from "viem";
+import { createPublicClient, encodeFunctionData, formatUnits, http, type Address, type Hex } from "viem";
 import { bscTestnet } from "viem/chains";
 import { getAuthenticatedUser, serverClient } from "../../src/server/authHandlers.js";
 
@@ -10,6 +10,7 @@ const CHAIN_ID = 97;
 const JOB_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
 const ALTANA_SESSION_LIFETIME_SECONDS = 24 * 60 * 60;
 const TESTNET_RPC_URL = "https://bsc-testnet-rpc.publicnode.com";
+const MAX_CAPABILITY_BYTES = 64 * 1024;
 
 const COMMERCE_ABI = [
   { type: "function", name: "createJob", stateMutability: "nonpayable", inputs: [
@@ -30,13 +31,79 @@ const ROUTER_ABI = [
 ] as const;
 const client = createPublicClient({ chain: bscTestnet, transport: http(TESTNET_RPC_URL) });
 
-function validAddress(value: unknown): value is Address { return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value); }
+function validAddress(value: unknown): value is Address {
+  return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value);
+}
 
-function isAltanaAgent(agent: Record<string, unknown>) {
-  const metadata = agent.metadata && typeof agent.metadata === "object" ? agent.metadata as Record<string, unknown> : {};
-  const execution = metadata.execution && typeof metadata.execution === "object" ? metadata.execution as Record<string, unknown> : {};
-  const provider = typeof execution.wallet_provider === "string" ? execution.wallet_provider.toLowerCase() : "";
-  return String(agent.agent_id || "").toLowerCase() === "grid-strategy" || provider === "altana";
+function validHex(value: unknown): value is Hex {
+  return typeof value === "string" && /^0x[a-fA-F0-9]*$/.test(value);
+}
+
+function object(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function capabilityUrls(agent: Record<string, unknown>): string[] {
+  const metadata = object(agent.metadata);
+  const execution = object(metadata.execution);
+  return [
+    metadata.execution_capabilities_url,
+    metadata.execution_capability_url,
+    execution.execution_capabilities_url,
+    execution.execution_capability_url,
+    execution.capabilities_url,
+    execution.capability_url,
+  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => value.trim());
+}
+
+function looksAltanaCapable(agent: Record<string, unknown>): boolean {
+  const metadata = object(agent.metadata);
+  const execution = object(metadata.execution);
+  const provider = typeof execution.wallet_provider === "string" ? execution.wallet_provider.trim().toLowerCase() : "";
+  return provider === "altana" || capabilityUrls(agent).length > 0 || String(agent.agent_id || "").toLowerCase() === "grid-strategy";
+}
+
+async function fetchExecutionCapability(agent: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+  const supabase = serverClient();
+  const { data: endpoints, error } = await supabase
+    .from("agent_endpoints")
+    .select("endpoint_url")
+    .eq("agent_id", String(agent.id || ""))
+    .limit(20);
+  if (error) throw new Error(error.message);
+
+  const endpointDerived = (endpoints || []).map((entry) => `${String(entry.endpoint_url).replace(/\/+$/, "")}/execution-capabilities`);
+  const candidates = [...new Set([...capabilityUrls(agent), ...endpointDerived])];
+
+  for (const candidate of candidates) {
+    try {
+      const response = await fetch(candidate, { headers: { Accept: "application/json" } });
+      if (!response.ok) continue;
+      const raw = await response.text();
+      if (new TextEncoder().encode(raw).byteLength > MAX_CAPABILITY_BYTES) continue;
+      const value = object(raw ? JSON.parse(raw) : null);
+      const allowedTargets = Array.isArray(value.allowed_targets) ? value.allowed_targets.filter(validAddress) : [];
+      const allowedSelectors = Array.isArray(value.allowed_selectors) ? value.allowed_selectors.filter((entry): entry is string => typeof entry === "string" && /^0x[a-fA-F0-9]{8}$/.test(entry)) : [];
+      if (
+        value.execution !== "altana-scoped-session" ||
+        value.wallet_provider !== "altana" ||
+        value.authorization_model !== "scoped_session" ||
+        String(value.network || "").toLowerCase() !== "bsc-testnet" ||
+        Number(value.chain_id) !== CHAIN_ID ||
+        allowedTargets.length === 0 ||
+        allowedSelectors.length === 0
+      ) continue;
+      return {
+        ...value,
+        allowed_targets: allowedTargets,
+        allowed_selectors: allowedSelectors,
+        source_url: candidate,
+      };
+    } catch {
+      // Try the next declared provider capability endpoint.
+    }
+  }
+  return null;
 }
 
 function validActiveAltanaWallet(value: Record<string, unknown> | null): value is Record<string, unknown> & { wallet_address: Address } {
@@ -45,18 +112,6 @@ function validActiveAltanaWallet(value: Record<string, unknown> | null): value i
     String(value.wallet_provider).toLowerCase() === "altana" &&
     String(value.authorization_model).toLowerCase() === "passkey" && validAddress(value.wallet_address),
   );
-}
-
-function assertAltanaWalletBinding(description: string, required: boolean) {
-  if (!required) return;
-  let parsed: unknown;
-  try { parsed = JSON.parse(description); } catch { throw new Error("Grid Testnet createJob description is not valid JSON."); }
-  const execution = parsed && typeof parsed === "object" && "execution" in parsed ? (parsed as Record<string, unknown>).execution : null;
-  const executionObject = execution && typeof execution === "object" ? execution as Record<string, unknown> : null;
-  const walletAddress = executionObject?.wallet_address;
-  const sessionExpiry = Number(executionObject?.session_expiry);
-  if (!validAddress(walletAddress)) throw new Error("Grid Testnet createJob description is missing the bound Altana execution wallet.");
-  if (!Number.isSafeInteger(sessionExpiry) || sessionExpiry <= Math.floor(Date.now() / 1000)) throw new Error("Grid Testnet createJob description is missing a future Altana session expiry.");
 }
 
 async function resolveLivePolicy(): Promise<Address> {
@@ -100,13 +155,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!agent || agent.chain !== "bsc-testnet" || !validAddress(agent.owner)) return res.status(409).json({ error: "Selected provider is not a valid Testnet agent" });
     if (agent.verification_status === "revoked") return res.status(409).json({ error: "Selected provider identity is revoked" });
 
-    const altanaRequired = isAltanaAgent(agent as Record<string, unknown>);
+    const altanaRequired = looksAltanaCapable(agent as Record<string, unknown>);
     let activeAltanaWallet: Record<string, unknown> | null = null;
+    let executionCapability: Record<string, unknown> | null = null;
     if (altanaRequired) {
-      const { data: executionWallet, error: executionWalletError } = await supabase.from("altana_execution_wallets").select("wallet_address,status,chain_id,wallet_provider,authorization_model").eq("user_id", auth.user.id).maybeSingle();
+      const { data: executionWallet, error: executionWalletError } = await supabase
+        .from("altana_execution_wallets")
+        .select("wallet_address,status,chain_id,wallet_provider,authorization_model")
+        .eq("user_id", auth.user.id)
+        .maybeSingle();
       if (executionWalletError) throw new Error(executionWalletError.message);
-      if (!validActiveAltanaWallet(executionWallet as Record<string, unknown> | null)) return res.status(409).json({ error: "An active BSC Testnet Altana execution wallet must be provisioned before creating this Grid job; the wallet is bound into the immutable ERC-8183 description." });
+      if (!validActiveAltanaWallet(executionWallet as Record<string, unknown> | null)) return res.status(409).json({ error: "An active BSC Testnet Altana execution wallet must be provisioned before creating this job." });
       activeAltanaWallet = executionWallet as Record<string, unknown>;
+      executionCapability = await fetchExecutionCapability(agent as Record<string, unknown>);
+      if (!executionCapability) return res.status(409).json({ error: "Selected Altana-capable provider does not currently advertise a valid BSC Testnet scoped execution capability." });
     }
 
     const endpoint = await supabase.from("agent_endpoints").select("status,last_checked_at").eq("agent_id", agent.id).order("last_checked_at", { ascending: false }).limit(1).maybeSingle();
@@ -127,23 +189,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (BigInt(balance) < rawBudget) return res.status(409).json({ error: `Insufficient Testnet settlement-token balance. Required ${formatUnits(rawBudget, Number(decimals))} ${symbol}.`, required_raw: rawBudget.toString(), balance_raw: String(balance) });
 
     const expiryUnix = Math.floor(Date.now() / 1000) + JOB_LIFETIME_SECONDS;
-    const sessionExpiryUnix = Math.floor(Date.now() / 1000) + ALTANA_SESSION_LIFETIME_SECONDS;
     const descriptionPayload: Record<string, unknown> = {
       marketplace: "AgentMarket", network: "bsc-testnet", chain_id: CHAIN_ID,
       mission_id: missionId, quote_id: quote.quote_id, quote_hash: quote.quote_hash,
       price: formatUnits(rawBudget, Number(decimals)), price_raw: rawBudget.toString(),
       currency: quote.currency, goal: quote.goal, params: quote.request_metadata,
     };
-    if (altanaRequired && activeAltanaWallet) {
-      descriptionPayload.execution = {
-        wallet_provider: "altana", authorization_model: "scoped_session",
-        wallet_address: activeAltanaWallet.wallet_address, chain_id: CHAIN_ID,
-        session_expiry: sessionExpiryUnix,
+    if (altanaRequired && activeAltanaWallet && executionCapability) {
+      const sessionExpiry = Number(executionCapability.session_expiry || Math.floor(Date.now() / 1000) + ALTANA_SESSION_LIFETIME_SECONDS);
+      descriptionPayload.execution_authorization = {
+        version: 1,
+        wallet_provider: "altana",
+        authorization_model: "scoped_session",
+        execution_wallet: activeAltanaWallet.wallet_address,
+        chain_id: CHAIN_ID,
+        allowed_targets: executionCapability.allowed_targets,
+        allowed_selectors: executionCapability.allowed_selectors,
+        session_binding: "erc8183_job_id",
+        ...(Number.isSafeInteger(sessionExpiry) && sessionExpiry > Math.floor(Date.now() / 1000) ? { session_expiry: sessionExpiry } : {}),
+        ...(typeof executionCapability.protocol === "string" && executionCapability.protocol.trim() ? { protocol: executionCapability.protocol.trim() } : {}),
+        ...(typeof executionCapability.preflight_path === "string" && executionCapability.preflight_path.trim().startsWith("/") ? { preflight_path: executionCapability.preflight_path.trim() } : {}),
+        ...(executionCapability.execution_market && typeof executionCapability.execution_market === "object" ? { execution_market: executionCapability.execution_market } : {}),
       };
     }
 
     const description = JSON.stringify(descriptionPayload);
-    assertAltanaWalletBinding(description, altanaRequired);
     const createJobData = encodeFunctionData({ abi: COMMERCE_ABI, functionName: "createJob", args: [agent.owner, ROUTER, BigInt(expiryUnix), description, ROUTER] });
     const registerTemplate = encodeFunctionData({ abi: ROUTER_ABI, functionName: "registerJob", args: [0n, livePolicy] });
 
@@ -153,8 +223,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       quote: { quote_id: quote.quote_id, price_raw: rawBudget.toString(), price: formatUnits(rawBudget, Number(decimals)), currency: quote.currency, quote_hash: quote.quote_hash, expires_at: quote.expires_at, status: quote.status },
       agent: { agent_id: agent.agent_id, name: agent.name, provider: agent.owner, status: agent.status, verification_status: agent.verification_status },
       commerce: { address: COMMERCE, evaluator: ROUTER, hook: ROUTER, default_policy: livePolicy },
-      payment: { token, symbol, decimals: Number(decimals), budget_raw: rawBudget.toString(), balance_raw: String(balance), allowance_raw: String(allowance), balance_formatted: formatUnits(BigInt(balance), Number(decimals)), allowance_formatted: formatUnits(BigInt(allowance), Number(decimals)) },
-      execution: altanaRequired && activeAltanaWallet ? { wallet_address: activeAltanaWallet.wallet_address, wallet_provider: "altana", authorization_model: "scoped_session", chain_id: CHAIN_ID, session_expiry: sessionExpiryUnix, bound_into_job_description: true } : { wallet_address: null, bound_into_job_description: false },
+      payment: { token, symbol, decimals: Number(decimals), balance_raw: String(balance), allowance_raw: String(allowance), balance_formatted: formatUnits(BigInt(balance), Number(decimals)), allowance_formatted: formatUnits(BigInt(allowance), Number(decimals)) },
+      execution: altanaRequired && activeAltanaWallet && executionCapability ? {
+        wallet_address: activeAltanaWallet.wallet_address,
+        wallet_provider: "altana",
+        authorization_model: "scoped_session",
+        chain_id: CHAIN_ID,
+        authorization_in_job_context: true,
+        allowed_targets: executionCapability.allowed_targets,
+        allowed_selectors: executionCapability.allowed_selectors,
+        capability_source_url: executionCapability.source_url,
+      } : { wallet_address: null, authorization_in_job_context: false },
       job_description: description,
       wallet_steps: ["createJob", "registerJob with confirmed jobId", "setBudget with confirmed jobId and quoted budget", "approve payment token if allowance is insufficient", "fund with the same quoted budget"],
       transactions: {
@@ -164,7 +243,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         approve: BigInt(allowance) < rawBudget ? { to: token, data_builder: `encode approve(${COMMERCE}, ${rawBudget.toString()})` } : { data_builder: "No approval transaction required; current allowance covers the accepted quote." },
         fund: { to: COMMERCE, data_builder: `encode fund(jobId, ${rawBudget.toString()}, 0x)` },
       },
-      note: altanaRequired ? "This Testnet plan binds the user's active Altana execution wallet and a single planned session expiry into the immutable ERC-8183 job description before createJob is exposed to the wallet. Grid derives the same expiry from the job on-chain." : "This plan is quote-gated. The on-chain description, budget, provider, and currently whitelisted policy are derived from the accepted Testnet state.",
+      note: altanaRequired
+        ? "This Testnet plan carries the user's Altana execution wallet and the provider-declared scoped execution allowlist into immutable ERC-8183 job context. The agent remains marketplace-neutral and AgentMarket never executes state-changing agent calls."
+        : "This plan is quote-gated. The on-chain description, budget, provider, and currently whitelisted policy are derived from the accepted Testnet state.",
     });
-  } catch (error) { return res.status(400).json({ error: error instanceof Error ? error.message : "Unable to prepare the accepted Testnet quote" }); }
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : "Unable to prepare the accepted Testnet quote" });
+  }
 }
