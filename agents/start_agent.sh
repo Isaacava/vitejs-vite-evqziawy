@@ -1,14 +1,22 @@
 #!/bin/sh
 set -eu
 
-python /app/erc8004_register.py
+# Start the provider HTTP surface first so Railway health checks are never
+# blocked by an on-chain ERC-8004 registration/repair transaction. Registration
+# remains automatic and runs in the background with its own retry policy.
+(
+  python /app/erc8004_register.py
+) > /tmp/erc8004-registration.log 2>&1 &
+REGISTER_PID=$!
 
 node --enable-source-maps /execution/dist/server.js &
 NODE_PID=$!
 
 cleanup() {
   kill "$NODE_PID" 2>/dev/null || true
+  kill "$REGISTER_PID" 2>/dev/null || true
   wait "$NODE_PID" 2>/dev/null || true
+  wait "$REGISTER_PID" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
