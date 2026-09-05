@@ -7,22 +7,28 @@ import { invokeProviderOperation, resolveProviderOperation } from "./provider-op
 const COMMERCE = "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address;
 const COMMERCE_ABI = [{ type: "function", name: "getJob", stateMutability: "view", inputs: [{ name: "jobId", type: "uint256" }], outputs: [{ name: "job", type: "tuple", components: [{ name: "id", type: "uint256" }, { name: "client", type: "address" }, { name: "provider", type: "address" }, { name: "evaluator", type: "address" }, { name: "description", type: "string" }, { name: "budget", type: "uint256" }, { name: "expiredAt", type: "uint256" }, { name: "status", type: "uint8" }, { name: "hook", type: "address" }, { name: "submittedAt", type: "uint256" }, { name: "deliverable", type: "bytes32" }] }], }] as const;
 const publicClient = createPublicClient({ chain: bscTestnet, transport: http(process.env.BSC_TESTNET_RPC_URL || "https://bsc-testnet-rpc.publicnode.com") });
+const MAX_TESTNET_EXECUTION_CAPITAL = 1;
+const DEFAULT_DURATION_SECONDS = 86400;
+const MIN_DURATION_SECONDS = 300;
+const MAX_DURATION_SECONDS = 604800;
 
+type JsonRecord = Record<string, unknown>;
 function address(value: unknown): value is Address { return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value); }
 function hex(value: unknown): value is Hex { return typeof value === "string" && /^0x[a-fA-F0-9]*$/.test(value); }
-function object(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
+function object(value: unknown): JsonRecord { return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {}; }
+function finitePositiveNumber(value: unknown): number | null { const n = Number(value); return Number.isFinite(n) && n > 0 ? n : null; }
 
-function findExecutionDescriptor(value: unknown): Record<string, unknown> | null {
+function findExecutionDescriptor(value: unknown): JsonRecord | null {
   const root = object(value);
   const candidates = [root, object(root.execution_capability), object(root.executionCapability), object(root.authorization), object(root.capability), object(root.data)];
   for (const candidate of candidates) {
     const market = object(candidate.execution_market ?? candidate.executionMarket);
     if (
       candidate.network === "bsc-testnet" &&
-      Number(candidate.chainId) === 97 &&
+      Number(candidate.chainId ?? candidate.chain_id) === 97 &&
       candidate.execution === "altana-scoped-session" &&
-      candidate.wallet_provider === "altana" &&
-      candidate.authorization_model === "scoped_session" &&
+      typeof candidate.wallet_provider === "string" &&
+      typeof candidate.authorization_model === "string" &&
       candidate.private_key_exposed === false &&
       address(candidate.session_key_address) &&
       hex(candidate.session_key_public_key) &&
@@ -36,7 +42,24 @@ function findExecutionDescriptor(value: unknown): Record<string, unknown> | null
   return null;
 }
 
-async function capability(agent: Record<string, unknown>, jobContext: Record<string, unknown>) {
+function findAuthorizationRequest(value: JsonRecord, fallback: { amount: number; duration: number; purpose: string }) {
+  const candidates = [value, object(value.authorization_request), object(value.authorizationRequest), object(value.execution_capital), object(value.executionCapital), object(value.authorization), object(value.request)];
+  for (const candidate of candidates) {
+    const amount = finitePositiveNumber(candidate.capital_requested ?? candidate.capitalRequested ?? candidate.required_amount ?? candidate.requiredAmount ?? candidate.amount);
+    const duration = Number(candidate.duration_seconds ?? candidate.durationSeconds ?? candidate.duration ?? 0);
+    const purpose = typeof candidate.purpose === "string" && candidate.purpose.trim() ? candidate.purpose.trim() : "";
+    if (amount || Number.isInteger(duration) || purpose) {
+      return {
+        amount: amount ?? fallback.amount,
+        duration: Number.isInteger(duration) && duration >= MIN_DURATION_SECONDS && duration <= MAX_DURATION_SECONDS ? duration : fallback.duration,
+        purpose: purpose || fallback.purpose,
+      };
+    }
+  }
+  return fallback;
+}
+
+async function capability(agent: JsonRecord, jobContext: JsonRecord) {
   const { data: endpoints, error } = await serverClient()
     .from("agent_endpoints")
     .select("endpoint_url,protocol,status,metadata")
@@ -45,7 +68,7 @@ async function capability(agent: Record<string, unknown>, jobContext: Record<str
     .limit(20);
   if (error) throw new Error(error.message);
 
-  for (const endpoint of (endpoints || []) as Array<Record<string, unknown>>) {
+  for (const endpoint of (endpoints || []) as JsonRecord[]) {
     try {
       const operation = await resolveProviderOperation(endpoint as {
         endpoint_url: string;
@@ -87,10 +110,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const jobId = typeof req.body?.job_id === "string" ? req.body.job_id.trim() : "";
     const chainJobId = String(req.body?.chain_job_id ?? "").trim();
     const purpose = typeof req.body?.purpose === "string" && req.body.purpose.trim() ? req.body.purpose.trim() : "Agent execution";
-    const duration = Number(req.body?.duration_seconds ?? 86400);
-    const amount = Number(req.body?.capital_requested ?? 1);
-    if (!jobId || !/^\d+$/.test(chainJobId) || amount !== 1 || !Number.isInteger(duration) || duration < 300 || duration > 604800) {
-      return res.status(400).json({ error: "job_id, chain_job_id, exactly 1 U, and a valid duration are required" });
+    const requestedDuration = Number(req.body?.duration_seconds ?? DEFAULT_DURATION_SECONDS);
+    const requestedAmount = finitePositiveNumber(req.body?.capital_requested ?? null);
+    if (!jobId || !/^\d+$/.test(chainJobId) || !Number.isInteger(requestedDuration) || requestedDuration < MIN_DURATION_SECONDS || requestedDuration > MAX_DURATION_SECONDS) {
+      return res.status(400).json({ error: "job_id, chain_job_id, and a valid execution duration are required" });
+    }
+    if (requestedAmount !== null && requestedAmount > MAX_TESTNET_EXECUTION_CAPITAL) {
+      return res.status(400).json({ error: `Requested Testnet execution capital exceeds the global ${MAX_TESTNET_EXECUTION_CAPITAL} unit safety ceiling` });
     }
 
     const supabase = serverClient();
@@ -121,7 +147,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (agentError) throw new Error(agentError.message);
     if (!agent) return res.status(404).json({ error: "Provider agent not found" });
 
-    const cap = await capability(agent as Record<string, unknown>, {
+    const fallbackRequest = {
+      amount: requestedAmount ?? MAX_TESTNET_EXECUTION_CAPITAL,
+      duration: requestedDuration,
+      purpose,
+    };
+    const cap = await capability(agent as JsonRecord, {
       chain_job_id: Number(chainJobId),
       job_id: job.id,
       agent_id: agent.agent_id,
@@ -131,13 +162,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       network: "bsc-testnet",
       environment: "testnet",
       purpose,
-      duration_seconds: duration,
-      capital_requested: 1,
+      duration_seconds: requestedDuration,
+      capital_requested: requestedAmount ?? null,
     });
 
     if (!cap) return res.status(200).json({ ok: true, required: false, created: false, chain_job_id: Number(chainJobId), note: "Provider does not currently advertise a verified execution-authorization capability." });
 
+    const requested = findAuthorizationRequest(cap.descriptor, fallbackRequest);
+    if (requested.amount <= 0 || requested.amount > MAX_TESTNET_EXECUTION_CAPITAL) {
+      return res.status(409).json({ error: `Provider-declared Testnet execution capital is outside the global ${MAX_TESTNET_EXECUTION_CAPITAL} unit safety ceiling`, requested_amount: requested.amount });
+    }
+    const walletProvider = typeof cap.descriptor.wallet_provider === "string" ? cap.descriptor.wallet_provider.trim().toLowerCase() : "unknown";
+    const authorizationModel = typeof cap.descriptor.authorization_model === "string" ? cap.descriptor.authorization_model.trim().toLowerCase() : "unknown";
     const market = object(cap.descriptor.execution_market);
+    const token = address(market.token_in) ? market.token_in : null;
+    if (!token) return res.status(409).json({ error: "Provider authorization capability did not declare a valid execution-capital token" });
+
     const { data: existing, error: existingError } = await supabase
       .from("execution_capital_requests")
       .select("*")
@@ -154,15 +194,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       requester_wallet: auth.user.wallet_address,
       user_execution_wallet: null,
       agent_session_key: cap.descriptor.session_key_address,
-      capital_requested: "1",
-      capital_token: market.token_in,
-      purpose,
-      duration_seconds: duration,
-      wallet_provider: "altana",
-      authorization_model: "scoped_session",
+      capital_requested: String(requested.amount),
+      capital_token: token,
+      purpose: requested.purpose,
+      duration_seconds: requested.duration,
+      wallet_provider: walletProvider,
+      authorization_model: authorizationModel,
       status: "requested",
       evidence: {
-        source: "agentmarket_execution_authorization_prepare",
+        source: "provider_declared_authorization_operation",
         chain_id: 97,
         chain_job_id: Number(chainJobId),
         provider_agent_id: agent.agent_id,
@@ -172,6 +212,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           operation: cap.operation,
           fetched_at: fetchedAt,
           independently_authorized: false,
+        },
+        authorization_request: {
+          capital_requested: requested.amount,
+          duration_seconds: requested.duration,
+          purpose: requested.purpose,
+          derived_from_provider: true,
         },
       },
     }).select("*").single();
