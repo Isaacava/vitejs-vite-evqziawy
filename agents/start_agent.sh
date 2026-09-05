@@ -12,9 +12,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Import the provider app once and patch its public capability proxy before Uvicorn starts.
-# This keeps the deployed service compatible with execution-server capability discovery
-# both before and after an ERC-8183 job exists.
-python -c "import app.service.capability_patch"
-
+# The provider application owns its ERC-8183 HTTP surface. Each agent service
+# may select its own compatible entrypoint through AGENT_APP_MODULE; no
+# marketplace-specific monkeypatch is required here.
 exec python -c "import os, uvicorn; uvicorn.run(os.environ['AGENT_APP_MODULE'], host='0.0.0.0', port=int(os.environ.get('PORT', 8000)))"
