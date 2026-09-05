@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createPublicClient, http, keccak256, type Address, type Hex } from "viem";
 import { bscTestnet } from "viem/chains";
 import { getAuthenticatedUser, serverClient } from "../../src/server/authHandlers.js";
+import { invokeProviderOperation, resolveProviderOperation } from "./provider-operation.js";
 
 const COMMERCE = "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address;
 const COMMERCE_ABI = [{
@@ -26,7 +27,7 @@ const COMMERCE_ABI = [{
 
 const publicClient = createPublicClient({
   chain: bscTestnet,
-  transport: http("https://bsc-testnet-rpc.publicnode.com"),
+  transport: http(process.env.BSC_TESTNET_RPC_URL || "https://bsc-testnet-rpc.publicnode.com"),
 });
 
 function decodeBase64(value: string): Uint8Array {
@@ -38,15 +39,11 @@ function decodeBase64(value: string): Uint8Array {
 
 function parseContent(bytes: Uint8Array): unknown {
   const text = new TextDecoder().decode(bytes);
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
+  try { return JSON.parse(text); } catch { return text; }
 }
 
 function object(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" ? value as Record<string, unknown> : {};
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
 function isHash(value: unknown): value is Hex {
@@ -56,39 +53,23 @@ function isHash(value: unknown): value is Hex {
 function findTransactionHash(value: unknown): Hex | null {
   if (isHash(value)) return value;
   if (typeof value === "string") {
-    try {
-      return findTransactionHash(JSON.parse(value));
-    } catch {
-      return null;
-    }
+    try { return findTransactionHash(JSON.parse(value)); } catch { return null; }
   }
   if (!value || typeof value !== "object") return null;
-
   const record = object(value);
-  const preferredKeys = ["transaction_hash", "transactionHash", "tx_hash", "txHash"];
-  for (const key of preferredKeys) {
+  for (const key of ["transaction_hash", "transactionHash", "tx_hash", "txHash"]) {
     if (isHash(record[key])) return record[key];
   }
-
-  const executionResult = record.execution_result;
-  if (executionResult) {
-    const nested = findTransactionHash(executionResult);
+  for (const key of ["execution_result", "receipt", "response", "content", "result"]) {
+    const nested = findTransactionHash(record[key]);
     if (nested) return nested;
   }
-
-  const receipt = record.receipt;
-  if (receipt) {
-    const nested = findTransactionHash(receipt);
-    if (nested) return nested;
-  }
-
   return null;
 }
 
 async function bridgeDeliverableTransactionPointer(supabase: ReturnType<typeof serverClient>, jobId: number, content: unknown) {
   const transactionHash = findTransactionHash(content);
   if (!transactionHash) return;
-
   const { data: request, error: requestError } = await supabase
     .from("execution_capital_requests")
     .select("id")
@@ -98,7 +79,6 @@ async function bridgeDeliverableTransactionPointer(supabase: ReturnType<typeof s
     .maybeSingle();
   if (requestError) throw new Error(requestError.message);
   if (!request?.id) return;
-
   const { error: evidenceError } = await supabase.from("execution_capital_execution_evidence").upsert({
     execution_capital_request_id: request.id,
     job_id: jobId,
@@ -113,6 +93,12 @@ async function bridgeDeliverableTransactionPointer(supabase: ReturnType<typeof s
     source: "verified_deliverable_pointer",
   }, { onConflict: "execution_capital_request_id,execution_id" });
   if (evidenceError) throw new Error(evidenceError.message);
+}
+
+function resultLooksUsable(value: unknown) {
+  if (!value || typeof value !== "object") return false;
+  const body = object(value);
+  return body.result !== undefined || body.output !== undefined || body.content !== undefined || body.deliverable !== undefined || body.status !== undefined || body.transaction_hash !== undefined || body.transactionHash !== undefined;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -130,13 +116,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       functionName: "getJob",
       args: [BigInt(rawJobId)],
     });
-
     if (!chainJob || chainJob.id === 0n) return res.status(404).json({ error: "ERC-8183 job not found" });
     if (![2, 3].includes(Number(chainJob.status))) {
-      return res.status(409).json({
-        error: "Job does not have a submitted deliverable yet",
-        chain_status: Number(chainJob.status),
-      });
+      return res.status(409).json({ error: "Job does not have a submitted deliverable yet", chain_status: Number(chainJob.status) });
     }
     if (String(chainJob.client).toLowerCase() !== String(auth.user.wallet_address).toLowerCase()) {
       return res.status(403).json({ error: "This job is not owned by the connected client wallet" });
@@ -145,7 +127,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const supabase = serverClient();
     const { data: agent, error: agentError } = await supabase
       .from("agents")
-      .select("agent_id,owner,uri,name,metadata")
+      .select("id,agent_id,owner,uri,name,metadata")
       .ilike("owner", String(chainJob.provider))
       .limit(1)
       .maybeSingle();
@@ -163,9 +145,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (archived?.verified && archived.content_base64) {
       const bytes = decodeBase64(archived.content_base64);
       const computedHash = keccak256(bytes) as Hex;
-      const verified = String(chainJob.deliverable).toLowerCase() === computedHash.toLowerCase();
-
-      if (verified) {
+      if (String(chainJob.deliverable).toLowerCase() === computedHash.toLowerCase()) {
         const content = parseContent(bytes);
         await bridgeDeliverableTransactionPointer(supabase, Number(chainJob.id), content);
         return res.status(200).json({
@@ -213,75 +193,62 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    let endpoint = agent.uri;
-    const metadata = agent.metadata && typeof agent.metadata === "object"
-      ? agent.metadata as Record<string, unknown>
-      : null;
-    if (metadata && typeof metadata.endpoint === "string") endpoint = metadata.endpoint;
-    if (metadata && typeof metadata.url === "string") endpoint = metadata.url;
+    const { data: endpoints, error: endpointError } = await supabase
+      .from("agent_endpoints")
+      .select("endpoint_url,protocol,status,metadata")
+      .eq("agent_id", String(agent.id))
+      .order("last_checked_at", { ascending: false })
+      .limit(20);
+    if (endpointError) throw new Error(endpointError.message);
 
-    if (!endpoint) {
-      return res.status(200).json({
-        ok: true,
-        chain_job_id: Number(chainJob.id),
-        chain_status: Number(chainJob.status),
-        provider: chainJob.provider,
-        client: chainJob.client,
-        submitted_at: Number(chainJob.submittedAt),
-        onchain_deliverable_hash: chainJob.deliverable,
-        computed_deliverable_hash: null,
-        verified: false,
-        response_bytes: null,
-        endpoint: null,
-        agent_id: agent.agent_id,
-        agent_name: agent.name,
-        content: null,
-        evidence_source: "onchain_only",
-        archive_available: Boolean(archived),
-        verification_error: archived?.verification_error ?? "Provider has no public ERC-8183 endpoint.",
-      });
+    let lastError = archived?.verification_error ?? "Provider result is not available yet.";
+    for (const endpoint of endpoints || []) {
+      const operation = await resolveProviderOperation(endpoint as Record<string, unknown>, "result");
+      if (!operation) continue;
+      try {
+        const result = await invokeProviderOperation(operation, {
+          chain_job_id: Number(chainJob.id),
+          job_id: rawJobId,
+          agent_id: agent.agent_id,
+          client_wallet: auth.user.wallet_address,
+          network: "bsc-testnet",
+        });
+        if (!resultLooksUsable(result.body)) {
+          lastError = "Provider result operation returned no usable result payload.";
+          continue;
+        }
+        const body = object(result.body);
+        const candidateContent = body.content ?? body.output ?? body.result ?? result.body;
+        const encoded = JSON.stringify(candidateContent);
+        const bytes = new TextEncoder().encode(encoded);
+        const computedHash = keccak256(bytes) as Hex;
+        const verified = String(chainJob.deliverable).toLowerCase() === computedHash.toLowerCase();
+        if (verified) await bridgeDeliverableTransactionPointer(supabase, Number(chainJob.id), candidateContent);
+        return res.status(200).json({
+          ok: true,
+          chain_job_id: Number(chainJob.id),
+          chain_status: Number(chainJob.status),
+          provider: chainJob.provider,
+          client: chainJob.client,
+          submitted_at: Number(chainJob.submittedAt),
+          onchain_deliverable_hash: chainJob.deliverable,
+          computed_deliverable_hash: computedHash,
+          verified,
+          response_bytes: bytes.length,
+          endpoint: operation.endpoint,
+          agent_id: agent.agent_id,
+          agent_name: agent.name,
+          content: candidateContent,
+          evidence_source: "provider_declared_operation",
+          operation: { action: operation.action, endpoint: operation.endpoint, method: operation.method, transport: operation.transport, name: operation.name },
+          archive_available: Boolean(archived),
+          verification_error: verified ? null : `Hash mismatch: computed ${computedHash}, on-chain ${chainJob.deliverable}`,
+        });
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : "Provider result operation failed";
+      }
     }
 
-    endpoint = String(endpoint).replace(/\/$/, "");
-    const response = await fetch(`${endpoint}/job/${rawJobId}/response`, {
-      headers: { Accept: "application/json, text/plain;q=0.9, */*" },
-      cache: "no-store",
-    });
-
-    if (!response.ok) {
-      return res.status(200).json({
-        ok: true,
-        chain_job_id: Number(chainJob.id),
-        chain_status: Number(chainJob.status),
-        provider: chainJob.provider,
-        client: chainJob.client,
-        submitted_at: Number(chainJob.submittedAt),
-        onchain_deliverable_hash: chainJob.deliverable,
-        computed_deliverable_hash: null,
-        verified: false,
-        response_bytes: null,
-        endpoint,
-        agent_id: agent.agent_id,
-        agent_name: agent.name,
-        content: null,
-        evidence_source: "onchain_only",
-        archive_available: Boolean(archived),
-        verification_error: archived?.verification_error ?? `Provider result endpoint returned HTTP ${response.status}`,
-      });
-    }
-
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    const computedHash = keccak256(bytes) as Hex;
-    const text = new TextDecoder().decode(bytes);
-    let content: unknown = text;
-    try {
-      content = JSON.parse(text);
-    } catch {
-      // Preserve non-JSON content.
-    }
-
-    const verified = String(chainJob.deliverable).toLowerCase() === computedHash.toLowerCase();
-    if (verified) await bridgeDeliverableTransactionPointer(supabase, Number(chainJob.id), content);
     return res.status(200).json({
       ok: true,
       chain_job_id: Number(chainJob.id),
@@ -290,20 +257,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       client: chainJob.client,
       submitted_at: Number(chainJob.submittedAt),
       onchain_deliverable_hash: chainJob.deliverable,
-      computed_deliverable_hash: computedHash,
-      verified,
-      response_bytes: bytes.length,
-      endpoint,
+      computed_deliverable_hash: null,
+      verified: false,
+      response_bytes: null,
+      endpoint: archived?.provider_endpoint ?? null,
       agent_id: agent.agent_id,
       agent_name: agent.name,
-      content,
-      evidence_source: "provider_live",
+      content: null,
+      evidence_source: "provider_operation_pending",
       archive_available: Boolean(archived),
-      verification_error: verified ? null : `Hash mismatch: computed ${computedHash}, on-chain ${chainJob.deliverable}`,
+      verification_error: lastError,
     });
   } catch (error) {
-    return res.status(500).json({
-      error: error instanceof Error ? error.message : "Unable to verify provider result",
-    });
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to verify provider result" });
   }
 }
