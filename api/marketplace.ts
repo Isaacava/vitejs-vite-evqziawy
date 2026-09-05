@@ -1,12 +1,12 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-import agentJobs from "./_agent-jobs.js";
-import agentRegister from "./_agent-register.js";
-import erc8183Settlement from "./_erc8183-settlement.js";
-import erc8183Prepare from "./erc8183/_prepare.js";
-import match from "./_match.js";
-import sessionPermissions from "./_session-permissions.js";
-import eight004scan from "./_8004scan.js";
+import agentJobs from "../server/api-helpers/agent-jobs.js";
+import agentRegister from "../server/api-helpers/agent-register.js";
+import erc8183Settlement from "../server/api-helpers/erc8183-settlement.js";
+import erc8183Prepare from "../server/api-helpers/erc8183-prepare.js";
+import match from "../server/api-helpers/match.js";
+import sessionPermissions from "../server/api-helpers/session-permissions.js";
+import eight004scan from "../server/api-helpers/8004scan.js";
 
 const handlers: Record<string, (req: VercelRequest, res: VercelResponse) => unknown> = {
   "agent-jobs": agentJobs,
