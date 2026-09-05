@@ -26,11 +26,20 @@ PRIVATE_KEY = os.getenv("PRIVATE_KEY")
 REGISTRATION_DELAY = max(0, int(os.getenv("ERC8004_REGISTRATION_DELAY_SECONDS", "0")))
 
 
+def _provider_endpoint() -> str:
+    """Return the provider root, not an operation-specific status URL.
+
+    AgentMarket can discover a legacy ERC-8183 provider from its root response and
+    can also resolve a future agent-provider/v1 manifest from this same base URL.
+    """
+    return f"{ENDPOINT}/erc8183"
+
+
 def _endpoint() -> AgentEndpoint:
     return AgentEndpoint(
-        name="ERC-8183",
-        endpoint=f"{ENDPOINT}/erc8183/status",
-        version="0.1.0",
+        name="Agent Provider",
+        endpoint=_provider_endpoint(),
+        version="1.0.0",
     )
 
 
@@ -39,6 +48,7 @@ def _metadata() -> list[dict[str, str]]:
         {"key": "protocol", "value": "ERC-8183"},
         {"key": "network", "value": "bsc-testnet"},
         {"key": "provider", "value": "AgentMarket"},
+        {"key": "discovery", "value": "agent-provider/v1|legacy-erc8183-root"},
     ]
 
 
@@ -57,15 +67,15 @@ def _repair_existing_registration(sdk: ERC8004Agent, existing: dict) -> dict:
     current_uri = str(existing.get("agent_uri") or "")
     parsed = sdk.parse_agent_uri(current_uri) if current_uri else None
     registrations = parsed.get("registrations") if isinstance(parsed, dict) else None
-    has_completion = bool(registrations)
-    expected_endpoint = f"{ENDPOINT}/erc8183/status"
+    expected_endpoint = _provider_endpoint()
 
-    if has_completion and expected_endpoint in current_uri:
+    if registrations and expected_endpoint in current_uri:
         logger.info(
-            "ERC-8004 identity already complete name=%s agent_id=%s owner=%s",
+            "ERC-8004 identity already complete name=%s agent_id=%s owner=%s endpoint=%s",
             NAME,
             agent_id,
             existing.get("owner_address"),
+            expected_endpoint,
         )
         return existing
 
@@ -78,11 +88,8 @@ def _repair_existing_registration(sdk: ERC8004Agent, existing: dict) -> dict:
     for attempt in range(1, 5):
         try:
             sdk.contract.set_agent_uri(agent_id, final_uri)
-            logger.info("ERC-8004 repaired agent URI name=%s agent_id=%s", NAME, agent_id)
-            return {
-                **existing,
-                "agent_uri": final_uri,
-            }
+            logger.info("ERC-8004 repaired agent URI name=%s agent_id=%s endpoint=%s", NAME, agent_id, expected_endpoint)
+            return {**existing, "agent_uri": final_uri}
         except Exception as exc:
             last_error = exc
             logger.warning("ERC-8004 URI repair attempt %s/4 failed agent_id=%s: %s", attempt, agent_id, exc)
@@ -97,7 +104,7 @@ def ensure_registration() -> dict:
         raise RuntimeError("ERC8004_AGENT_ENDPOINT or ERC8183_AGENT_URL is required")
 
     wallet = EVMWalletProvider(password=PASSWORD, private_key=PRIVATE_KEY)
-    logger.info("ERC-8004 registration check name=%s wallet=%s network=%s", NAME, wallet.address, NETWORK)
+    logger.info("ERC-8004 registration check name=%s wallet=%s network=%s endpoint=%s", NAME, wallet.address, NETWORK, _provider_endpoint())
 
     sdk = ERC8004Agent(wallet_provider=wallet, network=NETWORK, debug=False)
     existing = sdk.get_local_agent_info(NAME)
@@ -111,11 +118,12 @@ def ensure_registration() -> dict:
     uri = _generated_uri(sdk)
     result = sdk.register_agent(agent_uri=uri, metadata=_metadata())
     logger.info(
-        "ERC-8004 identity registered name=%s agent_id=%s tx=%s owner=%s",
+        "ERC-8004 identity registered name=%s agent_id=%s tx=%s owner=%s endpoint=%s",
         NAME,
         result.get("agentId"),
         result.get("transactionHash"),
         wallet.address,
+        _provider_endpoint(),
     )
     return {
         "name": NAME,
