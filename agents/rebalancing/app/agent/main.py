@@ -1,5 +1,4 @@
 """Rebalancing strategy for BSC Testnet LP-position jobs."""
-
 from __future__ import annotations
 import json
 from typing import Any
@@ -65,14 +64,15 @@ def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             job_id = int(job.get("jobId", job.get("id", 0)))
         except (TypeError, ValueError) as exc:
             raise RuntimeError("Rebalancing execution requires a valid ERC-8183 jobId") from exc
-        wallet = str(p.get("wallet_address") or p.get("execution_wallet") or p.get("user_altana_wallet") or "").strip()
+        if job_id <= 0:
+            raise RuntimeError("Rebalancing execution requires a positive ERC-8183 jobId")
+        wallet_value = str(p.get("wallet_address") or p.get("execution_wallet") or p.get("user_altana_wallet") or "").strip()
+        wallet = wallet_value if _valid_address(wallet_value) else None
         token_in = str(p.get("token_in") or "").strip()
         token_out = str(p.get("token_out") or "").strip()
         amount_in = str(p.get("amount_in") or "").strip()
         minimum_out = str(p.get("amount_out_minimum") or "0").strip()
 
-        if not _valid_address(wallet):
-            raise RuntimeError("Rebalancing execution requires the user-scoped Altana execution wallet embedded in the ERC-8183 job; agent-owned fallback wallets are disabled")
         if not _valid_address(token_in) or not _valid_address(token_out) or not amount_in:
             raise RuntimeError("Rebalancing execution requires token_in, token_out and amount_in; no result will be submitted")
 
@@ -112,11 +112,11 @@ def fulfill_job(job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "execution_status": execution_status,
         "authorization": {
             "required": action != "hold",
-            "obtained": action != "hold",
+            "obtained": action != "hold" and isinstance(execution, dict),
             "status": "user_scoped_altana" if action != "hold" else "not_required",
-            "wallet": p.get("wallet_address") or p.get("execution_wallet") or p.get("user_altana_wallet") or None,
+            "wallet": execution.get("execution_wallet") if isinstance(execution, dict) else None,
         },
-        "note": "State-changing execution uses the user-scoped Altana wallet embedded in the ERC-8183 job and is rejected when that binding is missing.",
+        "note": "Mission creation does not require an Altana session. State-changing execution resolves the later job-scoped Altana authorization record and uses the authorized wallet only after ERC-20 allowance is already present.",
     }
     return json.dumps(payload, separators=(",", ":")), {
         "execution_status": execution_status,
