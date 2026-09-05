@@ -44,21 +44,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    const required = requiredHiringOperations(manifest, manifest.hiring?.protocol);
-    const capabilities = manifest.capabilities.map((capability) => manifestToMetadata(manifest).capabilities).flat();
+    const metadata = manifestToMetadata(manifest);
+    const protocol = typeof manifest.hiring?.protocol === "string" ? manifest.hiring.protocol : "";
+    const required = requiredHiringOperations(manifest, protocol);
     return res.status(200).json({
       ok: true,
       endpoint: endpoint.trim(),
       manifest: {
-        ...manifestToMetadata(manifest),
-        discovery: manifest.discovery,
+        ...metadata,
+        description: manifest.description ?? null,
+        agent: manifest.agent ?? {},
         networks: manifest.networks ?? [],
         hiring: manifest.hiring ?? {},
         execution: manifest.execution ?? {},
+        discovery: manifest.discovery ?? {},
       },
       requiredHiringOperations: required,
       operations,
-      capabilities,
+      capabilities: manifest.capabilities,
       next: "Register or claim the ERC-8004 identity, then AgentMarket can independently verify liveness and required operation reachability.",
     });
   } catch (error) {
