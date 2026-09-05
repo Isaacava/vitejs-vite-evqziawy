@@ -1,5 +1,6 @@
 import { keccak256, type Hex } from "viem";
 import type { Address } from "viem";
+import { invokeProviderOperation, resolveProviderOperation } from "./provider-operation.js";
 
 const ZERO_HASH = `0x${"0".repeat(64)}` as Hex;
 
@@ -24,29 +25,30 @@ function isHash(value: unknown): value is Hex {
   return typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value);
 }
 
-function extractEndpoint(agent: Record<string, unknown>): string | null {
-  const metadata = agent.metadata && typeof agent.metadata === "object"
-    ? agent.metadata as Record<string, unknown>
-    : null;
-  if (metadata && typeof metadata.endpoint === "string" && metadata.endpoint.trim()) return metadata.endpoint.trim();
-  if (metadata && typeof metadata.url === "string" && metadata.url.trim()) return metadata.url.trim();
-  if (typeof agent.uri === "string" && agent.uri.trim()) return agent.uri.trim();
-  return null;
+function object(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
-async function parseResponse(response: Response): Promise<{ bytes: Uint8Array; content: unknown }> {
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  const text = new TextDecoder().decode(bytes);
-  let content: unknown = text;
-  try { content = JSON.parse(text); } catch { /* keep text */ }
-  return { bytes, content };
+function resultLooksUsable(value: unknown) {
+  if (!value || typeof value !== "object") return false;
+  const body = object(value);
+  return body.result !== undefined
+    || body.output !== undefined
+    || body.content !== undefined
+    || body.deliverable !== undefined
+    || body.status !== undefined
+    || body.transaction_hash !== undefined
+    || body.transactionHash !== undefined;
+}
+
+function parseResponse(rawText: string): unknown {
+  try { return rawText ? JSON.parse(rawText) : {}; } catch { return rawText; }
 }
 
 /**
  * Deterministically evaluates a submitted ERC-8183 deliverable.
- * The evaluator does not trust the provider's "done" signal: it retrieves
- * the published result, hashes the exact response bytes, and compares the
- * result with the immutable on-chain deliverable commitment.
+ * The evaluator never invents a provider result URL. It resolves the provider's
+ * declared `result` operation and hashes the exact response bytes returned by it.
  */
 export async function evaluateSubmittedJob(
   supabase: any,
@@ -70,94 +72,116 @@ export async function evaluateSubmittedJob(
 
   const { data: agent, error: agentError } = await supabase
     .from("agents")
-    .select("agent_id,owner,uri,name,metadata")
+    .select("id,agent_id,owner,name,uri,metadata")
     .ilike("owner", String(chainJob.provider))
     .limit(1)
     .maybeSingle();
 
   if (agentError) throw new Error(agentError.message);
 
-  const endpoint = agent ? extractEndpoint(agent) : null;
-  if (!endpoint) {
+  if (!agent) {
     return {
       verdict: "pending",
       evidence: {
         evaluator: "agentmarket_deterministic_evaluator",
         chain_job_id: chainJobId,
         provider: chainJob.provider,
-        check: "provider_endpoint",
+        check: "provider_identity",
         passed: false,
-        registered_agent: Boolean(agent),
+        registered_agent: false,
       },
-      error: "No registered provider result endpoint is available for independent evidence verification.",
+      error: "No AgentMarket provider identity is registered for this ERC-8183 provider wallet.",
     };
   }
 
-  const url = `${endpoint.replace(/\/$/, "")}/job/${chainJobId}/response`;
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      headers: { Accept: "application/json, text/plain;q=0.9, */*" },
-      cache: "no-store",
-      signal: AbortSignal.timeout(15_000),
-    });
-  } catch (error) {
-    return {
-      verdict: "pending",
-      endpoint,
-      evidence: {
+  const { data: endpoints, error: endpointError } = await supabase
+    .from("agent_endpoints")
+    .select("endpoint_url,protocol,status,metadata")
+    .eq("agent_id", String(agent.id))
+    .order("last_checked_at", { ascending: false })
+    .limit(20);
+
+  if (endpointError) throw new Error(endpointError.message);
+
+  let lastError = "Provider has not published a result yet.";
+  for (const endpoint of endpoints || []) {
+    const operation = await resolveProviderOperation(endpoint, "result");
+    if (!operation) continue;
+
+    try {
+      const result = await invokeProviderOperation(operation, {
+        chain_job_id: chainJobId,
+        job_id: chainJobId,
+        agent_id: agent.agent_id,
+        client_wallet: null,
+        network: "bsc-testnet",
+        environment: "testnet",
+      });
+
+      if (!resultLooksUsable(result.body) && !result.rawText) {
+        lastError = `Provider result operation ${operation.name || "result"} returned an empty payload.`;
+        continue;
+      }
+
+      const bytes = new TextEncoder().encode(result.rawText);
+      const computedHash = keccak256(bytes).toLowerCase();
+      const hashMatches = computedHash === onchainDeliverable;
+      const content = parseResponse(result.rawText);
+
+      const evidence = {
         evaluator: "agentmarket_deterministic_evaluator",
         chain_job_id: chainJobId,
         provider: chainJob.provider,
-        endpoint,
-        check: "provider_response_reachable",
-        passed: false,
-      },
-      error: error instanceof Error ? error.message : "Provider result endpoint could not be reached.",
-    };
+        evaluator_address: chainJob.evaluator,
+        endpoint: result.endpoint,
+        operation: {
+          action: operation.action,
+          endpoint: operation.endpoint,
+          method: operation.method,
+          transport: operation.transport,
+          name: operation.name,
+        },
+        response_bytes: bytes.length,
+        computed_deliverable_hash: computedHash,
+        onchain_deliverable_hash: chainJob.deliverable,
+        checks: {
+          endpoint_declared: true,
+          endpoint_reachable: result.status >= 200 && result.status < 300,
+          http_ok: true,
+          nonempty_response: bytes.length > 0,
+          deliverable_hash_matches: hashMatches,
+        },
+        evaluated_at: new Date().toISOString(),
+      };
+
+      if (hashMatches && bytes.length > 0) {
+        return { verdict: "approve", evidence, content, endpoint: result.endpoint };
+      }
+
+      return {
+        verdict: "reject",
+        evidence,
+        content,
+        endpoint: result.endpoint,
+        error: "Submitted deliverable does not match the immutable ERC-8183 commitment.",
+      };
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : "Provider result operation failed";
+    }
   }
 
-  if (!response.ok) {
-    return {
-      verdict: "pending",
-      endpoint,
-      evidence: {
-        evaluator: "agentmarket_deterministic_evaluator",
-        chain_job_id: chainJobId,
-        provider: chainJob.provider,
-        endpoint,
-        http_status: response.status,
-        check: "provider_response_http_ok",
-        passed: false,
-      },
-      error: `Provider result endpoint returned HTTP ${response.status}.`,
-    };
-  }
-
-  const { bytes, content } = await parseResponse(response);
-  const computedHash = keccak256(bytes).toLowerCase();
-  const hashMatches = computedHash === onchainDeliverable;
-
-  const evidence = {
-    evaluator: "agentmarket_deterministic_evaluator",
-    chain_job_id: chainJobId,
-    provider: chainJob.provider,
-    evaluator_address: chainJob.evaluator,
-    endpoint,
-    response_bytes: bytes.length,
-    computed_deliverable_hash: computedHash,
-    onchain_deliverable_hash: chainJob.deliverable,
-    checks: {
-      endpoint_reachable: true,
-      http_ok: true,
-      nonempty_response: bytes.length > 0,
-      deliverable_hash_matches: hashMatches,
+  return {
+    verdict: "pending",
+    evidence: {
+      evaluator: "agentmarket_deterministic_evaluator",
+      chain_job_id: chainJobId,
+      provider: chainJob.provider,
+      check: "provider_result_operation",
+      passed: false,
+      attempted_endpoints: (endpoints || []).length,
     },
-    evaluated_at: new Date().toISOString(),
+    error: lastError,
   };
-
-  const verdict = hashMatches && bytes.length > 0 ? "approve" : "reject";
-  return { verdict, evidence, content, endpoint, ...(verdict === "reject" ? { error: "Submitted deliverable does not match the immutable ERC-8183 commitment." } : {}) };
 }
 
 export async function persistEvaluation(
