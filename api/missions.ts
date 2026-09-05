@@ -16,7 +16,12 @@ function nonNegativeNumber(value: unknown) {
 }
 
 function isUuid(value: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function parameters(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).slice(0, 50));
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -32,6 +37,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const goal = text(req.body?.goal, 4000);
     const requestedAgentId = text(req.body?.agent_id, 128);
     const budget = nonNegativeNumber(req.body?.budget);
+    const taskParameters = parameters(req.body?.parameters);
 
     if (!goal) return res.status(400).json({ error: "goal is required" });
     if (!requestedAgentId) return res.status(400).json({ error: "agent_id is required" });
@@ -82,10 +88,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         description: goal,
         budget,
         status: "planned",
+        parameters: taskParameters,
         created_at: now,
         updated_at: now,
       })
-      .select("id,mission_id,agent_id,title,role,description,budget,status,chain_job_id,created_at,updated_at")
+      .select("id,mission_id,agent_id,title,role,description,budget,status,chain_job_id,parameters,created_at,updated_at")
       .single();
     if (taskError) {
       await supabase.from("missions").delete().eq("id", mission.id).eq("user_id", auth.user.id);
@@ -101,10 +108,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         status: "open",
         description: goal,
         budget,
+        parameters: taskParameters,
         created_at: now,
         updated_at: now,
       })
-      .select("id,mission_task_id,provider_agent_id,client_wallet,status,description,budget,chain_job_id,created_at,updated_at")
+      .select("id,mission_task_id,provider_agent_id,client_wallet,status,description,budget,chain_job_id,parameters,created_at,updated_at")
       .single();
     if (jobError) {
       await supabase.from("mission_tasks").delete().eq("id", task.id).eq("mission_id", mission.id);
@@ -124,6 +132,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         chain_id: 97,
         agent_id: agent.agent_id,
         category: intent.category,
+        parameters: taskParameters,
       },
     });
 
