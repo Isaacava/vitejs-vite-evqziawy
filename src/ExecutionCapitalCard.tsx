@@ -1,4 +1,4 @@
-import { useEffect, useState } from "./react-shim";
+import { useEffect, useState } from "react";
 import type { ExecutionCapitalRequest } from "./lib/executionCapital";
 import { displayObservedNumber, isVerifiedAuthorization } from "./lib/executionCapital";
 
