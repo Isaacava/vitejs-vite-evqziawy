@@ -1,9 +1,12 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 import { discoverAgentCapabilities } from "../server/_testnet/agent-capabilities.js";
+import { discoverAgentProviderManifest, requiredHiringOperations, manifestToMetadata } from "../server/_testnet/agent-provider-manifest.js";
 import { resolveProviderOperation } from "../server/_testnet/provider-operation.js";
 
 const REQUEST_TIMEOUT_MS = 8_000;
+
+type OperationSnapshot = Record<string, unknown> | null;
 
 function getServiceClient() {
   const url = process.env.SUPABASE_URL;
@@ -15,37 +18,52 @@ function getServiceClient() {
 function authorized(req: VercelRequest) {
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
-  const auth = req.headers.authorization;
-  return auth === `Bearer ${secret}`;
+  return req.headers.authorization === `Bearer ${secret}`;
 }
 
-async function probeEndpoint(endpointUrl: string) {
+async function probeUrl(url: string, method = "GET") {
+  const started = Date.now();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: { Accept: "application/json,text/plain;q=0.9,*/*;q=0.8" },
+      signal: controller.signal,
+    });
+    return { ok: response.ok, statusCode: response.status, latencyMs: Date.now() - started, checkedUrl: url };
+  } catch {
+    return { ok: false, statusCode: null, latencyMs: Date.now() - started, checkedUrl: url };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function probeEndpoint(endpointUrl: string, declaredHealth: OperationSnapshot) {
+  // A declared manifest health operation is authoritative. Legacy guessed paths are
+  // compatibility-only and are never used when the provider declares health.
+  const declaredUrl = declaredHealth && typeof declaredHealth.endpoint === "string" ? declaredHealth.endpoint : null;
+  const declaredMethod = declaredHealth && typeof declaredHealth.method === "string" ? declaredHealth.method : "GET";
+  if (declaredUrl) {
+    const probe = await probeUrl(declaredUrl, declaredMethod === "GET" ? "GET" : declaredMethod);
+    if (probe.ok) return { status: "online", ...probe } as const;
+    if (probe.statusCode !== null && probe.statusCode >= 500) return { status: "degraded", ...probe } as const;
+    return { status: "offline", ...probe } as const;
+  }
+
   const base = endpointUrl.replace(/\/+$/, "");
   const candidates = [`${base}/health`, `${base}/apex/health`, `${base}/erc8183/health`];
-  const started = Date.now();
   for (const url of candidates) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    try {
-      const response = await fetch(url, {
-        method: "GET",
-        headers: { Accept: "application/json,text/plain;q=0.9,*/*;q=0.8" },
-        signal: controller.signal,
-      });
-      if (response.ok) return { status: "online", statusCode: response.status, latencyMs: Date.now() - started, checkedUrl: url } as const;
-      if (response.status >= 500) return { status: "degraded", statusCode: response.status, latencyMs: Date.now() - started, checkedUrl: url } as const;
-    } catch {
-      // Try the next known health path before declaring the provider offline.
-    } finally {
-      clearTimeout(timeout);
-    }
+    const probe = await probeUrl(url, "GET");
+    if (probe.ok) return { status: "online", ...probe } as const;
+    if (probe.statusCode !== null && probe.statusCode >= 500) return { status: "degraded", ...probe } as const;
   }
-  return { status: "offline", statusCode: null, latencyMs: Date.now() - started, checkedUrl: null } as const;
+  return { status: "offline", statusCode: null, latencyMs: 0, checkedUrl: null } as const;
 }
 
 async function discoverOperations(endpoint: Record<string, unknown>) {
-  const operations = {} as Record<string, Record<string, unknown> | null>;
-  for (const action of ["quote", "preflight", "execute", "result", "health"] as const) {
+  const operations: Record<string, OperationSnapshot> = {};
+  for (const action of ["quote", "decision", "authorization", "preflight", "execute", "result", "health"] as const) {
     try {
       const operation = await resolveProviderOperation(endpoint as never, action);
       operations[action] = operation ? {
@@ -78,31 +96,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .limit(200);
     if (error) return res.status(500).json({ error: error.message });
 
-    const results = [] as Array<{
-      id: string;
-      agentId: string;
-      endpointUrl: string;
-      previousStatus: string;
-      status: string;
-      statusCode: number | null;
-      latencyMs: number;
-      checkedUrl: string | null;
-      capabilitySources: string[];
-      capabilityCount: number;
-      operations: Record<string, Record<string, unknown> | null>;
-    }>;
+    const results = [] as Array<Record<string, unknown>>;
 
     for (const endpoint of endpoints ?? []) {
-      const probe = await probeEndpoint(endpoint.endpoint_url);
+      const manifest = await discoverAgentProviderManifest(endpoint as never);
+      const operations = await discoverOperations(endpoint as Record<string, unknown>);
+      const probe = await probeEndpoint(endpoint.endpoint_url, operations.health);
       const capabilitySnapshot = await discoverAgentCapabilities(
-        { id: endpoint.agent_id, agent_id: endpoint.agent_id, metadata: {} },
+        { id: endpoint.agent_id, agent_id: endpoint.agent_id, metadata: manifest ? manifestToMetadata(manifest) : {} },
         [endpoint as Record<string, unknown>],
       );
-      const operations = await discoverOperations(endpoint as Record<string, unknown>);
+
       const previousMetadata = endpoint.metadata && typeof endpoint.metadata === "object" ? endpoint.metadata as Record<string, unknown> : {};
+      const protocol = manifest?.hiring?.protocol && typeof manifest.hiring.protocol === "string"
+        ? manifest.hiring.protocol
+        : endpoint.protocol;
+      const requiredOperations = manifest ? requiredHiringOperations(manifest, protocol) : [];
+      const missingRequiredOperations = requiredOperations.filter((action) => !operations[action]);
+      const hireable = Boolean(
+        manifest
+        && probe.status === "online"
+        && missingRequiredOperations.length === 0
+        && manifest.capabilities.length > 0,
+      );
       const now = new Date().toISOString();
       const metadata = {
         ...previousMetadata,
+        ...(manifest ? { provider_manifest: manifestToMetadata(manifest) } : { provider_manifest_error: "No valid agent-provider/v1 manifest discovered" }),
         checked_url: probe.checkedUrl,
         checker: "agentmarket-runtime-discovery",
         checked_at: now,
@@ -112,6 +132,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         capabilities_discovery_source: "agentmarket_runtime_discovery",
         operations,
         operations_discovered_at: now,
+        hireability: {
+          protocol,
+          required_operations: requiredOperations,
+          missing_operations: missingRequiredOperations,
+          healthy: probe.status === "online",
+          hireable,
+          evaluated_at: now,
+        },
       };
 
       const { error: updateError } = await supabase
@@ -136,6 +164,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         statusCode: probe.statusCode,
         latencyMs: probe.latencyMs,
         checkedUrl: probe.checkedUrl,
+        manifest: manifest ? {
+          url: manifest.manifestUrl,
+          spec: manifest.spec,
+          name: manifest.name,
+          version: manifest.version,
+          protocols: manifest.protocols,
+        } : null,
+        hireability: { protocol, requiredOperations, missingRequiredOperations, hireable },
         capabilitySources: capabilitySnapshot.source_urls,
         capabilityCount: capabilitySnapshot.capabilities.length,
         operations,
@@ -145,16 +181,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const summary = results.reduce(
       (acc, row) => {
         acc.total += 1;
-        acc[row.status] += 1;
-        acc.capabilityProfiles += row.capabilityCount > 0 ? 1 : 0;
-        acc.providersWithQuote += row.operations.quote ? 1 : 0;
-        acc.providersWithPreflight += row.operations.preflight ? 1 : 0;
-        acc.providersWithExecute += row.operations.execute ? 1 : 0;
-        acc.providersWithResult += row.operations.result ? 1 : 0;
-        acc.providersWithHealth += row.operations.health ? 1 : 0;
+        const status = typeof row.status === "string" ? row.status : "offline";
+        if (status in acc) acc[status] += 1;
+        const operations = row.operations && typeof row.operations === "object" ? row.operations as Record<string, unknown> : {};
+        const hireability = row.hireability && typeof row.hireability === "object" ? row.hireability as Record<string, unknown> : {};
+        const capabilities = Number(row.capabilityCount || 0);
+        if (capabilities > 0) acc.capabilityProfiles += 1;
+        if (operations.quote) acc.providersWithQuote += 1;
+        if (operations.decision) acc.providersWithDecision += 1;
+        if (operations.preflight) acc.providersWithPreflight += 1;
+        if (operations.execute) acc.providersWithExecute += 1;
+        if (operations.result) acc.providersWithResult += 1;
+        if (operations.health) acc.providersWithHealth += 1;
+        if (hireability.hireable === true) acc.hireable += 1;
+        if (row.manifest) acc.validManifests += 1;
         return acc;
       },
-      { total: 0, online: 0, degraded: 0, offline: 0, capabilityProfiles: 0, providersWithQuote: 0, providersWithPreflight: 0, providersWithExecute: 0, providersWithResult: 0, providersWithHealth: 0 } as Record<string, number>,
+      { total: 0, online: 0, degraded: 0, offline: 0, validManifests: 0, hireable: 0, capabilityProfiles: 0, providersWithQuote: 0, providersWithDecision: 0, providersWithPreflight: 0, providersWithExecute: 0, providersWithResult: 0, providersWithHealth: 0 } as Record<string, number>,
     );
 
     return res.status(200).json({
@@ -162,7 +205,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       checkedAt: new Date().toISOString(),
       summary,
       results,
-      note: "AgentMarket records only observed capabilities and provider operations. It does not infer an execution route from agent identity, and it does not treat agent-reported execution capital as proof of custody or authorization.",
+      note: "AgentMarket uses agent-provider/v1 manifests as the primary source for provider operations and health. Protocol-specific fallbacks are compatibility-only; hireability requires a valid manifest, healthy provider, and the required declared operation set.",
     });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Unexpected server error" });
