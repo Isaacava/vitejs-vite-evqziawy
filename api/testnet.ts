@@ -29,7 +29,8 @@ async function loadHandler(route: string): Promise<Handler | null> {
     case "erc8183-indexer": return (await import("../server/_testnet/erc8183-indexer.js")).default as Handler;
     case "erc8183-settlement": return (await import("../server/_testnet/erc8183-settlement.js")).default as Handler;
     case "erc8183": return (await import("../server/_testnet/erc8183.js")).default as Handler;
-    case "execution-capital": return (await import("../server/_testnet/execution-capital.js")).default as Handler;
+    case "execution-capital":
+      return (await import("../server/_testnet/execution-capital.js")).default as Handler;
     case "execution-capital-verify": return (await import("../server/_testnet/execution-capital.js")).default as Handler;
     case "execution-capital-verify-passkey": return (await import("../server/_testnet/execution-capital-verify-passkey.js")).default as Handler;
     case "execution-capital-preflight": return (await import("../server/_testnet/execution-capital-preflight.js")).default as Handler;
@@ -61,7 +62,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const route = typeof req.query?.route === "string" ? req.query.route : "";
   try {
     await normalizeExecutionEvidenceJob(req, route);
-    const target = await loadHandler(route);
+    const target = !((req.method === "GET") || req.query?.action === "verify" || req.body?.action === "verify") && route === "execution-capital"
+      ? (await import("../server/_testnet/execution-authorization-prepare.js")).default as Handler
+      : await loadHandler(route);
     if (!target) return res.status(404).json({ error: "Unknown Testnet API route", route });
     return await target(req, res);
   } catch (error) {
