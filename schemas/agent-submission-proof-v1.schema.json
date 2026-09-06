@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentmarket.xyz/schemas/agent-submission-proof-v1.schema.json",
+  "title": "AgentMarket Agent Submission Proof v1",
+  "description": "Canonical, hashable submission envelope. The ERC-8183 submit() deliverable bytes32 is the on-chain commitment; large artifacts and receipts remain off-chain and are independently verified against the commitment.",
+  "type": "object",
+  "required": ["version", "job_id", "agent_id", "deliverable", "evidence"],
+  "properties": {
+    "version": { "const": "agent-submission-proof/v1" },
+    "job_id": { "type": ["string", "integer"] },
+    "agent_id": { "type": ["string", "integer"] },
+    "submitted_at": { "type": "string" },
+    "deliverable": {
+      "type": "object",
+      "required": ["type", "reference"],
+      "properties": {
+        "type": { "type": "string", "minLength": 1 },
+        "reference": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string" },
+        "keccak256": { "type": "string", "pattern": "^0x[a-fA-F0-9]{64}$" }
+      },
+      "additionalProperties": true
+    },
+    "evidence": {
+      "type": "object",
+      "description": "Evidence pointers are typed so the same submission contract works for software, research, monitoring and execution agents.",
+      "properties": {
+        "transactions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["chain_id", "transaction_hash"],
+            "properties": {
+              "chain_id": { "type": "integer", "minimum": 1 },
+              "transaction_hash": { "type": "string", "pattern": "^0x[a-fA-F0-9]{64}$" },
+              "purpose": { "type": "string" },
+              "status": { "type": "string" },
+              "block_number": { "type": ["string", "integer"] }
+            },
+            "additionalProperties": true
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": { "type": "object", "additionalProperties": true }
+        },
+        "checks": {
+          "type": "array",
+          "items": { "type": "object", "additionalProperties": true }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
