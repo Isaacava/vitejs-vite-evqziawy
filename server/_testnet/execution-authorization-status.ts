@@ -8,10 +8,12 @@ const COMMERCE = "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address;
 const COMMERCE_ABI = [{ type: "function", name: "getJob", stateMutability: "view", inputs: [{ name: "jobId", type: "uint256" }], outputs: [{ name: "job", type: "tuple", components: [{ name: "id", type: "uint256" }, { name: "client", type: "address" }, { name: "provider", type: "address" }, { name: "evaluator", type: "address" }, { name: "description", type: "string" }, { name: "budget", type: "uint256" }, { name: "expiredAt", type: "uint256" }, { name: "status", type: "uint8" }, { name: "hook", type: "address" }, { name: "submittedAt", type: "uint256" }, { name: "deliverable", type: "bytes32" }] }], }] as const;
 const publicClient = createPublicClient({ chain: bscTestnet, transport: http(process.env.BSC_TESTNET_RPC_URL || "https://bsc-testnet-rpc.publicnode.com") });
 
+type JsonRecord = Record<string, unknown>;
 function address(value: unknown): value is Address { return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value); }
-function recordObject(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
-function parseJsonObject(value: unknown): Record<string, unknown> { if (typeof value !== "string" || !value.trim()) return {}; try { return recordObject(JSON.parse(value)); } catch { return {}; } }
+function recordObject(value: unknown): JsonRecord { return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {}; }
+function parseJsonObject(value: unknown): JsonRecord { if (typeof value !== "string" || !value.trim()) return {}; try { return recordObject(JSON.parse(value)); } catch { return {}; } }
 function validSelector(value: unknown): value is `0x${string}` { return typeof value === "string" && /^0x[a-fA-F0-9]{8}$/.test(value); }
+function text(value: unknown): string { return typeof value === "string" ? value.trim() : ""; }
 
 function readJobScopedAuthorization(description: unknown) {
   const payload = parseJsonObject(description);
@@ -21,11 +23,12 @@ function readJobScopedAuthorization(description: unknown) {
   const executionWallet = address(sourceRaw.execution_wallet) ? sourceRaw.execution_wallet : address(sourceRaw.wallet_address) ? sourceRaw.wallet_address : null;
   const allowedTargets = Array.isArray(sourceRaw.allowed_targets) ? sourceRaw.allowed_targets.filter(address) : [];
   const allowedSelectors = Array.isArray(sourceRaw.allowed_selectors) ? sourceRaw.allowed_selectors.filter(validSelector) : [];
-  const walletProvider = String(sourceRaw.wallet_provider || "").trim().toLowerCase();
-  const authorizationModel = String(sourceRaw.authorization_model || sourceRaw.authorization_mode || "").trim().toLowerCase();
-  const sessionBinding = String(sourceRaw.session_binding || "").trim().toLowerCase();
+  const walletProvider = text(sourceRaw.wallet_provider);
+  const authorizationModel = text(sourceRaw.authorization_model || sourceRaw.authorization_mode);
+  const sessionBinding = text(sourceRaw.session_binding).toLowerCase();
   const chainId = Number(sourceRaw.chain_id ?? payload.chain_id);
-  const authorized = Boolean(executionWallet && chainId === 97 && allowedTargets.length > 0 && (!sourceRaw.selectors_required || allowedSelectors.length > 0) && (sessionBinding === "erc8183_job_id" || Object.keys(authorization).length === 0));
+  const selectorsRequired = sourceRaw.selectors_required !== false;
+  const authorized = Boolean(executionWallet && chainId === 97 && allowedTargets.length > 0 && (!selectorsRequired || allowedSelectors.length > 0) && (sessionBinding === "erc8183_job_id" || Object.keys(authorization).length === 0));
   return { authorized, executionWallet, version: sourceRaw.version ?? null, walletProvider: walletProvider || null, authorizationModel: authorizationModel || null, chainId: Number.isFinite(chainId) ? chainId : null, allowedTargets, allowedSelectors, sessionBinding: sessionBinding || null, source: Object.keys(authorization).length === 0 ? "legacy_erc8183_job_context" : "erc8183_job_context" };
 }
 
@@ -34,22 +37,22 @@ async function loadProviderAuthorization(job: any, agentId: string, chainJobId: 
   const { data: endpoints, error } = await supabase.from("agent_endpoints").select("endpoint_url,protocol,status,metadata").eq("agent_id", agentId).order("last_checked_at", { ascending: false }).limit(20);
   if (error) return null;
   for (const endpoint of endpoints || []) {
-    const operation = await resolveProviderOperation(endpoint, "authorization");
+    const operation = await resolveProviderOperation(endpoint as { endpoint_url: string; protocol: string; status: string; metadata?: unknown }, "authorization");
     if (!operation) continue;
     try {
       const result = await invokeProviderOperation(operation, { chain_job_id: chainJobId, job_id: chainJobId, client_wallet: job.client, provider_wallet: job.provider, network: "bsc-testnet" });
       if (result.status < 200 || result.status >= 300) continue;
       const body = recordObject(result.body);
-      return { ...body, source: "provider_operation", endpoint: result.endpoint, method: result.method, transport: result.transport };
+      return { ...body, source: "provider_operation", endpoint: result.endpoint, method: result.method, transport: result.transport } as JsonRecord;
     } catch {
-      // Try the next declared provider authorization operation.
+      // Try the next provider-declared authorization operation.
     }
   }
   return null;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== "GET") { res.setHeader("Allow", "GET"); return res.status(405).json({ error: "Method not allowed" }); }
+  if (req.method !== "GET") { res.setHeader("Allow", "GET"); return res.status(405).json({ ok: false, error: "Method not allowed" }); }
   try {
     const jobId = typeof req.query?.job === "string" ? req.query.job.trim() : "";
     const provider = typeof req.query?.provider === "string" ? req.query.provider.trim() : "";
@@ -68,10 +71,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const providerAuth = job?.provider_agent_id ? await loadProviderAuthorization(chainJob, String(job.provider_agent_id), Number(jobId)) : null;
     const providerAuthObject = recordObject(providerAuth);
     const providerAuthExecution = recordObject(providerAuthObject.execution);
-    const providerAuthRequired = providerAuth?.authorization_required === true || providerAuth?.required === true || providerAuth?.status === "authorization_required";
+    const providerAuthRequired = providerAuthObject.authorization_required === true || providerAuthObject.required === true || providerAuthObject.status === "authorization_required";
     const mergedProvider = {
-      wallet_provider: String(providerAuthObject.wallet_provider || providerAuthExecution.wallet_provider || "").trim() || null,
-      authorization_model: String(providerAuthObject.authorization_model || providerAuthExecution.authorization_model || "").trim() || null,
+      wallet_provider: text(providerAuthObject.wallet_provider || providerAuthExecution.wallet_provider) || null,
+      authorization_model: text(providerAuthObject.authorization_model || providerAuthExecution.authorization_model) || null,
       execution_wallet: address(providerAuthObject.execution_wallet) ? providerAuthObject.execution_wallet : null,
       allowed_targets: Array.isArray(providerAuthObject.allowed_targets) ? providerAuthObject.allowed_targets.filter(address) : [],
       allowed_selectors: Array.isArray(providerAuthObject.allowed_selectors) ? providerAuthObject.allowed_selectors.filter(validSelector) : [],
@@ -90,13 +93,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const capability = recordObject(evidence.execution_capability);
     const executionMarket = recordObject(capability.execution_market);
     const capabilityToken = typeof executionMarket.token_in === "string" ? executionMarket.token_in : null;
-    const providerWalletProvider = typeof request.wallet_provider === "string" && request.wallet_provider.trim() ? request.wallet_provider.trim() : null;
-    const providerAuthorizationModel = typeof request.authorization_model === "string" && request.authorization_model.trim() ? request.authorization_model.trim() : null;
-    const capabilityWalletProvider = typeof capability.wallet_provider === "string" && capability.wallet_provider.trim() ? capability.wallet_provider.trim() : null;
-    const capabilityAuthorizationModel = typeof capability.authorization_model === "string" && capability.authorization_model.trim() ? capability.authorization_model.trim() : null;
+    const providerWalletProvider = text(request.wallet_provider) || null;
+    const providerAuthorizationModel = text(request.authorization_model) || null;
+    const capabilityWalletProvider = text(capability.wallet_provider) || null;
+    const capabilityAuthorizationModel = text(capability.authorization_model) || null;
 
-    return res.status(200).json({ ok: true, required: true, status: String(request.status || "requested").toLowerCase(), request_id: request.id, erc8183: { job_id: Number(jobId), status: Number(chainJob.status), provider: chainJob.provider }, authorization: request.status === "authorized"
-      ? { source: "execution_capital_request", execution_wallet: request.user_execution_wallet || null, session_key_id: request.session_key_id || null, session_key_address: request.agent_session_key || null, session_expiry: request.session_expiry || null, capital_token: request.capital_token || capabilityToken, capital_authorized: request.capital_authorized || request.capital_requested || null, wallet_provider: providerWalletProvider || capabilityWalletProvider, authorization_model: providerAuthorizationModel || capabilityAuthorizationModel, allowed_targets: Array.isArray(capability.allowed_targets) ? capability.allowed_targets : [], allowed_selectors: Array.isArray(capability.allowed_selectors) ? capability.allowed_selectors : [] }
-      : null });
+    return res.status(200).json({
+      ok: true,
+      required: true,
+      status: text(request.status) || "requested",
+      request_id: request.id,
+      erc8183: { job_id: Number(jobId), status: Number(chainJob.status), provider: chainJob.provider },
+      authorization: request.status === "authorized"
+        ? { source: "execution_capital_request", execution_wallet: request.user_execution_wallet || null, session_key_id: request.session_key_id || null, session_key_address: request.agent_session_key || null, session_expiry: request.session_expiry || null, capital_token: request.capital_token || capabilityToken, capital_authorized: request.capital_authorized || request.capital_requested || null, wallet_provider: providerWalletProvider || capabilityWalletProvider, authorization_model: providerAuthorizationModel || capabilityAuthorizationModel, allowed_targets: Array.isArray(capability.allowed_targets) ? capability.allowed_targets : [], allowed_selectors: Array.isArray(capability.allowed_selectors) ? capability.allowed_selectors : [] }
+        : null,
+    });
   } catch (error) { return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : "Unable to read execution authorization" }); }
 }
