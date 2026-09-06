@@ -36,7 +36,7 @@ type AgentRow = {
   metadata: Record<string, unknown> | null;
 };
 
-type ProviderQuote = { accepted?: boolean; price?: string | number; currency?: string; provider_sig?: string; provider_signature?: string; quote_expires_at?: string | number; chain_id?: number; [key: string]: unknown };
+type ProviderQuote = { accepted?: boolean; price?: string | number; price_raw?: string | number; priceRaw?: string | number; raw_price?: string | number; amount_raw?: string | number; amountRaw?: string | number; settlement_amount_raw?: string | number; price_unit?: string; unit?: string; amount_unit?: string; currency?: string; provider_sig?: string; provider_signature?: string; quote_expires_at?: string | number; chain_id?: number; [key: string]: unknown };
 
 type StoredEndpoint = {
   endpoint_url: string;
@@ -74,10 +74,49 @@ function canonicalQuotePayload(input: { quoteId: string; agentId: string; reques
   });
 }
 
-function normalizedPrice(value: unknown) {
-  if (typeof value === "string" && /^\d+$/.test(value)) return value;
-  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return String(value);
-  throw new Error("Provider quote did not contain a valid integer price in raw settlement-token units");
+function normalizedPrice(quote: ProviderQuote, settlementToken: string, settlementSymbol: string, decimals: number) {
+  const rawCandidates = [quote.price_raw, quote.priceRaw, quote.raw_price, quote.amount_raw, quote.amountRaw, quote.settlement_amount_raw];
+  for (const candidate of rawCandidates) {
+    if (typeof candidate === "string" && /^\d+$/.test(candidate.trim())) return candidate.trim();
+    if (typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate >= 0) return String(candidate);
+  }
+
+  const value = quote.price;
+  const unit = typeof quote.price_unit === "string" ? quote.price_unit.trim().toLowerCase() : typeof quote.unit === "string" ? quote.unit.trim().toLowerCase() : typeof quote.amount_unit === "string" ? quote.amount_unit.trim().toLowerCase() : "";
+  const currency = typeof quote.currency === "string" ? quote.currency.trim() : "";
+  const currencyMatchesSettlement = !currency || currency.toLowerCase() === settlementSymbol.toLowerCase() || currency.toLowerCase() === settlementToken.toLowerCase();
+
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    if (unit === "raw" || unit === "base" || unit === "atomic" || unit === "wei") {
+      if (!Number.isSafeInteger(value)) throw new Error("Provider raw quote price must be an integer");
+      return String(value);
+    }
+    if (currencyMatchesSettlement) return parseUnitsExact(String(value), decimals);
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const text = value.trim();
+    if (unit === "raw" || unit === "base" || unit === "atomic" || unit === "wei") {
+      if (/^\d+$/.test(text)) return text;
+      throw new Error("Provider raw quote price must be an integer");
+    }
+    if (unit === "token" || unit === "decimal" || unit === "human" || currencyMatchesSettlement && /\./.test(text)) return parseUnitsExact(text, decimals);
+    if (/^\d+$/.test(text)) {
+      const integer = BigInt(text);
+      const tokenScale = 10n ** BigInt(decimals);
+      if (currencyMatchesSettlement && integer < tokenScale) return (integer * tokenScale).toString();
+      return text;
+    }
+  }
+
+  throw new Error("Provider quote did not contain a usable price; expected price_raw (recommended) or a price with settlement-token units");
+}
+
+function parseUnitsExact(value: string, decimals: number) {
+  if (!/^\d+(?:\.\d+)?$/.test(value.trim())) throw new Error("Provider decimal quote price is invalid");
+  const [whole, fraction = ""] = value.trim().split(".");
+  if (fraction.length > decimals) throw new Error(`Provider quote has more than ${decimals} decimal places`);
+  return (BigInt(whole) * (10n ** BigInt(decimals)) + BigInt((fraction + "0".repeat(decimals)).slice(0, decimals) || "0")).toString();
 }
 
 function normalizedExpiry(value: unknown, fallback: string) {
@@ -208,7 +247,7 @@ async function requestQuote(req: VercelRequest, res: VercelResponse, user: NonNu
 
   const { quote: providerQuote, operation } = await requestProviderQuote(providerEndpoint, goal, boundParameters);
   if (providerQuote.accepted === false) return res.status(409).json({ error: "Provider declined the requested terms", provider_quote: providerQuote, quote_endpoint: operation.endpoint });
-  const price = normalizedPrice(providerQuote.price);
+  const price = normalizedPrice(providerQuote, String(payment.token), payment.symbol, payment.decimals);
   const priceRaw = BigInt(price);
   if (priceRaw <= 0n) return res.status(409).json({ error: "Provider returned a non-positive quote" });
   if (priceRaw > payment.balance) return res.status(409).json({ error: `Provider quote is ${formatUnits(priceRaw, payment.decimals)} ${payment.symbol}, but your connected Testnet wallet has only ${formatUnits(payment.balance, payment.decimals)} ${payment.symbol}.`, price_raw: price, balance_raw: payment.balance.toString(), decimals: payment.decimals });
