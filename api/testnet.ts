@@ -62,7 +62,7 @@ async function loadHandler(route: string): Promise<Handler | null> {
     case "job-status": return (await import("../server/_testnet/job-status.js")).default as Handler;
     case "jobs-history": return (await import("../server/_testnet/jobs-history.js")).default as Handler;
     case "match": return (await import("../server/_testnet/match-federated.js")).default as Handler;
-    case "prepare-quote": return (await import("../server/_testnet/prepare-quote-open.ts")).default as Handler;
+    case "prepare-quote": return (await import("../server/_testnet/prepare-quote-open.js")).default as Handler;
     case "providers": return (await import("../server/_testnet/providers.js")).default as Handler;
     case "quotes": return (await import("../server/_testnet/quotes.js")).default as Handler;
     case "recover-job": return (await import("../server/_testnet/recover-job.js")).default as Handler;
