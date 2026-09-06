@@ -1,5 +1,6 @@
 import type { AgentCapability, AgentCapabilitySnapshot } from "../../src/lib/agentCapability.js";
 import { normalizeAgentCapability } from "../../src/lib/agentCapability.js";
+import { discoverAgentProviderManifest, type AgentProviderManifest } from "./agent-provider-manifest.js";
 
 const TIMEOUT_MS = 8_000;
 const MAX_BYTES = 128 * 1024;
@@ -222,6 +223,53 @@ export async function discoverAgentCapabilities(
   registeredEndpoints: Array<Record<string, unknown>> = [],
 ): Promise<AgentCapabilitySnapshot> {
   const agentId = String(agent.agent_id || agent.id || "unknown");
+
+  // Prefer the provider's canonical agent-provider/v1 manifest. When one is
+  // available it is authoritative and prevents unrelated legacy/A2A/MCP probes.
+  for (const endpoint of registeredEndpoints) {
+    if (typeof endpoint.endpoint_url !== "string" || !endpoint.endpoint_url.trim()) continue;
+    try {
+      const manifest = await discoverAgentProviderManifest({
+        endpoint_url: endpoint.endpoint_url,
+        metadata: endpoint.metadata,
+      });
+      if (manifest) {
+        const fallbackEndpoint = Object.values(manifest.endpoints)
+          .find((operation) => operation.transport === "http" || operation.transport === "https")?.url || endpoint.endpoint_url;
+        const capabilities = manifest.capabilities.flatMap((value) => {
+          const normalized = normalizeAgentCapability({
+            kind: "task_submission",
+            name: typeof value.name === "string" ? value.name : manifest.name,
+            description: typeof value.description === "string" ? value.description : manifest.description || null,
+            endpoint: fallbackEndpoint,
+            transport: "http",
+            input_schema: value.input_schema || value.inputSchema || null,
+            output_schema: value.output_schema || value.outputSchema || null,
+            networks: manifest.networks || [],
+            metadata: {
+              ...(value.metadata && typeof value.metadata === "object" ? value.metadata : {}),
+              protocol: manifest.protocols.join(","),
+              source_type: "agent_provider_manifest",
+              manifest_url: manifest.manifestUrl,
+              manifest_endpoints: manifest.endpoints,
+              hiring: manifest.hiring,
+              execution: manifest.execution,
+            },
+          }, manifest.manifestUrl);
+          return normalized ? [normalized] : [];
+        });
+        return {
+          agent_id: agentId,
+          discovered_at: new Date().toISOString(),
+          source_urls: [manifest.manifestUrl],
+          capabilities,
+        };
+      }
+    } catch {
+      // A provider without a usable canonical manifest may still use legacy discovery.
+    }
+  }
+
   const sourceUrls = [...new Set([...candidateUrls(agent), ...endpointCandidates(registeredEndpoints)])];
   const capabilities: AgentCapability[] = [];
   const successfulSources: string[] = [];
