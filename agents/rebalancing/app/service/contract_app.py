@@ -72,6 +72,15 @@ def manifest() -> dict:
                 "methods": ["GET"],
             },
             {
+                "id": "erc8183-execution-capabilities",
+                "name": "Execution Capabilities",
+                "description": "Return the provider's job-scoped execution capability descriptor.",
+                "metadata": {"operation": "execution_capabilities"},
+                "endpoint": f"{base}/execution-capabilities",
+                "transport": "http",
+                "methods": ["GET"],
+            },
+            {
                 "id": "erc8183-authorization",
                 "name": "Execution Authorization",
                 "description": "Receive a job-scoped execution authorization when a state-changing action is required.",
@@ -112,6 +121,7 @@ def manifest() -> dict:
             "health": {"url": f"{origin}/health" if origin else "/health", "method": "GET"},
             "quote": {"url": f"{base}/negotiate", "method": "POST"},
             "decision": {"url": f"{base}/job/{{job_id}}/decision", "method": "GET"},
+            "execution_capabilities": {"url": f"{base}/execution-capabilities", "method": "GET"},
             "authorization": {"url": f"{base}/job/{{job_id}}/execution-authorization", "method": "POST"},
             "preflight": {"url": f"{base}/preflight", "method": "POST"},
             "result": {"url": f"{base}/job/{{job_id}}/response", "method": "GET"},
