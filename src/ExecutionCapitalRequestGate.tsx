@@ -3,12 +3,13 @@ import { useEffect, useRef, useState } from "react";
 type Props = { jobId: string; jobBudget: string | number | null; jobCurrency: string; onRequested?: () => void };
 type Requirement = { execution_capital?: { token?: string; symbol?: string; required_amount?: string }; execution_market?: { token_in_symbol?: string; token_out_symbol?: string; fee?: number | null } };
 type Decision = { execution_required?: boolean; authorization_required?: boolean; decision?: { action?: string; target_lower?: number; target_upper?: number }; observation?: Record<string, unknown>; error?: string; pending?: boolean };
-type JobLookup = { job?: { chain_job_id?: number | null }; chain?: { chain_job_id?: number | null } };
+type JobLookup = { job?: { id?: string; chain_job_id?: number | null }; chain?: { chain_job_id?: number | null } };
 
 export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Props) {
   const [capital] = useState("1");
   const [purpose] = useState("Agent execution");
   const [durationHours] = useState("24");
+  const [marketplaceJobId, setMarketplaceJobId] = useState("");
   const [chainJobId, setChainJobId] = useState<string>("");
   const [requirement, setRequirement] = useState<Requirement | null>(null);
   const [decision, setDecision] = useState<Decision | null>(null);
@@ -24,6 +25,8 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
         const response = await fetch(`/api/jobs?id=${encodeURIComponent(jobId)}`, { credentials: "include", cache: "no-store" });
         const body = await response.json().catch(() => null) as JobLookup | null;
         const resolved = body?.chain?.chain_job_id ?? body?.job?.chain_job_id;
+        const resolvedMarketplaceId = typeof body?.job?.id === "string" ? body.job.id.trim() : "";
+        if (resolvedMarketplaceId && active) setMarketplaceJobId(resolvedMarketplaceId);
         if (resolved !== null && resolved !== undefined) {
           if (active) setChainJobId(String(resolved));
           return;
@@ -91,9 +94,9 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
   async function requestCapital() {
     const amount = 1;
     const hours = Number(durationHours);
-    if (!chainJobId) {
+    if (!marketplaceJobId || !chainJobId) {
       setStatus("error");
-      setError("The live ERC-8183 job ID is not available yet.");
+      setError("The live marketplace and ERC-8183 job IDs are not available yet.");
       return;
     }
     if (!Number.isInteger(hours) || hours < 1 || hours > 168) {
@@ -106,10 +109,10 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
     try {
       const response = await fetch("/api/testnet?route=execution-capital", {
         method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ job_id: chainJobId, chain_job_id: chainJobId, capital_requested: amount, purpose: purpose.trim() || "Agent execution", duration_seconds: hours * 60 * 60, wallet_provider: "altana", authorization_model: "scoped_session" }),
+        body: JSON.stringify({ job_id: marketplaceJobId, chain_job_id: chainJobId, capital_requested: amount, purpose: purpose.trim() || "Agent execution", duration_seconds: hours * 60 * 60, wallet_provider: "altana", authorization_model: "scoped_session" }),
       });
-      const body = await response.json() as { error?: string; request?: unknown };
-      if (response.status !== 201 && response.status !== 409) throw new Error(body.error || "Unable to prepare execution authorization");
+      const body = await response.json() as { error?: string; request?: unknown; created?: boolean };
+      if (response.status !== 201 && response.status !== 200) throw new Error(body.error || "Unable to prepare execution authorization");
       setStatus("requested");
       onRequested?.();
     } catch (cause) {
