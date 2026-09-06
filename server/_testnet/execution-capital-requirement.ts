@@ -129,6 +129,10 @@ async function loadAuthorizationRecord(supabase: ReturnType<typeof serverClient>
   return { request: data?.[0] || null, warning: null };
 }
 function getString(record: Record<string, unknown>, ...keys: string[]) { for (const key of keys) if (typeof record[key] === "string" && String(record[key]).trim()) return String(record[key]).trim(); return null; }
+function storedCapabilityIsComplete(request: Record<string, unknown> | null) {
+  const evidence = object(request?.evidence); const capability = object(evidence.execution_capability);
+  return address(capability.session_key_address) && typeof capability.session_key_public_key === "string" && capability.session_key_public_key.trim().length > 0;
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
@@ -140,21 +144,53 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { capability, endpointUrl, interop } = loaded;
     const { request, warning } = await loadAuthorizationRecord(supabase, jobId);
     if (!capability) return res.status(200).json({ ok: true, required: false, network: "bsc-testnet", chain_id: 97, provider_agent_id: agent.agent_id, capability_source_url: endpointUrl, erc8183: { job_id: job.chain_job_id, status: Number(chainJob.status), client: chainJob.client, provider: chainJob.provider }, execution: null, wallet_provider: null, authorization_model: null, execution_capital: { status: "not_advertised", requested_amount: null, requested_amount_raw: null, token: null, symbol: null, detection_source: "published_agent_capabilities", warning: loaded.note || warning, discovered_operations: interop.operations.map((operation) => ({ kind: operation.kind, protocol: operation.protocol, endpoint: operation.endpoint, method: operation.method, name: operation.name, evidence: operation.evidence })) }, note: loaded.note || "No execution-token requirement was declared by the provider." });
+
+    let effectiveRequest = request as Record<string, unknown> | null;
+    // The requirement route is already polled by the mission console. Use that
+    // polling path to repair an older requested record whose stored descriptor was
+    // captured before the provider began returning the request-scoped session key.
+    if (effectiveRequest && effectiveRequest.status === "requested" && !storedCapabilityIsComplete(effectiveRequest)) {
+      const evidence = object(effectiveRequest.evidence);
+      const refreshedEvidence = {
+        ...evidence,
+        source: "provider_execution_capability",
+        chain_id: 97,
+        chain_job_id: Number(job.chain_job_id),
+        provider_agent_id: agent.agent_id,
+        execution_capability: {
+          ...capability,
+          source_url: endpointUrl,
+          endpoint_id: "provider_operation",
+          fetched_at: new Date().toISOString(),
+          independently_authorized: false,
+        },
+      };
+      const { data: refreshed, error: refreshError } = await supabase.from("execution_capital_requests").update({
+        user_execution_wallet: address(capability.session_key_address) ? capability.session_key_address : effectiveRequest.user_execution_wallet,
+        agent_session_key: capability.session_key_address,
+        wallet_provider: capability.wallet_provider,
+        authorization_model: capability.authorization_model,
+        capital_token: address(capability.execution_market?.token_in) ? capability.execution_market?.token_in : effectiveRequest.capital_token,
+        evidence: refreshedEvidence,
+      }).eq("id", effectiveRequest.id).eq("status", "requested").select("*").single();
+      if (!refreshError && refreshed) effectiveRequest = refreshed as Record<string, unknown>;
+    }
+
     let sessionVerified = false; let sessionKeyId: Hex | null = null; let sessionExpiry: number | null = null; let executionWallet: Address | null = null;
-    if (request) {
-      const requestRecord = request as Record<string, unknown>; const key = getString(requestRecord, "session_key_id", "sessionKeyId"); executionWallet = address(requestRecord.user_execution_wallet) ? requestRecord.user_execution_wallet as Address : null; sessionExpiry = Number(requestRecord.session_expiry || requestRecord.sessionExpiry);
+    if (effectiveRequest) {
+      const requestRecord = effectiveRequest; const key = getString(requestRecord, "session_key_id", "sessionKeyId"); executionWallet = address(requestRecord.user_execution_wallet) ? requestRecord.user_execution_wallet as Address : null; sessionExpiry = Number(requestRecord.session_expiry || requestRecord.sessionExpiry);
       if (key && /^0x[a-fA-F0-9]{64}$/.test(key) && executionWallet) { sessionKeyId = key as Hex; const now = Math.floor(Date.now() / 1000); sessionVerified = Boolean(sessionExpiry && sessionExpiry > now) && await publicClient.readContract({ address: process.env.ALTANA_KEYSTORE_ADDRESS as Address, abi: KEYSTORE_ABI, functionName: "isValidKey", args: [executionWallet, sessionKeyId] }).catch(() => false); }
     }
     const market = capability.execution_market || {};
-    const storedAmount = request ? getString(request as Record<string, unknown>, "requested_amount", "required_amount", "amount") : null;
-    const storedAmountRaw = request ? getString(request as Record<string, unknown>, "requested_amount_raw", "required_amount_raw", "amount_raw") : null;
-    const storedToken = request && address((request as Record<string, unknown>).capital_token) ? (request as Record<string, unknown>).capital_token as Address : address(market.token_in) ? market.token_in : null;
+    const storedAmount = effectiveRequest ? getString(effectiveRequest, "requested_amount", "required_amount", "amount") : null;
+    const storedAmountRaw = effectiveRequest ? getString(effectiveRequest, "requested_amount_raw", "required_amount_raw", "amount_raw") : null;
+    const storedToken = effectiveRequest && address(effectiveRequest.capital_token) ? effectiveRequest.capital_token as Address : address(market.token_in) ? market.token_in : null;
     return res.status(200).json({
       ok: true, required: true, network: "bsc-testnet", chain_id: 97, provider_agent_id: agent.agent_id, capability_source_url: endpointUrl,
       erc8183: { job_id: job.chain_job_id, status: Number(chainJob.status), client: chainJob.client, provider: chainJob.provider }, execution: capability.execution, wallet_provider: capability.wallet_provider, authorization_model: capability.authorization_model,
-      authorization: { source: "altana_keystore_session", verified: sessionVerified, session_key_id: sessionKeyId, session_key_address: capability.session_key_address, session_key_public_key: capability.session_key_public_key, execution_wallet: executionWallet, expiry: sessionExpiry, allowed_targets: capability.allowed_targets, allowed_selectors: capability.allowed_selectors, selectors_required: capability.selectors_required, spend_limit: request ? (request as Record<string, unknown>).spend_limit ?? (request as Record<string, unknown>).capital_limit ?? null : null, note: "AgentMarket verifies Altana session authorization independently. ERC-8183 is the job/commerce layer. No Grid-specific capital-request format is required." },
+      authorization: { source: "altana_keystore_session", verified: sessionVerified, session_key_id: sessionKeyId, session_key_address: capability.session_key_address, session_key_public_key: capability.session_key_public_key, execution_wallet: executionWallet, expiry: sessionExpiry, allowed_targets: capability.allowed_targets, allowed_selectors: capability.allowed_selectors, selectors_required: capability.selectors_required, spend_limit: effectiveRequest ? effectiveRequest.spend_limit ?? effectiveRequest.capital_limit ?? null : null, note: "AgentMarket verifies Altana session authorization independently. ERC-8183 is the job/commerce layer. No Grid-specific capital-request format is required." },
       execution_market: { token_in: address(market.token_in) ? market.token_in : null, token_out: address(market.token_out) ? market.token_out : null, token_in_symbol: market.token_in_symbol || null, token_out_symbol: market.token_out_symbol || null, fee: Number.isInteger(Number(market.fee)) ? Number(market.fee) : null, protocol: capability.protocol || null },
-      execution_capital: { status: sessionVerified ? "authorization_verified" : request ? "authorization_record_present" : "authorization_not_observed", requested_amount: storedAmount, requested_amount_raw: storedAmountRaw, token: storedToken, symbol: market.token_in_symbol || null, detection_source: "altana_session_authorization", exact_trade_amount: storedAmount ? "marketplace_recorded" : "not_observed", warning, discovered_operations: interop.operations.map((operation) => ({ kind: operation.kind, protocol: operation.protocol, endpoint: operation.endpoint, method: operation.method, name: operation.name, evidence: operation.evidence })), note: "Execution authorization is verified independently of the provider implementation. Quote and execution endpoints may differ and are discovered from registered/protocol-described services; no single AgentMarket endpoint is required." },
+      execution_capital: { status: sessionVerified ? "authorization_verified" : effectiveRequest ? "authorization_record_present" : "authorization_not_observed", requested_amount: storedAmount, requested_amount_raw: storedAmountRaw, token: storedToken, symbol: market.token_in_symbol || null, detection_source: "altana_session_authorization", exact_trade_amount: storedAmount ? "marketplace_recorded" : "not_observed", warning, discovered_operations: interop.operations.map((operation) => ({ kind: operation.kind, protocol: operation.protocol, endpoint: operation.endpoint, method: operation.method, name: operation.name, evidence: operation.evidence })), note: "Execution authorization is verified independently of the provider implementation. Quote and execution endpoints may differ and are discovered from registered/protocol-described services; no single AgentMarket endpoint is required." },
     });
   } catch (error) { const message = error instanceof Error ? error.message : "Unable to resolve execution authorization"; return res.status(409).json({ error: message }); }
 }
