@@ -185,14 +185,18 @@ function selectBody(action: ProviderAction, body: Record<string, unknown>) {
 }
 
 function materializeEndpoint(endpoint: string, body: Record<string, unknown>) {
+  // Provider operation job IDs refer to the provider/protocol job, i.e. the numeric
+  // ERC-8183 job ID when one is present. The marketplace's internal Supabase UUID is
+  // still included in the request body for correlation, but must not be substituted
+  // into declared provider paths such as /erc8183/job/{job_id}/decision.
+  const aliases: Record<string, string[]> = {
+    job_id: ["chain_job_id", "chainJobId", "provider_job_id", "job_id", "jobId"],
+    jobId: ["chainJobId", "chain_job_id", "provider_job_id", "jobId", "job_id"],
+    chain_job_id: ["chain_job_id", "chainJobId", "provider_job_id", "job_id", "jobId"],
+    chainJobId: ["chainJobId", "chain_job_id", "provider_job_id", "jobId", "job_id"],
+    id: ["chain_job_id", "chainJobId", "provider_job_id", "job_id", "jobId", "id"],
+  };
   return endpoint.replace(/\{(job_id|jobId|chain_job_id|chainJobId|id)\}/g, (match, key: string) => {
-    const aliases: Record<string, string[]> = {
-      job_id: ["job_id", "chain_job_id", "chainJobId", "jobId"],
-      jobId: ["jobId", "job_id", "chain_job_id", "chainJobId"],
-      chain_job_id: ["chain_job_id", "job_id", "chainJobId", "jobId"],
-      chainJobId: ["chainJobId", "chain_job_id", "jobId", "job_id"],
-      id: ["job_id", "chain_job_id", "jobId", "chainJobId", "id"],
-    };
     const value = aliases[key]?.map((candidate) => body[candidate]).find((candidate) => candidate !== undefined && candidate !== null);
     if (value === undefined) throw new Error(`Provider operation endpoint contains unresolved placeholder ${match}`);
     return encodeURIComponent(String(value));
@@ -256,34 +260,4 @@ async function requestA2A(operation: ProviderOperation, body: Record<string, unk
     try { parsed = rawText ? JSON.parse(rawText) : {}; } catch { parsed = { raw: rawText }; }
     return { status: response.status, body: parsed, rawText, endpoint, method: "POST", transport: "a2a" };
   } finally { clearTimeout(timer); }
-}
-
-async function requestMcp(operation: ProviderOperation, body: Record<string, unknown>): Promise<OperationResponse> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  const metadata = object(operation.metadata);
-  const toolName = typeof metadata.tool_name === "string" ? metadata.tool_name : operation.name;
-  try {
-    const endpoint = materializeEndpoint(operation.endpoint, body);
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { Accept: "application/json", "Content-Type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: `agentmarket-${Date.now()}`, method: "tools/call", params: { name: toolName, arguments: selectBody(operation.action, body) } }),
-      signal: controller.signal,
-    });
-    const rawText = await response.text();
-    let parsed: unknown = {};
-    try { parsed = rawText ? JSON.parse(rawText) : {}; } catch { parsed = { raw: rawText }; }
-    return { status: response.status, body: parsed, rawText, endpoint, method: "POST", transport: "mcp" };
-  } finally { clearTimeout(timer); }
-}
-
-export async function invokeProviderOperation(operation: ProviderOperation, body: Record<string, unknown>): Promise<OperationResponse> {
-  const result = operation.transport === "mcp"
-    ? await requestMcp(operation, body)
-    : operation.transport === "a2a"
-      ? await requestA2A(operation, body)
-      : await requestJson(operation, body);
-  if (result.status < 200 || result.status >= 300) throw new Error(`Provider ${operation.action} returned HTTP ${result.status} from ${result.endpoint}`);
-  return { ...result, body: responseBodyEnvelope(result.body) };
 }
