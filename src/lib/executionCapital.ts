@@ -20,15 +20,17 @@ export type ExecutionMarketDescriptor = {
 export type ExecutionCapabilityDescriptor = {
   network: "bsc-testnet";
   chainId: 97;
-  execution: "altana-scoped-session";
-  wallet_provider: "altana";
-  authorization_model: "scoped_session";
-  session_key_address: `0x${string}`;
-  session_key_public_key: `0x${string}`;
+  execution: string;
+  wallet_provider: string;
+  authorization_model: string;
+  session_key_address?: `0x${string}`;
+  session_key_public_key?: `0x${string}`;
   allowed_targets: readonly `0x${string}`[];
   allowed_selectors: readonly `0x${string}`[];
-  selectors_required: true;
+  selectors_required: boolean;
   private_key_exposed: false;
+  protocol?: string;
+  preflight_path?: string;
   execution_market?: ExecutionMarketDescriptor;
   source_url: string;
   endpoint_id: string;
@@ -50,8 +52,8 @@ export type ExecutionCapitalRequest = {
   purpose: string;
   requested_duration_seconds: number | null;
   duration_seconds: number | null;
-  wallet_provider: "altana";
-  authorization_model: "scoped_session";
+  wallet_provider: string;
+  authorization_model: string;
   capital_authorized: string | null;
   spend_cap?: string | null;
   call_allowlist?: unknown;
@@ -111,38 +113,43 @@ export function getExecutionCapability(request: ExecutionCapitalRequest | null |
   const value = raw as Record<string, unknown>;
   if (
     value.network !== "bsc-testnet" ||
-    Number(value.chainId) !== 97 ||
-    value.execution !== "altana-scoped-session" ||
-    value.wallet_provider !== "altana" ||
-    value.authorization_model !== "scoped_session" ||
-    value.selectors_required !== true ||
+    Number(value.chainId ?? value.chain_id) !== 97 ||
+    typeof value.execution !== "string" ||
+    typeof value.wallet_provider !== "string" ||
+    typeof value.authorization_model !== "string" ||
     value.private_key_exposed !== false ||
     typeof value.source_url !== "string" ||
     typeof value.endpoint_id !== "string" ||
     typeof value.fetched_at !== "string" ||
     typeof value.independently_authorized !== "boolean" ||
-    !isAddress(value.session_key_address) ||
-    !isHex(value.session_key_public_key) ||
     !Array.isArray(value.allowed_targets) ||
     !value.allowed_targets.every(isAddress) ||
-    value.allowed_targets.length === 0 ||
     !Array.isArray(value.allowed_selectors) ||
-    !value.allowed_selectors.every(isSelector) ||
-    value.allowed_selectors.length === 0
+    !value.allowed_selectors.every(isSelector)
   ) return null;
+
+  const selectorsRequired = value.selectors_required !== false;
+  if (selectorsRequired && (value.allowed_targets.length === 0 || value.allowed_selectors.length === 0)) return null;
+
+  const altanaScoped = value.wallet_provider === "altana" && value.authorization_model === "scoped_session";
+  if (altanaScoped) {
+    if (!isAddress(value.session_key_address) || !isHex(value.session_key_public_key)) return null;
+  }
 
   return {
     network: "bsc-testnet",
     chainId: 97,
-    execution: "altana-scoped-session",
-    wallet_provider: "altana",
-    authorization_model: "scoped_session",
-    session_key_address: value.session_key_address,
-    session_key_public_key: value.session_key_public_key,
+    execution: value.execution,
+    wallet_provider: value.wallet_provider,
+    authorization_model: value.authorization_model,
+    ...(isAddress(value.session_key_address) ? { session_key_address: value.session_key_address } : {}),
+    ...(isHex(value.session_key_public_key) ? { session_key_public_key: value.session_key_public_key } : {}),
     allowed_targets: value.allowed_targets,
     allowed_selectors: value.allowed_selectors,
-    selectors_required: true,
+    selectors_required: selectorsRequired,
     private_key_exposed: false,
+    ...(typeof value.protocol === "string" && value.protocol.trim() ? { protocol: value.protocol.trim().toLowerCase() } : {}),
+    ...(typeof value.preflight_path === "string" && value.preflight_path.trim().startsWith("/") ? { preflight_path: value.preflight_path.trim() } : {}),
     execution_market: parseExecutionMarket(value.execution_market),
     source_url: value.source_url,
     endpoint_id: value.endpoint_id,
@@ -153,10 +160,5 @@ export function getExecutionCapability(request: ExecutionCapitalRequest | null |
 }
 
 export function isVerifiedAuthorization(request: Pick<ExecutionCapitalRequest, "wallet_provider" | "authorization_model" | "authorization_verified_at" | "session_key_id">) {
-  return Boolean(
-    request.wallet_provider === "altana" &&
-    request.authorization_model === "scoped_session" &&
-    request.authorization_verified_at &&
-    request.session_key_id,
-  );
+  return Boolean(request.authorization_verified_at && (request.session_key_id || request.wallet_provider === "none" || request.authorization_model === "none"));
 }
