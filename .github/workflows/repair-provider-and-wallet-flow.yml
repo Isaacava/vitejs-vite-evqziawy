@@ -1,0 +1,138 @@
+name: Repair provider contract and wallet flow
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: ${{ !contains(github.event.head_commit.message, '[provider-wallet-flow-fixed]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Apply protocol-level repairs
+        shell: python
+        run: |
+          from pathlib import Path
+
+          p = Path('server/_testnet/provider-operation.ts')
+          s = p.read_text()
+          if 'from "./agent-provider-manifest.js"' not in s:
+              s = 'import { discoverAgentProviderManifest, manifestOperation, type AgentProviderOperation } from "./agent-provider-manifest.js";\n' + s
+          marker = 'export async function resolveProviderOperation(endpoint: EndpointRecord, action: ProviderAction): Promise<ProviderOperation | null> {\n'
+          if marker not in s:
+              raise SystemExit('provider-operation resolver marker not found')
+          start = s.index(marker)
+          end = s.index('\n}\n\nexport function validateRequiredProviderOperation', start) + 3
+          replacement = '''export async function resolveProviderOperation(endpoint: EndpointRecord, action: ProviderAction): Promise<ProviderOperation | null> {
+  // The provider's live manifest is authoritative for routing and HTTP method.
+  // Persisted Supabase metadata remains a compatibility fallback when the manifest
+  // cannot be reached, but it must never permanently override a live declaration.
+  try {
+    const manifest = await discoverAgentProviderManifest(endpoint);
+    const live = manifest ? manifestOperation(manifest, action) : null;
+    if (live && (live.transport === "http" || live.transport === "https" || live.transport === "a2a")) {
+      const normalized: AgentProviderOperation = live;
+      return {
+        action,
+        endpoint: normalized.url,
+        method: String(normalized.method || "POST").toUpperCase(),
+        transport: String(normalized.transport || "http").toLowerCase(),
+        name: text(normalized.name) || action,
+        inputSchema: normalized.inputSchema || null,
+        metadata: normalized.metadata || {},
+      };
+    }
+  } catch {
+    // Fall through to indexed provider metadata for compatibility.
+  }
+
+  const endpointMetadata = object(endpoint.metadata);
+  const declared = explicitOperations(endpointMetadata, action)
+    .map((value) => normalizeOperation(action, value))
+    .find(Boolean) as ProviderOperation | undefined;
+
+  if (declared) return declared;
+  return null;
+}'''
+          s = s[:start] + replacement + s[end:]
+          p.write_text(s)
+
+          p = Path('server/_testnet/prepare-quote-open-v2.ts')
+          s = p.read_text()
+          old = '''  if (!validActiveAltanaWallet(executionWallet as JsonRecord | null)) {
+    throw new Error("This provider requires Altana execution authorization, but the user's active Altana execution wallet is not provisioned. Provision the wallet before creating the ERC-8183 job.");
+  }
+  if (!capability) {
+    throw new Error("This provider requires Altana execution authorization, but its provider-declared execution capability could not be verified before creating the ERC-8183 job.");
+  }
+
+  const now = Math.floor(Date.now() / 1000);'''
+          new = '''  const now = Math.floor(Date.now() / 1000);
+  const rawExpiry = Number(capability?.session_expiry || 0);
+  const sessionExpiry = Number.isSafeInteger(rawExpiry) && rawExpiry > now ? rawExpiry : now + DEFAULT_SESSION_SECONDS;
+
+  if (!validActiveAltanaWallet(executionWallet as JsonRecord | null)) {
+    // Altana authorization is an execution prerequisite, not a marketplace hiring prerequisite.
+    // Preserve the provider-declared capability and record a pending authorization state so the
+    // ERC-8183 job can be created and the user can provision/authorize execution afterward.
+    return {
+      version: 1,
+      wallet_provider: "altana",
+      authorization_model: "scoped_session",
+      execution_wallet: null,
+      wallet_status: "not_provisioned",
+      authorization_pending: true,
+      chain_id: CHAIN_ID,
+      allowed_targets: Array.isArray(capability?.allowed_targets) ? capability.allowed_targets : [],
+      allowed_selectors: Array.isArray(capability?.allowed_selectors) ? capability.allowed_selectors : [],
+      session_binding: "erc8183_job_id",
+      session_expiry: sessionExpiry,
+      ...(text(capability?.protocol) ? { protocol: text(capability.protocol).toLowerCase() } : {}),
+      ...(text(capability?.preflight_path).startsWith("/") ? { preflight_path: text(capability.preflight_path) } : {}),
+      ...(capability?.execution_market && typeof capability.execution_market === "object" ? { execution_market: capability.execution_market } : {}),
+      capability_source_url: text(capability?.source_url),
+    };
+  }
+  if (!capability) {
+    throw new Error("This provider requires Altana execution authorization, but its provider-declared execution capability could not be verified before creating the ERC-8183 job.");
+  }'''
+          if old not in s:
+              raise SystemExit('Altana pre-job gate not found')
+          s = s.replace(old, new, 1)
+          old_expiry = '''  const now = Math.floor(Date.now() / 1000);
+  const rawExpiry = Number(capability.session_expiry || 0);
+  const sessionExpiry = Number.isSafeInteger(rawExpiry) && rawExpiry > now ? rawExpiry : now + DEFAULT_SESSION_SECONDS;
+  return {
+'''
+          new_expiry = '''  return {
+'''
+          if old_expiry not in s:
+              raise SystemExit('existing Altana expiry block not found')
+          s = s.replace(old_expiry, new_expiry, 1)
+          p.write_text(s)
+
+      - name: Typecheck/build
+        run: |
+          npm install --no-audit --no-fund
+          npx tsc -b
+          npx vite build
+
+      - name: Commit repair and remove workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server/_testnet/provider-operation.ts server/_testnet/prepare-quote-open-v2.ts
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: reconcile live provider contracts and decouple wallet provisioning from hiring [provider-wallet-flow-fixed]"
+          git push
+          git rm .github/workflows/repair-provider-and-wallet-flow.yml
+          git commit -m "chore: remove one-time provider wallet flow repair"
+          git push
