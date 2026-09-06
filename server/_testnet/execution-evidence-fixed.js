@@ -80,7 +80,7 @@ async function classify(txHash, wallet) {
   return { receipt, pool, cakeOut, cakeIn, wbnbIn, wbnbOut, entry: cakeOut > 0n && wbnbIn > 0n, exit: wbnbOut > 0n && cakeIn > 0n };
 }
 
-async function loadProviderResult(supabase, chainJobId, providerWallet) {
+async function loadProviderResult(supabase, chainJobId, clientWallet, providerWallet) {
   const agentQuery = await supabase.from("agents").select("id,agent_id,name").ilike("owner", providerWallet).limit(1).maybeSingle();
   if (agentQuery.error) throw new Error(agentQuery.error.message);
   if (!agentQuery.data) return null;
@@ -90,7 +90,14 @@ async function loadProviderResult(supabase, chainJobId, providerWallet) {
     const operation = await resolveProviderOperation(endpoint, "result");
     if (!operation) continue;
     try {
-      const result = await invokeProviderOperation(operation, { chain_job_id: chainJobId, job_id: chainJobId, agent_id: agentQuery.data.agent_id, client_wallet: providerWallet, network: "bsc-testnet" });
+      const result = await invokeProviderOperation(operation, {
+        chain_job_id: chainJobId,
+        job_id: chainJobId,
+        agent_id: agentQuery.data.agent_id,
+        client_wallet: clientWallet,
+        provider_wallet: providerWallet,
+        network: "bsc-testnet",
+      });
       return { rawText: result.rawText, endpoint: result.endpoint, agentName: agentQuery.data.name, operation };
     } catch {}
   }
@@ -145,10 +152,12 @@ export default async function handler(req, res) {
     const storedEvidence = object(request?.evidence);
     let txHash = isHash(storedEvidence?.last_execution?.transaction_hash) ? storedEvidence.last_execution.transaction_hash : null;
     let source = txHash ? "execution_capital_request" : "";
-    let resultVerified = false;
 
     if (!txHash) {
-      const providerResult = await loadProviderResult(supabase, chainJobId, String(chainJob.provider));
+      // The provider response is bound to the hiring client. Using the provider
+      // wallet here can produce a different byte-for-byte response and therefore
+      // a different keccak256 than the ERC-8183 deliverable commitment.
+      const providerResult = await loadProviderResult(supabase, chainJobId, String(auth.user.wallet_address), String(chainJob.provider));
       if (providerResult) {
         const rawText = providerResult.rawText || "";
         const computed = keccak256(new TextEncoder().encode(rawText));
@@ -156,7 +165,7 @@ export default async function handler(req, res) {
         let content;
         try { content = JSON.parse(rawText); } catch { content = rawText; }
         const candidate = findTransactionHash(content);
-        if (candidate && deliverableMatches) { txHash = candidate; source = "verified_provider_result"; resultVerified = true; }
+        if (candidate && deliverableMatches) { txHash = candidate; source = "verified_provider_result"; }
       }
     }
 
@@ -168,7 +177,7 @@ export default async function handler(req, res) {
           let content;
           try { content = JSON.parse(new TextDecoder().decode(bytes)); } catch { content = new TextDecoder().decode(bytes); }
           const candidate = findTransactionHash(content);
-          if (candidate) { txHash = candidate; source = "verified_deliverable_archive"; resultVerified = true; }
+          if (candidate) { txHash = candidate; source = "verified_deliverable_archive"; }
         }
       }
     }
@@ -183,15 +192,14 @@ export default async function handler(req, res) {
     const resultPnl = await calculatePnl(verified);
     const tx = await publicClient.getTransaction({ hash: txHash });
     const execution = { status: verified.receipt.status, block_number: verified.receipt.blockNumber.toString(), block_hash: verified.receipt.blockHash, gas_used: verified.receipt.gasUsed.toString(), execution_wallet: executionWallet, tx_from: tx.from, tx_to: tx.to, entry: verified.entry, exit: verified.exit, receipt_verified: true };
-    const market = { verified_onchain: Boolean(verified.entry || verified.exit), token_in: CAKE2, token_out: WBNB, token_in_symbol: "CAKE2", token_out_symbol: "WBNB", token_in_amount: verified.entry ? formatUnits(verified.cakeOut, 18) : verified.exit ? formatUnits(verified.cakeIn, 18) : null, token_out_amount: verified.entry ? formatUnits(verified.wbnbIn, 18) : verified.exit ? formatUnits(verified.wbnbOut, 18) : null, fee: verified.pool?.fee ?? null, pool: verified.pool?.pool ?? null };
+    const market = { verified_onchain: Boolean(verified.entry || verified.exit), token_in: CAKE2, token_out: WBNB, token_in_symbol: "CAKE2", token_out_symbol: "WBNB", token_in_amount: formatUnits(verified.cakeOut || verified.wbnbOut, 18), token_out_amount: formatUnits(verified.wbnbIn || verified.cakeIn, 18), fee: verified.pool?.fee ?? null, pool: verified.pool?.pool ?? null };
+    const accounting = resultPnl ? { capital_deployed: market.token_in_amount, capital_deployed_token: "CAKE2", realized_pnl: resultPnl.realizedPnlCake2, realized_pnl_token: "CAKE2", unrealized_pnl: resultPnl.unrealizedPnlCake2, unrealized_pnl_token: "CAKE2", total_pnl: resultPnl.totalPnlCake2, total_pnl_token: "CAKE2", pnl_percentage: resultPnl.pnlPercentage, pnl_status: "live_mark_to_market", pnl_basis: "Verified BSC Testnet swap receipt + live PancakeSwap V3 mark" } : { capital_deployed: market.token_in_amount, capital_deployed_token: "CAKE2", realized_pnl: "0", realized_pnl_token: "CAKE2", unrealized_pnl: null, unrealized_pnl_token: "CAKE2", total_pnl: null, total_pnl_token: "CAKE2", pnl_percentage: null, pnl_status: "unpriced", pnl_basis: "Verified BSC Testnet swap receipt; live mark unavailable" };
 
-    try {
-      await supabase.from("execution_capital_execution_evidence").upsert({ execution_id: `provider-execution-${chainJobId}`, job_id: jobQuery.data.id, transaction_hash: txHash, chain_id: 97, executor_status: "verified_onchain", receipt_verified: true, evidence: { source, execution, market, pnl: resultPnl } }, { onConflict: "execution_id" });
-    } catch {}
+    const { error: evidenceError } = await supabase.from("execution_capital_execution_evidence").upsert({ execution_capital_request_id: request?.id || null, job_id: jobQuery.data.id, chain_id: 97, execution_id: `provider-execution-${chainJobId}`, calls_id: null, executor_status: "verified_onchain", transaction_hash: txHash, receipt: execution, receipt_verified: true, calls: [], source, recorded_at: new Date().toISOString() }, { onConflict: "execution_capital_request_id,execution_id" });
+    if (evidenceError) throw new Error(evidenceError.message);
 
-    return res.status(200).json({ ok: true, observed: true, job_id: chainJobId, network: "bsc-testnet", chain_id: 97, transaction_hash: txHash, source, result_verified: resultVerified, execution, market, pnl: resultPnl });
+    return res.status(200).json({ ok: true, observed: true, job_id: chainJobId, network: "bsc-testnet", chain_id: 97, transaction_hash: txHash, execution, market, accounting, source });
   } catch (error) {
-    console.error("Execution evidence verification failed", { chainJobId, error });
-    return res.status(500).json({ error: error instanceof Error ? error.message : "Execution evidence verification failed", route: "execution-evidence", job_id: chainJobId });
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to verify execution evidence" });
   }
 }
