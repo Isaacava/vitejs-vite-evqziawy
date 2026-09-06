@@ -22,6 +22,23 @@ async function normalizeExecutionEvidenceJob(req: VercelRequest, route: string) 
   req.query = { ...req.query, job: String(data.chain_job_id) };
 }
 
+async function normalizeExecutionCapitalJob(req: VercelRequest, route: string) {
+  if (!new Set(["execution-capital-requirement", "execution-authorization-status"]).has(route)) return;
+  const rawJob = typeof req.query?.job === "string" ? req.query.job.trim() : "";
+  if (!rawJob || !/^\d+$/.test(rawJob)) return;
+
+  const supabase = serverClient();
+  const { data, error } = await supabase
+    .from("jobs")
+    .select("id,chain_job_id")
+    .eq("chain_job_id", Number(rawJob))
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data?.id) throw new Error("Marketplace job could not be resolved from the ERC-8183 chain job ID");
+
+  req.query = { ...req.query, job: String(data.id) };
+}
+
 async function loadHandler(route: string): Promise<Handler | null> {
   switch (route) {
     case "active-quote": return (await import("../server/_testnet/active-quote.js")).default as Handler;
@@ -62,6 +79,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const route = typeof req.query?.route === "string" ? req.query.route : "";
   try {
     await normalizeExecutionEvidenceJob(req, route);
+    await normalizeExecutionCapitalJob(req, route);
     const target = !((req.method === "GET") || req.query?.action === "verify" || req.body?.action === "verify") && route === "execution-capital"
       ? (await import("../server/_testnet/execution-authorization-prepare.js")).default as Handler
       : await loadHandler(route);
