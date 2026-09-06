@@ -40,7 +40,7 @@ function findTransactionHash(value) {
   if (!value || typeof value !== "object") return null;
   const record = object(value);
   for (const key of ["transaction_hash", "transactionHash", "tx_hash", "txHash"]) if (isHash(record[key])) return record[key];
-  for (const key of ["execution_result", "receipt", "response", "content", "result", "metadata"]) { const hash = findTransactionHash(record[key]); if (hash) return hash; }
+  for (const key of ["execution_result", "execution", "receipt", "response", "content", "result", "metadata"]) { const hash = findTransactionHash(record[key]); if (hash) return hash; }
   return null;
 }
 
@@ -67,17 +67,27 @@ async function findPool(receipt) {
   return null;
 }
 
-async function classify(txHash, wallet) {
+async function classify(txHash, preferredWallet) {
   const receipt = await publicClient.getTransactionReceipt({ hash: txHash });
-  if (receipt.status !== "success") return null;
+  const tx = await publicClient.getTransaction({ hash: txHash });
+  const receiptVerified = receipt.status === "success";
+  if (!receiptVerified) return { receipt, tx, receiptVerified: false, wallet: preferredWallet, transfers: [], pool: null, cakeOut: 0n, cakeIn: 0n, wbnbIn: 0n, wbnbOut: 0n, entry: false, exit: false };
+
   const transfers = decodeTransfers(receipt);
-  const normalizedWallet = String(wallet).toLowerCase();
-  const cakeOut = transfers.filter((entry) => entry.token.toLowerCase() === CAKE2.toLowerCase() && entry.from.toLowerCase() === normalizedWallet && entry.value > 0n).reduce((sum, entry) => sum + entry.value, 0n);
-  const cakeIn = transfers.filter((entry) => entry.token.toLowerCase() === CAKE2.toLowerCase() && entry.to.toLowerCase() === normalizedWallet && entry.value > 0n).reduce((sum, entry) => sum + entry.value, 0n);
-  const wbnbIn = transfers.filter((entry) => entry.token.toLowerCase() === WBNB.toLowerCase() && entry.to.toLowerCase() === normalizedWallet && entry.value > 0n).reduce((sum, entry) => sum + entry.value, 0n);
-  const wbnbOut = transfers.filter((entry) => entry.token.toLowerCase() === WBNB.toLowerCase() && entry.from.toLowerCase() === normalizedWallet && entry.value > 0n).reduce((sum, entry) => sum + entry.value, 0n);
+  const candidateWallets = [...new Set([preferredWallet, tx.from].filter(isAddress).map((value) => value.toLowerCase()))];
   const pool = await findPool(receipt);
-  return { receipt, pool, cakeOut, cakeIn, wbnbIn, wbnbOut, entry: cakeOut > 0n && wbnbIn > 0n, exit: wbnbOut > 0n && cakeIn > 0n };
+  let best = null;
+
+  for (const wallet of candidateWallets) {
+    const cakeOut = transfers.filter((entry) => entry.token.toLowerCase() === CAKE2.toLowerCase() && entry.from.toLowerCase() === wallet && entry.value > 0n).reduce((sum, entry) => sum + entry.value, 0n);
+    const cakeIn = transfers.filter((entry) => entry.token.toLowerCase() === CAKE2.toLowerCase() && entry.to.toLowerCase() === wallet && entry.value > 0n).reduce((sum, entry) => sum + entry.value, 0n);
+    const wbnbIn = transfers.filter((entry) => entry.token.toLowerCase() === WBNB.toLowerCase() && entry.to.toLowerCase() === wallet && entry.value > 0n).reduce((sum, entry) => sum + entry.value, 0n);
+    const wbnbOut = transfers.filter((entry) => entry.token.toLowerCase() === WBNB.toLowerCase() && entry.from.toLowerCase() === wallet && entry.value > 0n).reduce((sum, entry) => sum + entry.value, 0n);
+    const candidate = { wallet, cakeOut, cakeIn, wbnbIn, wbnbOut, entry: cakeOut > 0n && wbnbIn > 0n, exit: wbnbOut > 0n && cakeIn > 0n };
+    if (!best || Number(candidate.entry || candidate.exit) > Number(best.entry || best.exit) || (candidate.cakeOut + candidate.wbnbOut) > (best.cakeOut + best.wbnbOut)) best = candidate;
+  }
+
+  return { receipt, tx, receiptVerified: true, wallet: best?.wallet || (isAddress(preferredWallet) ? preferredWallet.toLowerCase() : tx.from), transfers, pool, cakeOut: best?.cakeOut || 0n, cakeIn: best?.cakeIn || 0n, wbnbIn: best?.wbnbIn || 0n, wbnbOut: best?.wbnbOut || 0n, entry: Boolean(best?.entry), exit: Boolean(best?.exit) };
 }
 
 async function loadProviderResult(supabase, chainJobId, clientWallet, providerWallet) {
@@ -152,20 +162,20 @@ export default async function handler(req, res) {
     const storedEvidence = object(request?.evidence);
     let txHash = isHash(storedEvidence?.last_execution?.transaction_hash) ? storedEvidence.last_execution.transaction_hash : null;
     let source = txHash ? "execution_capital_request" : "";
+    let verification = { deliverable_matches: false, candidate_hash: null, provider_result: false };
 
     if (!txHash) {
-      // The provider response is bound to the hiring client. Using the provider
-      // wallet here can produce a different byte-for-byte response and therefore
-      // a different keccak256 than the ERC-8183 deliverable commitment.
       const providerResult = await loadProviderResult(supabase, chainJobId, String(auth.user.wallet_address), String(chainJob.provider));
       if (providerResult) {
+        verification.provider_result = true;
         const rawText = providerResult.rawText || "";
         const computed = keccak256(new TextEncoder().encode(rawText));
-        const deliverableMatches = String(chainJob.deliverable).toLowerCase() === computed.toLowerCase();
+        verification.deliverable_matches = String(chainJob.deliverable).toLowerCase() === computed.toLowerCase();
         let content;
         try { content = JSON.parse(rawText); } catch { content = rawText; }
         const candidate = findTransactionHash(content);
-        if (candidate && deliverableMatches) { txHash = candidate; source = "verified_provider_result"; }
+        verification.candidate_hash = candidate;
+        if (candidate && verification.deliverable_matches) { txHash = candidate; source = "verified_provider_result"; }
       }
     }
 
@@ -182,23 +192,28 @@ export default async function handler(req, res) {
       }
     }
 
-    if (!txHash) return res.status(200).json({ ok: true, observed: false, job_id: chainJobId, network: "bsc-testnet", chain_id: 97, source: "agentmarket_independent_bsc_rpc_verification", message: "No verified provider execution transaction is available yet." });
+    if (!txHash) return res.status(200).json({ ok: true, observed: false, job_id: chainJobId, network: "bsc-testnet", chain_id: 97, source: "agentmarket_independent_bsc_rpc_verification", verification, message: "No transaction hash is anchored by a verified provider result yet." });
 
     const executionWallet = isAddress(request?.user_execution_wallet) ? request.user_execution_wallet : String(auth.user.wallet_address);
-    let verified = null;
-    try { verified = await classify(txHash, executionWallet); } catch {}
-    if (!verified) return res.status(200).json({ ok: true, observed: false, job_id: chainJobId, network: "bsc-testnet", chain_id: 97, transaction_hash: txHash, source, message: "A provider execution transaction was identified, but its successful BSC Testnet receipt could not yet be independently verified." });
+    let verified;
+    try { verified = await classify(txHash, executionWallet); } catch (error) {
+      return res.status(200).json({ ok: true, observed: false, job_id: chainJobId, network: "bsc-testnet", chain_id: 97, transaction_hash: txHash, source, verification, error: error instanceof Error ? error.message : "RPC verification failed", message: "A transaction hash was identified but BSC Testnet receipt verification failed." });
+    }
 
-    const resultPnl = await calculatePnl(verified);
-    const tx = await publicClient.getTransaction({ hash: txHash });
-    const execution = { status: verified.receipt.status, block_number: verified.receipt.blockNumber.toString(), block_hash: verified.receipt.blockHash, gas_used: verified.receipt.gasUsed.toString(), execution_wallet: executionWallet, tx_from: tx.from, tx_to: tx.to, entry: verified.entry, exit: verified.exit, receipt_verified: true };
-    const market = { verified_onchain: Boolean(verified.entry || verified.exit), token_in: CAKE2, token_out: WBNB, token_in_symbol: "CAKE2", token_out_symbol: "WBNB", token_in_amount: formatUnits(verified.cakeOut || verified.wbnbOut, 18), token_out_amount: formatUnits(verified.wbnbIn || verified.cakeIn, 18), fee: verified.pool?.fee ?? null, pool: verified.pool?.pool ?? null };
-    const accounting = resultPnl ? { capital_deployed: market.token_in_amount, capital_deployed_token: "CAKE2", realized_pnl: resultPnl.realizedPnlCake2, realized_pnl_token: "CAKE2", unrealized_pnl: resultPnl.unrealizedPnlCake2, unrealized_pnl_token: "CAKE2", total_pnl: resultPnl.totalPnlCake2, total_pnl_token: "CAKE2", pnl_percentage: resultPnl.pnlPercentage, pnl_status: "live_mark_to_market", pnl_basis: "Verified BSC Testnet swap receipt + live PancakeSwap V3 mark" } : { capital_deployed: market.token_in_amount, capital_deployed_token: "CAKE2", realized_pnl: "0", realized_pnl_token: "CAKE2", unrealized_pnl: null, unrealized_pnl_token: "CAKE2", total_pnl: null, total_pnl_token: "CAKE2", pnl_percentage: null, pnl_status: "unpriced", pnl_basis: "Verified BSC Testnet swap receipt; live mark unavailable" };
+    const receiptVerified = verified.receiptVerified === true;
+    const resultPnl = receiptVerified ? await calculatePnl(verified) : null;
+    const executionWalletObserved = verified.wallet || executionWallet;
+    const tx = verified.tx;
+    const execution = { status: verified.receipt.status, block_number: verified.receipt.blockNumber?.toString?.() || null, block_hash: verified.receipt.blockHash || null, gas_used: verified.receipt.gasUsed?.toString?.() || null, execution_wallet: executionWalletObserved, tx_from: tx.from, tx_to: tx.to, entry: verified.entry, exit: verified.exit, receipt_verified: receiptVerified };
+    const market = { verified_onchain: Boolean(receiptVerified && (verified.entry || verified.exit)), receipt_verified: receiptVerified, token_in: CAKE2, token_out: WBNB, token_in_symbol: "CAKE2", token_out_symbol: "WBNB", token_in_amount: formatUnits(verified.cakeOut || verified.wbnbOut, 18), token_out_amount: formatUnits(verified.wbnbIn || verified.cakeIn, 18), fee: verified.pool?.fee ?? null, pool: verified.pool?.pool ?? null, transfer_count: verified.transfers.length };
+    const accounting = resultPnl ? { capital_deployed: market.token_in_amount, capital_deployed_token: "CAKE2", realized_pnl: resultPnl.realizedPnlCake2, realized_pnl_token: "CAKE2", unrealized_pnl: resultPnl.unrealizedPnlCake2, unrealized_pnl_token: "CAKE2", total_pnl: resultPnl.totalPnlCake2, total_pnl_token: "CAKE2", pnl_percentage: resultPnl.pnlPercentage, pnl_status: "live_mark_to_market", pnl_basis: "Verified BSC Testnet swap receipt + live PancakeSwap V3 mark" } : { capital_deployed: market.token_in_amount, capital_deployed_token: "CAKE2", realized_pnl: "0", realized_pnl_token: "CAKE2", unrealized_pnl: null, unrealized_pnl_token: "CAKE2", total_pnl: null, total_pnl_token: "CAKE2", pnl_percentage: null, pnl_status: receiptVerified ? "unpriced" : "unverified", pnl_basis: receiptVerified ? "Verified BSC Testnet transaction receipt" : "Provider transaction identified but receipt unverified" };
 
-    const { error: evidenceError } = await supabase.from("execution_capital_execution_evidence").upsert({ execution_capital_request_id: request?.id || null, job_id: jobQuery.data.id, chain_id: 97, execution_id: `provider-execution-${chainJobId}`, calls_id: null, executor_status: "verified_onchain", transaction_hash: txHash, receipt: execution, receipt_verified: true, calls: [], source, recorded_at: new Date().toISOString() }, { onConflict: "execution_capital_request_id,execution_id" });
-    if (evidenceError) throw new Error(evidenceError.message);
+    if (receiptVerified) {
+      const { error: evidenceError } = await supabase.from("execution_capital_execution_evidence").upsert({ execution_capital_request_id: request?.id || null, job_id: jobQuery.data.id, chain_id: 97, execution_id: `provider-execution-${chainJobId}`, calls_id: null, executor_status: "verified_onchain", transaction_hash: txHash, receipt: execution, receipt_verified: true, calls: [], source, recorded_at: new Date().toISOString() }, { onConflict: "execution_capital_request_id,execution_id" });
+      if (evidenceError) throw new Error(evidenceError.message);
+    }
 
-    return res.status(200).json({ ok: true, observed: true, job_id: chainJobId, network: "bsc-testnet", chain_id: 97, transaction_hash: txHash, execution, market, accounting, source });
+    return res.status(200).json({ ok: true, observed: receiptVerified, job_id: chainJobId, network: "bsc-testnet", chain_id: 97, transaction_hash: txHash, execution, market, accounting, source, verification, observation_mode: receiptVerified ? (market.verified_onchain ? "receipt_and_asset_effect" : "receipt_only") : "unverified" });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to verify execution evidence" });
   }
