@@ -6,6 +6,7 @@ async function loadHandler(route: string): Promise<Handler | null> {
   switch (route) {
     case "active-quote": return (await import("../server/_testnet/active-quote.js")).default as Handler;
     case "auto-settlement": return (await import("../server/_testnet/auto-settlement.js")).default as Handler;
+    case "erc8183-indexer": return (await import("../server/_testnet/erc8183-indexer.js")).default as Handler;
     case "erc8183-settlement": return (await import("../server/_testnet/erc8183-settlement.js")).default as Handler;
     case "erc8183": return (await import("../server/_testnet/erc8183.js")).default as Handler;
     case "execution-capital": return (await import("../server/_testnet/execution-capital.js")).default as Handler;
