@@ -12,7 +12,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") { res.setHeader("Allow", "GET"); return res.status(405).json({ error: "Method not allowed" }); }
   try {
     const auth = await getAuthenticatedUser(req);
-    if (!auth) return res.status(401).json({ error: "Authenticated AgentMarket session required" });
+    if (!auth) return res.status(401).json({ ok: false, error: "Authenticated AgentMarket session required" });
     const chainJobIdRaw = typeof req.query?.job === "string" ? req.query.job.trim() : "";
     if (!/^\d+$/.test(chainJobIdRaw)) return res.status(400).json({ ok: false, error: "job must be a numeric ERC-8183 job id" });
     const chainJobId = Number(chainJobIdRaw);
@@ -29,9 +29,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (taskError) throw new Error(taskError.message);
     if (!task?.agent_id) return res.status(409).json({ ok: false, error: "Job does not identify a provider agent" });
 
-    const { data: agent, error: agentError } = await supabase.from("agents").select("id,agent_id,metadata").eq("id", task.agent_id).maybeSingle();
+    const { data: agent, error: agentError } = await supabase.from("agents").select("id,agent_id,name,metadata").eq("id", task.agent_id).maybeSingle();
     if (agentError) throw new Error(agentError.message);
     if (!agent) return res.status(404).json({ ok: false, error: "Provider agent not found" });
+
+    const provider = {
+      agent_id: agent.agent_id,
+      name: typeof agent.name === "string" && agent.name.trim() ? agent.name.trim() : null,
+    };
 
     const { data: endpoints, error: endpointError } = await supabase.from("agent_endpoints")
       .select("endpoint_url,protocol,status,metadata")
@@ -54,7 +59,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const body = object(result.body);
         lastAttempt = { endpoint: result.endpoint, method: result.method, transport: result.transport, status: result.status, body };
         if (body.execution_required !== undefined || body.decision !== undefined || body.approved !== undefined || body.verdict !== undefined) {
-          return res.status(200).json({ ok: true, source_url: result.endpoint, operation: { action: operation.action, endpoint: result.endpoint, method: operation.method, transport: operation.transport, name: operation.name }, ...body });
+          return res.status(200).json({ ok: true, source_url: result.endpoint, provider, operation: { action: operation.action, endpoint: result.endpoint, method: operation.method, transport: operation.transport, name: operation.name }, ...body });
         }
         lastError = `Provider decision operation returned HTTP ${result.status} without a decision payload.`;
       } catch (error) {
@@ -62,7 +67,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         lastAttempt = { endpoint: operation.endpoint, method: operation.method, transport: operation.transport, error: lastError };
       }
     }
-    return res.status(202).json({ ok: false, pending: true, error: lastError, attempt: lastAttempt });
+    return res.status(202).json({ ok: false, pending: true, error: lastError, provider, attempt: lastAttempt });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : "Unable to resolve provider execution decision" });
   }
