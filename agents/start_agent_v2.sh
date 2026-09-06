@@ -108,6 +108,10 @@ def manifest(base):
     if wallet_scope:
         execution_metadata["wallet_scope"] = wallet_scope
 
+    capability_schema = getattr(module, "CAPABILITY_SCHEMA", None)
+    if not isinstance(capability_schema, dict):
+        capability_schema = None
+
     result = {
       "spec": "agent-provider/v1",
       "name": display,
@@ -116,12 +120,12 @@ def manifest(base):
       "agent": {"provider": "AgentMarket first-party"},
       "protocols": ["erc-8183", "http"],
       "networks": [{"chain_id": 97, "name": "BSC Testnet", "environment": "testnet"}],
-      "capabilities": [{"id": cap_id, "name": cap_name, "description": cap_desc, "metadata": {"agent_kind": kind}}],
+      "capabilities": [{"id": cap_id, "name": cap_name, "description": cap_desc, "metadata": {"agent_kind": kind, **({"input_schema": capability_schema} if capability_schema else {})}}],
       "endpoints": endpoints,
       "hiring": {"protocol": "ERC-8183", "quote_required": "quote" in endpoints, "quote_ttl_seconds": 300},
       "execution": execution_metadata,
       "discovery": {"canonical_url": base + "/agent.json", "agent_card": base + "/agent.json"},
-      "metadata": {"discovery": "agent-provider/v1", "generated_by": "shared-agent-runtime"},
+      "metadata": {"discovery": "agent-provider/v1", "generated_by": "shared-agent-runtime", **({"capability_schema": capability_schema} if capability_schema else {})},
     }
     price = getattr(module, "SERVICE_PRICE", None)
     if price is not None:

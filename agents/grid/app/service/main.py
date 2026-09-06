@@ -27,6 +27,19 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger("grid_agent")
 config = validate_runtime_config()
 
+
+# Machine-readable task contract consumed by AgentMarket discovery.
+CAPABILITY_SCHEMA = {
+    "type": "object",
+    "inputs": [
+        {"name": "lower_price", "required": True, "type": "number", "description": "Lower grid price."},
+        {"name": "upper_price", "required": True, "type": "number", "description": "Upper grid price; must be greater than lower_price."},
+        {"name": "grid_levels", "required": True, "type": "integer", "description": "Number of grid levels, from 2 to 100."},
+        {"name": "notional", "required": True, "type": "number", "description": "Total Testnet settlement notional."},
+        {"name": "max_slippage_bps", "required": False, "type": "integer", "default": 50, "description": "Maximum swap slippage in basis points; capped at 150."},
+    ],
+}
+
 _STORAGE_DIR = Path(os.getenv("STORAGE_LOCAL_PATH") or ".agent-data")
 _EXECUTION_INTERNAL_URL = (os.getenv("GRID_EXECUTION_INTERNAL_URL") or "http://127.0.0.1:8788").rstrip("/")
 _wallet = EVMWalletProvider(password=os.environ["WALLET_PASSWORD"], private_key=os.environ.get("PRIVATE_KEY"))
@@ -191,8 +204,9 @@ async def _on_funded(job: dict[str, Any]) -> None:
         raise
 
 
-async def _proxy_execution(request: Request, endpoint: str) -> Response:
-    body = None if request.method in {"GET", "HEAD"} else await request.body()
+async def _proxy_execution(request: Request, endpoint: str, method: str | None = None) -> Response:
+    upstream_method = method or request.method
+    body = None if upstream_method in {"GET", "HEAD"} else await request.body()
     headers: dict[str, str] = {}
     for name in ("authorization", "content-type", "accept"):
         value = request.headers.get(name)
@@ -200,7 +214,7 @@ async def _proxy_execution(request: Request, endpoint: str) -> Response:
             headers[name] = value
     try:
         async with httpx.AsyncClient(timeout=90.0) as client:
-            upstream = await client.request(request.method, f"{_EXECUTION_INTERNAL_URL}{endpoint}", headers=headers, content=body)
+            upstream = await client.request(upstream_method, f"{_EXECUTION_INTERNAL_URL}{endpoint}", headers=headers, content=body)
     except httpx.HTTPError as exc:
         logger.exception("Grid local execution service unavailable")
         raise HTTPException(status_code=503, detail="Grid execution service unavailable") from exc
@@ -277,7 +291,7 @@ async def execution_authorization(job_id: int, request: Request) -> Response:
         raise HTTPException(status_code=400, detail="job_id must be positive")
     query = request.url.query
     separator = "&" if query else ""
-    return await _proxy_execution(request, f"/execution-capabilities?job_id={job_id}{separator}{query}" if query else f"/execution-capabilities?job_id={job_id}")
+    return await _proxy_execution(request, f"/execution-capabilities?job_id={job_id}{separator}{query}" if query else f"/execution-capabilities?job_id={job_id}", method="GET")
 
 
 @app.get("/erc8183/execution-health")
