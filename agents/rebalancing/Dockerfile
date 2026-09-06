@@ -29,5 +29,6 @@ ENV EXECUTION_AGENT_KIND=rebalancing
 ENV AGENT_APP_MODULE=app.service.open_main:app
 ENV ALTANA_EXECUTION_INTERNAL_URL=http://127.0.0.1:8788
 # Shared provider manifest launcher: /agent.json + /erc8183/agent.json.
+# Force a fresh Railway build after runtime configuration correction.
 EXPOSE 8000
 CMD ["/app/start_agent.sh"]
