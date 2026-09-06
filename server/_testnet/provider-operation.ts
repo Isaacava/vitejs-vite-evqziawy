@@ -1,3 +1,5 @@
+import { discoverAgentProviderManifest, manifestOperation, type AgentProviderOperation } from "./agent-provider-manifest.js";
+
 type EndpointRecord = {
   endpoint_url: string;
   protocol: string;
@@ -130,9 +132,27 @@ function explicitOperations(metadata: Record<string, unknown>, action: ProviderA
 }
 
 export async function resolveProviderOperation(endpoint: EndpointRecord, action: ProviderAction): Promise<ProviderOperation | null> {
-  // Runtime routing is intentionally sourced from the current Supabase agent_endpoints
-  // metadata. The marketplace must not replace provider-declared operations with guessed
-  // routes or with a freshly fetched manifest that may disagree with the indexed metadata.
+  // The provider's live manifest is authoritative for routing and method. Indexed
+  // Supabase metadata remains a compatibility fallback when live discovery fails.
+  try {
+    const manifest = await discoverAgentProviderManifest(endpoint);
+    const live = manifest ? manifestOperation(manifest, action) : null;
+    if (live && ["http", "https", "a2a"].includes(String(live.transport || "").toLowerCase())) {
+      const normalized: AgentProviderOperation = live;
+      return {
+        action,
+        endpoint: normalized.url,
+        method: String(normalized.method || "POST").toUpperCase(),
+        transport: String(normalized.transport || "http").toLowerCase(),
+        name: text(normalized.name) || action,
+        inputSchema: normalized.inputSchema || null,
+        metadata: normalized.metadata || {},
+      };
+    }
+  } catch {
+    // Preserve compatibility with indexed provider metadata when live discovery is unavailable.
+  }
+
   const endpointMetadata = object(endpoint.metadata);
   const declared = explicitOperations(endpointMetadata, action)
     .map((value) => normalizeOperation(action, value))
