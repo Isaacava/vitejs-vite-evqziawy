@@ -64,12 +64,13 @@ function endpointCandidates(agentEndpoints: JsonRecord[], agent: JsonRecord): st
   ])];
 }
 
-async function discoverExecutionCapability(agent: JsonRecord, endpoints: JsonRecord[], chainJobId: number): Promise<JsonRecord | null> {
+async function discoverExecutionCapability(agent: JsonRecord, endpoints: JsonRecord[], chainJobId?: number): Promise<JsonRecord | null> {
   for (const candidate of endpointCandidates(endpoints, agent)) {
     for (const withJobId of [false, true]) {
       try {
         const url = new URL(candidate);
-        if (withJobId) url.searchParams.set("job_id", String(chainJobId));
+        if (withJobId && Number(chainJobId || 0) > 0) url.searchParams.set("job_id", String(chainJobId));
+        if (withJobId && Number(chainJobId || 0) <= 0) continue;
         const response = await fetch(url, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(8000) });
         if (!response.ok) continue;
         const raw = await response.text();
@@ -78,7 +79,7 @@ async function discoverExecutionCapability(agent: JsonRecord, endpoints: JsonRec
         if (String(value.network || "").toLowerCase() !== "bsc-testnet" || Number(value.chain_id ?? value.chainId) !== CHAIN_ID) continue;
         return { ...value, source_url: url.toString() };
       } catch {
-        // Try the next provider-declared capability location.
+        // Try the next provider-declared capability endpoint.
       }
     }
   }
@@ -122,9 +123,6 @@ async function loadExecutionBinding(agent: JsonRecord, endpoints: JsonRecord[], 
     .eq("user_id", userId)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  if (!validActiveAltanaWallet(executionWallet as JsonRecord | null)) {
-    throw new Error("This provider requires Altana execution authorization, but the user's active Altana execution wallet is not provisioned. Provision the wallet before creating the ERC-8183 job.");
-  }
   if (!capability) {
     throw new Error("This provider requires Altana execution authorization, but its provider-declared execution capability could not be verified before creating the ERC-8183 job.");
   }
@@ -132,6 +130,27 @@ async function loadExecutionBinding(agent: JsonRecord, endpoints: JsonRecord[], 
   const now = Math.floor(Date.now() / 1000);
   const rawExpiry = Number(capability.session_expiry || 0);
   const sessionExpiry = Number.isSafeInteger(rawExpiry) && rawExpiry > now ? rawExpiry : now + DEFAULT_SESSION_SECONDS;
+  const walletIsActive = validActiveAltanaWallet(executionWallet as JsonRecord | null);
+  if (!walletIsActive) {
+    return {
+      version: 1,
+      wallet_provider: "altana",
+      authorization_model: "scoped_session",
+      execution_wallet: null,
+      wallet_status: "not_provisioned",
+      authorization_pending: true,
+      chain_id: CHAIN_ID,
+      allowed_targets: Array.isArray(capability.allowed_targets) ? capability.allowed_targets : [],
+      allowed_selectors: Array.isArray(capability.allowed_selectors) ? capability.allowed_selectors : [],
+      session_binding: "erc8183_job_id",
+      session_expiry: sessionExpiry,
+      ...(text(capability.protocol) ? { protocol: text(capability.protocol).toLowerCase() } : {}),
+      ...(text(capability.preflight_path).startsWith("/") ? { preflight_path: text(capability.preflight_path) } : {}),
+      ...(capability.execution_market && typeof capability.execution_market === "object" ? { execution_market: capability.execution_market } : {}),
+      capability_source_url: text(capability.source_url),
+    };
+  }
+
   return {
     version: 1,
     wallet_provider: "altana",
@@ -207,7 +226,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (rawBudget <= 0n) return res.status(409).json({ error: "Accepted provider quote has a non-positive price" });
     if (BigInt(balance) < rawBudget) return res.status(409).json({ error: `Insufficient Testnet settlement-token balance. Required ${formatUnits(rawBudget, Number(decimals))} ${symbol}.`, required_raw: rawBudget.toString(), balance_raw: String(balance) });
 
-    const executionBinding = await loadExecutionBinding(agent as JsonRecord, endpoints, auth.user.id, Number((quote.request_metadata as JsonRecord)?.provider_chain_id ? (quote.request_metadata as JsonRecord).provider_chain_id : 0) || 0);
+    const executionBinding = await loadExecutionBinding(agent as JsonRecord, endpoints, auth.user.id, 0);
     const providerEndpoint = text(endpoints[0]?.endpoint_url) || null;
     const providerProtocol = text(endpoints[0]?.protocol) || null;
     const metadata = object(agent.metadata);
@@ -261,7 +280,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         wallet_provider: walletProvider || null,
         authorization_model: authorizationModel || null,
         chain_id: CHAIN_ID,
-        authorization_in_job_context: Boolean(executionBinding),
+        authorization_in_job_context: Boolean(executionBinding?.execution_wallet),
+        authorization_pending: executionBinding?.authorization_pending === true,
         required: executionRequired,
         provider_endpoint_online: endpoints[0]?.status === "online",
         capability_source_url: text(executionBinding?.capability_source_url) || null,
@@ -282,13 +302,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         protocol: "erc-8183",
         agent_blocker: false,
         execution_capability_discovery_required_before_hire: executionRequired,
-        execution_authorization_embedded: Boolean(executionBinding),
+        execution_authorization_embedded: Boolean(executionBinding?.execution_wallet),
+        execution_authorization_pending: executionBinding?.authorization_pending === true,
       },
-      note: executionBinding
+      note: executionBinding?.execution_wallet
         ? "AgentMarket created an open ERC-8183 hire and embedded the provider-declared execution authorization before job creation."
-        : executionRequired
-          ? "Provider-declared execution is required, but no reusable user authorization contract was invented. The provider must publish a verifiable authorization model before this job can be created."
-          : "AgentMarket created an open ERC-8183 hire using only the provider-declared task contract; no execution-capital semantics were imposed.",
+        : executionBinding?.authorization_pending
+          ? "AgentMarket created an open ERC-8183 hire. Provider-declared execution authorization is pending until the buyer provisions an active Altana execution wallet."
+          : executionRequired
+            ? "Provider-declared execution is required, but authorization remains provider-controlled and must be established before execution can begin."
+            : "AgentMarket created an open ERC-8183 hire using only the provider-declared task contract; no execution-capital semantics were imposed.",
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to prepare the accepted Testnet quote";
