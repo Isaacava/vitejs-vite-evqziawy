@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 type Props = { jobId: string; jobBudget: string | number | null; jobCurrency: string; onRequested?: () => void };
 type Requirement = { execution_capital?: { token?: string; symbol?: string; required_amount?: string }; execution_market?: { token_in_symbol?: string; token_out_symbol?: string; fee?: number | null } };
-type Decision = { execution_required?: boolean; authorization_required?: boolean; decision?: { action?: string; [key: string]: unknown }; observation?: Record<string, unknown>; error?: string; pending?: boolean; provider?: { name?: string | null; agent_id?: string | null } };
+type Decision = { execution_required?: boolean; authorization_required?: boolean; decision?: { action?: string; source?: string; [key: string]: unknown }; observation?: Record<string, unknown>; error?: string; pending?: boolean; provider?: { name?: string | null; agent_id?: string | null } };
 type JobLookup = { job?: { id?: string; chain_job_id?: number | null; status?: string }; chain?: { chain_job_id?: number | null }; task?: { title?: string | null; role?: string | null }; agent?: { name?: string | null; agent_id?: string | null }; provider?: { name?: string | null; agent_id?: string | null } };
 
 export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Props) {
@@ -70,7 +70,7 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
           return;
         }
       } catch {
-        // Keep polling until the provider publishes its decision.
+        // Keep polling until the provider metadata/operation is available.
       }
       if (active) timer = window.setTimeout(() => void refreshDecision(), 2000);
     };
@@ -97,6 +97,7 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
 
   const symbol = requirement?.execution_capital?.symbol || requirement?.execution_market?.token_in_symbol || "execution token";
   const action = decision?.decision?.action || "state-changing action";
+  const decisionSource = decision?.decision?.source || decision?.observation?.source || "provider metadata";
 
   async function requestCapital() {
     const amount = 1;
@@ -132,12 +133,12 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
     <section className="border border-line rounded-[16px_8px_18px_9px] bg-paper p-5">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <small className="block font-mono text-[8.5px] uppercase tracking-widest text-brass mb-1.5">Execution Capital · Agent Decision</small>
+          <small className="block font-mono text-[8.5px] uppercase tracking-widest text-brass mb-1.5">Execution Capital · Provider Decision</small>
           <h3 className="font-display text-[18px] font-bold m-0">{status === "not_required" ? "No execution authorization required" : "Execution authorization required"}</h3>
           <p className="text-[11px] text-inksoft mt-1.5 max-w-[620px]">
             {status === "not_required"
-              ? `${providerLabel} evaluated the funded job and chose an observation-only action, so no execution-capital request is created.`
-              : `${providerLabel} evaluated the funded job and chose ${action}. AgentMarket is preparing authorization only because that decision requires a state-changing action.`}
+              ? `${providerLabel} declared an observation-only path for this funded job, so no execution-capital request is created.`
+              : `${providerLabel} declared a state-changing execution path (${action}). AgentMarket is preparing authorization from the provider operation declared in Supabase metadata.`}
           </p>
         </div>
         <span className="font-mono text-[9px] px-2.5 py-1 rounded-lg status-brass">{status === "not_required" ? "NOT REQUIRED" : status === "requested" ? "WAITING" : status === "submitting" ? "PREPARING" : "DECIDING"}</span>
@@ -145,17 +146,17 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
 
       {decision?.decision && (
         <div className="grid sm:grid-cols-3 gap-3 mt-5">
-          <div className="border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-3.5"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Agent decision</small><strong className="font-mono text-[11px]">{action}</strong></div>
+          <div className="border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-3.5"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Provider decision</small><strong className="font-mono text-[11px]">{action}</strong></div>
           <div className="border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-3.5"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Execution capital</small><strong className="font-mono text-[11px]">{status === "not_required" ? "Not required" : `${capital} ${symbol}`}</strong></div>
-          <div className="border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-3.5"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Duration</small><strong className="font-mono text-[11px]">{status === "not_required" ? "—" : `${durationHours}h`}</strong></div>
+          <div className="border border-line rounded-[12px_7px_13px_8px] bg-paperhi p-3.5"><small className="block font-mono text-[8px] uppercase text-[#8a8477] mb-1">Decision source</small><strong className="font-mono text-[10px] break-words">{decisionSource}</strong></div>
         </div>
       )}
 
       {!chainJobId && status === "waiting_decision" && <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi px-4 py-3 text-[11px] text-inksoft">Resolving the live ERC-8183 job ID…</div>}
-      {chainJobId && status === "waiting_decision" && <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi px-4 py-3 text-[11px] text-inksoft">Waiting for {providerLabel} to evaluate the funded job…</div>}
+      {chainJobId && status === "waiting_decision" && <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi px-4 py-3 text-[11px] text-inksoft">Reading {providerLabel} decision/authorization metadata…</div>}
       {status === "submitting" && <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi px-4 py-3 text-[11px] text-inksoft">Preparing the authorization record…</div>}
       {status === "requested" && <div className="mt-4 border border-green/30 bg-green/5 rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]"><strong className="text-green">Authorization request ready.</strong> Continue to the Altana wallet gate below. {providerLabel} remains paused until the grant is verified.</div>}
-      {status === "not_required" && <div className="mt-4 border border-green/30 bg-green/5 rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]"><strong className="text-green">Observation-only execution.</strong> The agent will submit its result without an execution-capital request.</div>}
+      {status === "not_required" && <div className="mt-4 border border-green/30 bg-green/5 rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]"><strong className="text-green">Observation-only execution.</strong> The provider does not require an execution-capital request for this path.</div>}
       {error && <div className="mt-4 border border-[#cfad9f] bg-rustsoft text-rust rounded-[12px_7px_13px_8px] p-3 text-[11px] break-words"><strong className="block mb-1">Authorization preparation failed.</strong>{error}</div>}
       <p className="mt-4 text-[10px] text-inksoft">No token transfer, allowance, execution, or on-chain submission is performed by this preparation step.</p>
     </section>
