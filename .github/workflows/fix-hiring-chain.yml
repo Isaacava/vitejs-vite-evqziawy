@@ -1,0 +1,168 @@
+name: Repair generic hiring and execution readiness
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Patch provider routing, Altana readiness, and CI runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          # AgentMarket must separate ERC-8183 hiring from optional/pending
+          # execution authorization. A provider can require Altana for execution
+          # without preventing the buyer from creating the ERC-8183 job.
+          path = Path('server/_testnet/prepare-quote-open-v2.ts')
+          text = path.read_text()
+
+          text2 = text.replace(
+              'async function discoverExecutionCapability(agent: JsonRecord, endpoints: JsonRecord[], chainJobId: number): Promise<JsonRecord | null> {',
+              'async function discoverExecutionCapability(agent: JsonRecord, endpoints: JsonRecord[], chainJobId?: number): Promise<JsonRecord | null> {'
+          )
+          if text2 == text:
+              raise SystemExit('discoverExecutionCapability signature not found')
+          text = text2
+
+          text2 = text.replace(
+              '        if (withJobId) url.searchParams.set("job_id", String(chainJobId));',
+              '        if (withJobId && Number(chainJobId || 0) > 0) url.searchParams.set("job_id", String(chainJobId));\n        if (withJobId && Number(chainJobId || 0) <= 0) continue;'
+          )
+          if text2 == text:
+              raise SystemExit('execution capability job-id probe not found')
+          text = text2
+
+          old_call = '''    const executionBinding = await loadExecutionBinding(agent as JsonRecord, endpoints, auth.user.id, Number((quote.request_metadata as JsonRecord)?.provider_chain_id ? (quote.request_metadata as JsonRecord).provider_chain_id : 0) || 0);'''
+          new_call = '''    const executionBinding = await loadExecutionBinding(agent as JsonRecord, endpoints, auth.user.id, 0);'''
+          if old_call in text:
+              text = text.replace(old_call, new_call, 1)
+          else:
+              raise SystemExit('provider-chain execution binding call not found')
+
+          old_gate = '''  const { data: executionWallet, error } = await supabase
+    .from("altana_execution_wallets")
+    .select("wallet_address,status,chain_id,wallet_provider,authorization_model")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!validActiveAltanaWallet(executionWallet as JsonRecord | null)) {
+    throw new Error("This provider requires Altana execution authorization, but the user's active Altana execution wallet is not provisioned. Provision the wallet before creating the ERC-8183 job.");
+  }
+  if (!capability) {
+    throw new Error("This provider requires Altana execution authorization, but its provider-declared execution capability could not be verified before creating the ERC-8183 job.");
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const rawExpiry = Number(capability.session_expiry || 0);
+  const sessionExpiry = Number.isSafeInteger(rawExpiry) && rawExpiry > now ? rawExpiry : now + DEFAULT_SESSION_SECONDS;
+  return {
+    version: 1,
+    wallet_provider: "altana",
+    authorization_model: "scoped_session",
+    execution_wallet: executionWallet.wallet_address,
+    chain_id: CHAIN_ID,
+'''
+          new_gate = '''  const { data: executionWallet, error } = await supabase
+    .from("altana_execution_wallets")
+    .select("wallet_address,status,chain_id,wallet_provider,authorization_model")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!capability) {
+    throw new Error("This provider requires Altana execution authorization, but its provider-declared execution capability could not be verified before creating the ERC-8183 job.");
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const rawExpiry = Number(capability.session_expiry || 0);
+  const sessionExpiry = Number.isSafeInteger(rawExpiry) && rawExpiry > now ? rawExpiry : now + DEFAULT_SESSION_SECONDS;
+  const walletIsActive = validActiveAltanaWallet(executionWallet as JsonRecord | null);
+  if (!walletIsActive) {
+    return {
+      version: 1,
+      wallet_provider: "altana",
+      authorization_model: "scoped_session",
+      execution_wallet: null,
+      wallet_status: "not_provisioned",
+      authorization_pending: true,
+      chain_id: CHAIN_ID,
+      allowed_targets: Array.isArray(capability.allowed_targets) ? capability.allowed_targets : [],
+      allowed_selectors: Array.isArray(capability.allowed_selectors) ? capability.allowed_selectors : [],
+      session_binding: "erc8183_job_id",
+      session_expiry: sessionExpiry,
+'''
+          if old_gate not in text:
+              raise SystemExit('Altana hiring gate block not found')
+          text = text.replace(old_gate, new_gate, 1)
+
+          # The returned execution state must distinguish embedded authorization
+          # from pending authorization instead of treating both as equivalent.
+          text = text.replace(
+              'authorization_in_job_context: Boolean(executionBinding),',
+              'authorization_in_job_context: Boolean(executionBinding?.execution_wallet),\n      authorization_pending: executionBinding?.authorization_pending === true,'
+          )
+          text = text.replace(
+              'execution_authorization_embedded: Boolean(executionBinding),',
+              'execution_authorization_embedded: Boolean(executionBinding?.execution_wallet),\n        execution_authorization_pending: executionBinding?.authorization_pending === true,'
+          )
+
+          old_note = '''      note: executionBinding
+        ? "AgentMarket created an open ERC-8183 hire and embedded the provider-declared execution authorization before job creation."
+        : executionRequired
+          ? "Provider-declared execution is required, but no reusable user authorization contract was invented. The provider must publish a verifiable authorization model before this job can be created."
+          : "AgentMarket created an open ERC-8183 hire using only the provider-declared task contract; no execution-capital semantics were imposed.",'''
+          new_note = '''      note: executionBinding?.execution_wallet
+        ? "AgentMarket created an open ERC-8183 hire and embedded the provider-declared execution authorization before job creation."
+        : executionBinding?.authorization_pending
+          ? "AgentMarket created an open ERC-8183 hire. Provider-declared execution authorization is pending until the buyer provisions an active Altana execution wallet."
+          : executionRequired
+            ? "Provider-declared execution is required, but authorization remains provider-controlled and must be established before execution can begin."
+            : "AgentMarket created an open ERC-8183 hire using only the provider-declared task contract; no execution-capital semantics were imposed.",'''
+          if old_note in text:
+              text = text.replace(old_note, new_note, 1)
+
+          path.write_text(text)
+
+          # Keep the marketplace build on the same Node LTS generation used by
+          # the provider runtime. This avoids an unrelated setup-node failure.
+          workflow = Path('.github/workflows/testnet-build.yml')
+          wtext = workflow.read_text()
+          wtext2 = wtext.replace('node-version: 24', 'node-version: 20')
+          if wtext2 == wtext:
+              raise SystemExit('testnet-build Node version marker not found')
+          workflow.write_text(wtext2)
+
+          # Validate the structural edits without requiring npm/network access.
+          repaired = path.read_text()
+          required_markers = [
+              'authorization_pending: true',
+              'authorization_in_job_context: Boolean(executionBinding?.execution_wallet)',
+              'execution_authorization_pending: executionBinding?.authorization_pending === true',
+              'discoverExecutionCapability(agent: JsonRecord, endpoints: JsonRecord[], chainJobId?: number)',
+          ]
+          for marker in required_markers:
+              if marker not in repaired:
+                  raise SystemExit(f'missing repaired marker: {marker}')
+          if 'node-version: 24' in workflow.read_text():
+              raise SystemExit('Node 24 still present in marketplace build workflow')
+          PY
+
+          # This workflow is intentionally self-removing after applying the
+          # durable source changes.
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/fix-hiring-chain.yml
+          git add server/_testnet/prepare-quote-open-v2.ts .github/workflows/testnet-build.yml
+          git commit -m 'fix: separate ERC-8183 hiring from execution authorization'
+          git push
