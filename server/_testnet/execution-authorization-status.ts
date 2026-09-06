@@ -32,7 +32,7 @@ function readJobScopedAuthorization(description: unknown) {
   return { authorized, executionWallet, version: sourceRaw.version ?? null, walletProvider: walletProvider || null, authorizationModel: authorizationModel || null, chainId: Number.isFinite(chainId) ? chainId : null, allowedTargets, allowedSelectors, sessionBinding: sessionBinding || null, source: Object.keys(authorization).length === 0 ? "legacy_erc8183_job_context" : "erc8183_job_context" };
 }
 
-async function loadProviderAuthorization(job: any, agentId: string, chainJobId: number) {
+async function loadProviderAuthorization(job: any, agentId: string, chainJobId: number): Promise<JsonRecord | null> {
   const supabase = serverClient();
   const { data: endpoints, error } = await supabase.from("agent_endpoints").select("endpoint_url,protocol,status,metadata").eq("agent_id", agentId).order("last_checked_at", { ascending: false }).limit(20);
   if (error) return null;
@@ -43,7 +43,7 @@ async function loadProviderAuthorization(job: any, agentId: string, chainJobId: 
       const result = await invokeProviderOperation(operation, { chain_job_id: chainJobId, job_id: chainJobId, client_wallet: job.client, provider_wallet: job.provider, network: "bsc-testnet" });
       if (result.status < 200 || result.status >= 300) continue;
       const body = recordObject(result.body);
-      return { ...body, source: "provider_operation", endpoint: result.endpoint, method: result.method, transport: result.transport } as JsonRecord;
+      return { ...body, source: "provider_operation", endpoint: result.endpoint, method: result.method, transport: result.transport };
     } catch {
       // Try the next provider-declared authorization operation.
     }
@@ -68,7 +68,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { data: job, error: jobError } = await supabase.from("jobs").select("id,chain_job_id,provider_agent_id").eq("chain_job_id", Number(jobId)).maybeSingle();
     if (jobError) return res.status(500).json({ ok: false, error: jobError.message });
 
-    const providerAuth = job?.provider_agent_id ? await loadProviderAuthorization(chainJob, String(job.provider_agent_id), Number(jobId)) : null;
+    const providerAuth: JsonRecord | null = job?.provider_agent_id ? await loadProviderAuthorization(chainJob, String(job.provider_agent_id), Number(jobId)) : null;
     const providerAuthObject = recordObject(providerAuth);
     const providerAuthExecution = recordObject(providerAuthObject.execution);
     const providerAuthRequired = providerAuthObject.authorization_required === true || providerAuthObject.required === true || providerAuthObject.status === "authorization_required";
