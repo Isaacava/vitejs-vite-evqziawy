@@ -6,6 +6,8 @@ underlying Altana execution service when a job id is supplied.
 """
 from __future__ import annotations
 
+from urllib.parse import parse_qs, urlencode
+
 from fastapi import HTTPException, Request
 
 from app.service import main as service_main
@@ -23,8 +25,19 @@ app.router.routes = [
 
 
 async def execution_capabilities(request: Request):
-    query = request.url.query
-    upstream_path = "/execution-capabilities" + (f"?{query}" if query else "")
+    params = parse_qs(request.url.query, keep_blank_values=False)
+    # The marketplace request can legitimately contain both the UUID marketplace
+    # job_id and the numeric ERC-8183 chain_job_id. The execution runtime derives
+    # request-scoped session keys from the numeric chain job only, so never forward
+    # the marketplace UUID under `job_id` when a chain_job_id is available.
+    chain_job_id = (params.get("chain_job_id") or params.get("chainJobId") or [""])[0].strip()
+    job_id = (params.get("job_id") or params.get("jobId") or [""])[0].strip()
+    selected_job_id = chain_job_id or job_id
+    if selected_job_id:
+        upstream_query = urlencode({"job_id": selected_job_id})
+    else:
+        upstream_query = ""
+    upstream_path = "/execution-capabilities" + (f"?{upstream_query}" if upstream_query else "")
     try:
         return service_main.proxy_get(upstream_path)
     except Exception as exc:
