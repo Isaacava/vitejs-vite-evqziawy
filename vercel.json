@@ -2,7 +2,8 @@
   "rewrites": [
     { "source": "/api/8004scan", "destination": "/api/marketplace?route=8004scan" },
     { "source": "/api/agents/register", "destination": "/api/marketplace?route=agent-register" },
-    { "source": "/api/auto-settlement", "destination": "/api/erc8183-indexer?mode=settlement" },
+    { "source": "/api/auto-settlement", "destination": "/api/testnet?route=auto-settlement" },
+    { "source": "/api/erc8183-indexer", "destination": "/api/testnet?route=erc8183-indexer" },
     { "source": "/api/auth/nonce", "destination": "/api/auth?action=nonce" },
     { "source": "/api/auth/verify", "destination": "/api/auth?action=verify" },
     { "source": "/api/auth/me", "destination": "/api/auth?action=me" },
