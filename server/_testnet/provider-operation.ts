@@ -185,6 +185,10 @@ function selectBody(action: ProviderAction, body: Record<string, unknown>) {
 }
 
 function materializeEndpoint(endpoint: string, body: Record<string, unknown>) {
+  // URL() serializes braces in provider-declared templates to %7B...%7D. Decode only
+  // the known job placeholder tokens so declared operation paths can still be materialized,
+  // without decoding arbitrary percent-encoded provider path data.
+  const template = endpoint.replace(/%7B(job_id|jobId|chain_job_id|chainJobId|id)%7D/gi, "{$1}");
   // Provider operation job IDs refer to the provider/protocol job, i.e. the numeric
   // ERC-8183 job ID when one is present. The marketplace's internal Supabase UUID is
   // still included in the request body for correlation, but must not be substituted
@@ -196,7 +200,7 @@ function materializeEndpoint(endpoint: string, body: Record<string, unknown>) {
     chainJobId: ["chainJobId", "chain_job_id", "provider_job_id", "jobId", "job_id"],
     id: ["chain_job_id", "chainJobId", "provider_job_id", "job_id", "jobId"],
   };
-  return endpoint.replace(/\{(job_id|jobId|chain_job_id|chainJobId|id)\}/g, (match, key: string) => {
+  return template.replace(/\{(job_id|jobId|chain_job_id|chainJobId|id)\}/g, (match, key: string) => {
     const value = aliases[key]?.map((candidate) => body[candidate]).find((candidate) => candidate !== undefined && candidate !== null);
     if (value === undefined) throw new Error(`Provider operation endpoint contains unresolved placeholder ${match}`);
     return encodeURIComponent(String(value));
