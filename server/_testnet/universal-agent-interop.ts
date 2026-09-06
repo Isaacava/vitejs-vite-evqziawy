@@ -227,6 +227,7 @@ export async function discoverUniversalAgentInterop(
 export function pickOperation(interop: UniversalAgentInterop, kind: AgentOperationKind): AgentOperation | null {
   const ranked = interop.operations
     .filter((operation) => operation.kind === kind)
+    .filter((operation) => kind === "execute" || kind === "preflight" ? operation.evidence !== "inferred" : true)
     .sort((a, b) => {
       const score = (operation: AgentOperation) => operation.evidence === "explicit" ? 3 : operation.evidence === "strong" ? 2 : 1;
       return score(b) - score(a);
