@@ -69,6 +69,13 @@ def pick(candidates, preferred):
     return None, None
 
 
+def env_bool(name, fallback):
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return fallback
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def manifest(base):
     base = base.rstrip("/")
     endpoint_specs = {
@@ -85,6 +92,22 @@ def manifest(base):
         path, method = pick(candidates, preferred)
         if path:
             endpoints[name] = {"url": base + path, "method": method, "transport": "http", "capability": cap_id}
+
+    execute_present = "execute" in endpoints
+    authorization_present = "authorization" in endpoints
+    execution_mode = (os.getenv("AGENT_EXECUTION_MODE") or ("provider-watcher" if execute_present else "request-response")).strip()
+    authorization_model = (os.getenv("AGENT_AUTHORIZATION_MODEL") or ("provider-declared" if authorization_present else "none")).strip()
+    wallet_scope = (os.getenv("AGENT_WALLET_SCOPE") or "").strip()
+
+    execution_metadata = {
+      "mode": execution_mode,
+      "authorization": authorization_model,
+      "state_changing": env_bool("AGENT_STATE_CHANGING", execute_present),
+      "user_approval_required": env_bool("AGENT_USER_APPROVAL_REQUIRED", authorization_present),
+    }
+    if wallet_scope:
+        execution_metadata["wallet_scope"] = wallet_scope
+
     result = {
       "spec": "agent-provider/v1",
       "name": display,
@@ -96,7 +119,7 @@ def manifest(base):
       "capabilities": [{"id": cap_id, "name": cap_name, "description": cap_desc, "metadata": {"agent_kind": kind}}],
       "endpoints": endpoints,
       "hiring": {"protocol": "ERC-8183", "quote_required": "quote" in endpoints, "quote_ttl_seconds": 300},
-      "execution": {"mode": "provider-watcher", "authorization": "erc8183-funded-job"},
+      "execution": execution_metadata,
       "discovery": {"canonical_url": base + "/agent.json", "agent_card": base + "/agent.json"},
       "metadata": {"discovery": "agent-provider/v1", "generated_by": "shared-agent-runtime"},
     }
