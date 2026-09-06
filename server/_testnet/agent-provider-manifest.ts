@@ -102,9 +102,13 @@ function manifestCandidates(endpoint: EndpointRecord): string[] {
 
   const base = endpoint.endpoint_url.replace(/\/+$/, "");
   const bases = discoveryBaseCandidates(endpoint.endpoint_url);
+
+  // Canonical provider manifests must be attempted before legacy ERC-8183 roots.
+  // The legacy root exposes endpoint paths as plain strings and cannot faithfully
+  // preserve per-operation HTTP methods; treating it as authoritative can turn a
+  // declared GET operation (for example /job/{job_id}/decision) into POST.
   const candidates: string[] = [
     ...explicit,
-    endpoint.endpoint_url,
     `${base}/agent.json`,
     `${base}/.well-known/agent.json`,
     `${base}/.well-known/agent-provider.json`,
@@ -112,12 +116,16 @@ function manifestCandidates(endpoint: EndpointRecord): string[] {
 
   for (const candidateBase of bases) {
     candidates.push(
-      candidateBase,
       `${candidateBase}/agent.json`,
       `${candidateBase}/.well-known/agent.json`,
       `${candidateBase}/.well-known/agent-provider.json`,
     );
   }
+
+  // Keep legacy roots as compatibility fallbacks only, after canonical manifests.
+  candidates.push(endpoint.endpoint_url, base);
+  for (const candidateBase of bases) candidates.push(candidateBase);
+
   return unique(candidates);
 }
 
@@ -181,19 +189,15 @@ function normalizeManifest(raw: JsonObject, manifestUrl: string): AgentProviderM
   if (raw.spec !== "agent-provider/v1") return null;
   const name = text(raw.name);
   const version = text(raw.version);
-  const protocols = Array.isArray(raw.protocols) ? unique(raw.protocols.map((value) => typeof value === "string" ? value : null)) : [];
-  const capabilities = Array.isArray(raw.capabilities)
-    ? raw.capabilities.filter((value): value is JsonObject => Boolean(value && typeof value === "object" && !Array.isArray(value))).map(object)
-    : [];
-  if (!name || !version || protocols.length === 0 || capabilities.length === 0) return null;
-
+  const protocols = Array.isArray(raw.protocols) ? raw.protocols.filter((value): value is string => typeof value === "string" && value.trim().length > 0) : [];
+  if (!name || !version || protocols.length === 0) return null;
   const rawEndpoints = object(raw.endpoints);
   const endpoints: Record<string, AgentProviderOperation> = {};
-  for (const operation of Object.keys(rawEndpoints)) {
-    const normalized = normalizeOperation(rawEndpoints[operation], manifestUrl);
-    if (normalized) endpoints[operation] = normalized;
+  for (const key of OPERATIONS) {
+    const operation = normalizeOperation(rawEndpoints[key], manifestUrl);
+    if (operation) endpoints[key] = operation;
   }
-
+  const rawCapabilities = Array.isArray(raw.capabilities) ? raw.capabilities.filter((value) => value && typeof value === "object") as JsonObject[] : [];
   return {
     spec: "agent-provider/v1",
     name,
@@ -201,8 +205,8 @@ function normalizeManifest(raw: JsonObject, manifestUrl: string): AgentProviderM
     version,
     agent: object(raw.agent),
     protocols,
-    networks: Array.isArray(raw.networks) ? raw.networks.filter((value): value is JsonObject => Boolean(value && typeof value === "object" && !Array.isArray(value))).map(object) : undefined,
-    capabilities,
+    networks: Array.isArray(raw.networks) ? raw.networks.filter((value) => value && typeof value === "object") as JsonObject[] : [],
+    capabilities: rawCapabilities,
     endpoints,
     hiring: object(raw.hiring),
     execution: object(raw.execution),
@@ -213,54 +217,39 @@ function normalizeManifest(raw: JsonObject, manifestUrl: string): AgentProviderM
   };
 }
 
-function metadataCapabilities(endpoint: EndpointRecord): JsonObject[] {
-  const metadata = object(endpoint.metadata);
-  const candidates = [metadata.capabilities, metadata.capability_profile, metadata.provider_capabilities];
-  for (const candidate of candidates) {
-    if (!Array.isArray(candidate)) continue;
-    const values = candidate
-      .filter((value): value is JsonObject => Boolean(value && typeof value === "object" && !Array.isArray(value)))
-      .map(object);
-    if (values.length > 0) return values;
-  }
-  return [];
+function metadataCapabilities(agent: JsonObject) {
+  const metadata = object(agent.metadata);
+  const candidates = [metadata.capabilities, metadata.agent_capabilities, metadata.skills];
+  return candidates.flatMap((value) => Array.isArray(value) ? value.filter((item) => item && typeof item === "object") as JsonObject[] : []);
 }
 
-function syntheticCapability(document: JsonObject, endpoint: EndpointRecord): JsonObject {
-  const metadata = object(endpoint.metadata);
-  const kind = text(document.agent_kind) || text(metadata.agent_kind) || text(document.service) || "agent-provider";
-  const name = text(document.service) || text(document.agent_kind) || kind;
+function syntheticCapability(raw: JsonObject, endpoint: EndpointRecord): JsonObject {
   return {
-    id: `legacy:${kind}`,
-    kind: "task_submission",
-    name,
-    description: `Legacy ERC-8183 provider capability discovered from ${endpoint.endpoint_url}`,
-    transport: "http",
-    protocol: "erc8183",
-    source_type: "legacy_erc8183_root",
+    id: text(raw.agent_kind) || text(raw.service) || "legacy-erc8183-provider",
+    name: text(raw.service) || text(raw.agent_kind) || "Legacy ERC-8183 Provider",
+    description: text(raw.description) || `Legacy ERC-8183 provider discovered from ${endpoint.endpoint_url}`,
+    metadata: { source: "legacy-erc8183-root" },
   };
 }
 
 function normalizeLegacyErc8183Root(raw: JsonObject, endpoint: EndpointRecord, sourceUrl: string): AgentProviderManifest | null {
   const rawEndpoints = object(raw.endpoints);
-  const endpointEntries = Object.keys(rawEndpoints);
-  const looksLikeErc8183 = endpointEntries.length > 0
-    && (text(raw.service)?.toLowerCase().includes("erc-8183") || text(raw.service)?.toLowerCase().includes("erc8183") || text(raw.network) === "bsc-testnet" || raw.chain_id === 97 || endpointEntries.some((key) => ["negotiate", "execution_capabilities", "job_response"].includes(key)));
-  if (!looksLikeErc8183) return null;
-
-  const endpoints: Record<string, AgentProviderOperation> = {};
+  if (Object.keys(rawEndpoints).length === 0) return null;
   const aliases: Record<string, OperationName> = {
     health: "health",
-    quote: "quote",
     negotiate: "quote",
+    quote: "quote",
     decision: "decision",
     authorization: "authorization",
+    execution_authorization: "authorization",
     preflight: "preflight",
     execute: "execute",
-    result: "result",
     job_response: "result",
+    response: "result",
+    result: "result",
   };
-
+  const endpoints: Record<string, AgentProviderOperation> = {};
+  const endpointEntries = Object.keys(rawEndpoints);
   for (const key of endpointEntries) {
     const operation = aliases[key];
     if (!operation) continue;
@@ -268,7 +257,6 @@ function normalizeLegacyErc8183Root(raw: JsonObject, endpoint: EndpointRecord, s
     if (!normalized || endpoints[operation]) continue;
     endpoints[operation] = normalized;
   }
-
   if (!endpoints.health) {
     const fallback = normalizeOperation("/erc8183/health", sourceUrl);
     if (fallback) endpoints.health = fallback;
