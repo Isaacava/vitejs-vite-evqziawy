@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 type Props = { jobId: string; jobBudget: string | number | null; jobCurrency: string; onRequested?: () => void };
 type Requirement = { execution_capital?: { token?: string; symbol?: string; required_amount?: string }; execution_market?: { token_in_symbol?: string; token_out_symbol?: string; fee?: number | null } };
-type Decision = { execution_required?: boolean; authorization_required?: boolean; decision?: { action?: string; [key: string]: unknown }; observation?: Record<string, unknown>; error?: string; pending?: boolean };
+type Decision = { execution_required?: boolean; authorization_required?: boolean; decision?: { action?: string; [key: string]: unknown }; observation?: Record<string, unknown>; error?: string; pending?: boolean; provider?: { name?: string | null; agent_id?: string | null } };
 type JobLookup = { job?: { id?: string; chain_job_id?: number | null; status?: string }; chain?: { chain_job_id?: number | null }; task?: { title?: string | null; role?: string | null }; agent?: { name?: string | null; agent_id?: string | null }; provider?: { name?: string | null; agent_id?: string | null } };
 
 export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Props) {
@@ -54,6 +54,8 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
         const response = await fetch(`/api/testnet?route=execution-decision&job=${encodeURIComponent(chainJobId)}`, { credentials: "include", cache: "no-store" });
         const body = await response.json().catch(() => null) as Decision | null;
         if (!active) return;
+        if (body?.provider?.name) setProviderLabel(body.provider.name);
+        if (body?.provider?.agent_id && !body.provider.name) setProviderLabel(body.provider.agent_id);
         if (body?.decision) setDecision(body);
         if (response.ok && body?.decision) {
           if (body.execution_required) {
