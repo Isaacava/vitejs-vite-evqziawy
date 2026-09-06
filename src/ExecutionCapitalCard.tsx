@@ -65,7 +65,7 @@ function observed(value?: string | null) {
   return value === null || value === undefined || value === "" ? "Not yet observed" : displayObservedNumber(value);
 }
 
-function pnlLabel(value?: string | null, token = "CAKE2") {
+function pnlLabel(value?: string | null, token = "execution token") {
   if (value === null || value === undefined || value === "") return "Not yet calculated";
   const numeric = Number(value);
   if (Number.isFinite(numeric)) return `${numeric >= 0 ? "+" : ""}${value} ${token}`.trim();
@@ -87,7 +87,6 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
     }
     let active = true;
     let timer: number | undefined;
-    let requestAttempted = false;
     const refresh = async () => {
       if (!active) return;
       setAuthorizationLookupPending(true);
@@ -111,12 +110,8 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
         const response = await fetch(`/api/testnet?route=execution-authorization-status&job=${encodeURIComponent(chainJobId)}`, { credentials: "include", cache: "no-store" });
         const body = await response.json().catch(() => null) as { status?: string; authorization?: JobScopedAuthorization | null } | null;
         if (!active) return;
-        if (response.ok && body?.status === "job_scoped_authorized" && body.authorization?.source === "erc8183_job_context") {
-          setJobScopedAuthorization(body.authorization);
-        } else {
-          setJobScopedAuthorization(null);
-        }
-
+        if (response.ok && body?.status === "job_scoped_authorized" && body.authorization?.source === "erc8183_job_context") setJobScopedAuthorization(body.authorization);
+        else setJobScopedAuthorization(null);
       } catch {
         if (active) setJobScopedAuthorization(null);
       } finally {
@@ -129,10 +124,7 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
   }, [marketplaceJobId, request]);
 
   const authorizationVerified = request ? isVerifiedAuthorization(request) : false;
-  const hasJobScopedAuthorization = Boolean(
-    jobScopedAuthorization?.source === "erc8183_job_context" &&
-    jobScopedAuthorization.execution_wallet,
-  );
+  const hasJobScopedAuthorization = Boolean(jobScopedAuthorization?.source === "erc8183_job_context" && jobScopedAuthorization.execution_wallet);
   const rawStatus = request?.status || "not_requested";
   const status = hasJobScopedAuthorization
     ? "JOB-SCOPED AUTHORIZED"
@@ -144,8 +136,9 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
         ? "SYNCING"
         : "NOT REQUESTED";
   const executionObserved = Boolean(onchainExecution?.observed && onchainExecution.market?.verified_onchain);
+  const market = onchainExecution?.market;
   const deployed = executionObserved
-    ? `${onchainExecution?.accounting?.capital_deployed || onchainExecution?.market?.token_in_amount || "—"} ${onchainExecution?.accounting?.capital_deployed_token || onchainExecution?.market?.token_in_symbol || ""}`.trim()
+    ? `${onchainExecution?.accounting?.capital_deployed || market?.token_in_amount || "—"} ${onchainExecution?.accounting?.capital_deployed_token || market?.token_in_symbol || ""}`.trim()
     : observed(request?.capital_deployed);
 
   const accounting = onchainExecution?.accounting;
@@ -155,7 +148,7 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
     : pnlStatus === "live_mark_to_market"
       ? "unrealized"
       : "pending";
-  const pnlToken = accounting?.unrealized_pnl_token || accounting?.realized_pnl_token || "CAKE2";
+  const pnlToken = accounting?.unrealized_pnl_token || accounting?.realized_pnl_token || market?.token_in_symbol || "execution token";
   const pnlValue = pnlMode === "realized" ? accounting?.realized_pnl : accounting?.unrealized_pnl;
   const pnlTitle = pnlMode === "realized" ? "Realized P&L" : pnlMode === "unrealized" ? "Unrealized P&L" : "P&L";
   const pnlDisplay = executionObserved && pnlValue
@@ -196,13 +189,13 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
             <div>
               <small className="mb-1 block font-mono text-[8px] uppercase tracking-widest text-brass">Execution evidence</small>
               <strong className="block text-[12.5px] font-bold">Verified on BSC Testnet</strong>
-              <span className="mt-0.5 block text-[10px] text-inksoft">The execution receipt and market details were independently observed on-chain.</span>
+              <span className="mt-0.5 block text-[10px] text-inksoft">The execution receipt and any declared execution effects were independently observed on-chain.</span>
             </div>
             {executionProofUrl && <a className="shrink-0 text-[10px] font-bold text-brass no-underline" href={executionProofUrl} target="_blank" rel="noreferrer">View proof ↗</a>}
           </div>
           <div className="grid gap-2 text-[10px] sm:grid-cols-2">
-            <div><strong>Actual execution:</strong> {onchainExecution?.market?.token_in_amount} {onchainExecution?.market?.token_in_symbol} → {onchainExecution?.market?.token_out_amount} {onchainExecution?.market?.token_out_symbol}</div>
-            <div><strong>Pool fee:</strong> {onchainExecution?.market?.fee ?? "Not independently identified"}</div>
+            <div><strong>Actual execution:</strong> {market?.token_in_amount || "Observed"} {market?.token_in_symbol || "execution asset"} → {market?.token_out_amount || "Observed"} {market?.token_out_symbol || "result asset"}</div>
+            <div><strong>Pool fee:</strong> {market?.fee ?? "Not independently identified"}</div>
             <div><strong>Block:</strong> {onchainExecution?.execution?.block_number || "—"}</div>
             <div><strong>Receipt:</strong> {onchainExecution?.execution?.status || "—"}</div>
           </div>
@@ -214,22 +207,22 @@ export default function ExecutionCapitalCard({ request, onchainExecution }: Exec
           <small className="mb-2 block font-mono text-[8px] uppercase tracking-widest text-brass">P&amp;L basis</small>
           <div className="grid gap-2 text-[10px] sm:grid-cols-2">
             <div><strong>Mode:</strong> {pnlMode === "realized" ? "Realized" : pnlMode === "unrealized" ? "Unrealized mark-to-market" : "Pending"}</div>
-            <div><strong>Total P&amp;L:</strong> {accounting.total_pnl ? pnlLabel(accounting.total_pnl, accounting.total_pnl_token || "CAKE2") : "—"}</div>
+            <div><strong>Total P&amp;L:</strong> {accounting.total_pnl ? pnlLabel(accounting.total_pnl, accounting.total_pnl_token || market?.token_in_symbol || "execution token") : "—"}</div>
             <div className="sm:col-span-2"><strong>Basis:</strong> {accounting.pnl_basis || "Independent onchain accounting"}</div>
           </div>
         </div>
       )}
 
       <div className="mb-4 flex flex-wrap gap-2">
-        <span className="rounded-full border border-line bg-paperhi px-2 py-1 font-mono text-[9px] text-inksoft">wallet: {request?.wallet_provider || jobScopedAuthorization?.wallet_provider || "altana"}</span>
-        <span className="rounded-full border border-line bg-paperhi px-2 py-1 font-mono text-[9px] text-inksoft">authorization: {hasJobScopedAuthorization ? "scoped_session · ERC-8183 job context" : "scoped_session"}</span>
+        <span className="rounded-full border border-line bg-paperhi px-2 py-1 font-mono text-[9px] text-inksoft">wallet: {request?.wallet_provider || jobScopedAuthorization?.wallet_provider || "provider-declared"}</span>
+        <span className="rounded-full border border-line bg-paperhi px-2 py-1 font-mono text-[9px] text-inksoft">authorization: {jobScopedAuthorization?.authorization_model || request?.authorization_model || "provider-declared"}</span>
         {request?.duration_seconds !== null && request?.duration_seconds !== undefined && <span className="rounded-full border border-line bg-paperhi px-2 py-1 font-mono text-[9px] text-inksoft">Duration {Math.round(request.duration_seconds / 3600)}h</span>}
       </div>
 
       {sessionGrantProofUrl && <div className="border-t border-dashed border-line pt-3 text-[10px] text-inksoft"><strong className="text-green">Authorization verified</strong><span> · Your execution permission was recorded on BSC Testnet.</span> <a className="font-bold text-brass no-underline" href={sessionGrantProofUrl} target="_blank" rel="noreferrer">View proof ↗</a></div>}
       {hasJobScopedAuthorization && <p className="mb-0 text-[10px] text-inksoft">No separate execution capital request has been observed. Job-scoped execution authorization is present in the ERC-8183 context; execution capital remains separate from the job payment.</p>}
       {!request && !hasJobScopedAuthorization && <p className="mb-0 text-[10px] text-inksoft">No execution capital request has been observed yet. ERC-8183 job budget remains separate.</p>}
-      {request && !hasJobScopedAuthorization && <p className="mb-0 mt-3 text-[10px] text-inksoft">P&amp;L is calculated from independently observed onchain execution evidence. Open positions use a live PancakeSwap V3 mark; realized P&amp;L requires a verified closing execution.</p>}
+      {request && !hasJobScopedAuthorization && <p className="mb-0 mt-3 text-[10px] text-inksoft">P&amp;L is derived from the execution evidence and accounting data published for this job, when those data are independently verifiable.</p>}
     </section>
   );
 }
