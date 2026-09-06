@@ -72,6 +72,24 @@ function resolveUrl(value: string, base: string) {
   }
 }
 
+function normalizeProviderOperationUrl(value: string, manifestUrl: string) {
+  try {
+    const resolved = new URL(value);
+    const manifest = new URL(manifestUrl);
+    if (
+      manifest.protocol === "https:" &&
+      resolved.protocol === "http:" &&
+      resolved.hostname === manifest.hostname &&
+      resolved.port === manifest.port
+    ) {
+      resolved.protocol = "https:";
+    }
+    return resolved.toString();
+  } catch {
+    return value;
+  }
+}
+
 function discoveryBaseCandidates(endpointUrl: string): string[] {
   try {
     const parsed = new URL(endpointUrl);
@@ -156,14 +174,16 @@ async function fetchManifest(url: string): Promise<JsonObject> {
 function normalizeOperation(value: unknown, manifestUrl: string): AgentProviderOperation | null {
   if (typeof value === "string") {
     const url = resolveUrl(value, manifestUrl);
-    return url ? { url, method: "POST", transport: "http", metadata: {} } : null;
+    if (!url) return null;
+    return { url: normalizeProviderOperationUrl(url, manifestUrl), method: "POST", transport: "http", metadata: {} };
   }
   const raw = object(value);
   const candidate = [raw.url, raw.endpoint, raw.endpoint_url, raw.uri, raw.serviceEndpoint, raw.service_endpoint]
     .find((item): item is string => typeof item === "string" && item.trim().length > 0);
   if (!candidate) return null;
-  const url = resolveUrl(candidate, manifestUrl);
-  if (!url) return null;
+  const resolvedUrl = resolveUrl(candidate, manifestUrl);
+  if (!resolvedUrl) return null;
+  const url = normalizeProviderOperationUrl(resolvedUrl, manifestUrl);
   const declaredMethods = Array.isArray(raw.methods)
     ? raw.methods.filter((method): method is string => typeof method === "string")
     : [text(raw.method)].filter((method): method is string => Boolean(method));
