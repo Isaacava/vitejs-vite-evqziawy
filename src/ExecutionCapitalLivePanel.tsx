@@ -105,11 +105,13 @@ export default function ExecutionCapitalLivePanel({ request }: Props) {
   const verifiedExecution = Boolean(execution?.observed && market?.verified_onchain);
   const amountIn = market?.token_in_amount || "Not yet observed";
   const amountOut = market?.token_out_amount || "Not yet observed";
-  const tokenInSymbol = market?.token_in_symbol || "CAKE2";
-  const tokenOutSymbol = market?.token_out_symbol || "WBNB";
 
   const capability = object(request.evidence?.execution_capability);
   const capabilityMarket = object(capability.execution_market);
+  const tokenInSymbol = market?.token_in_symbol
+    || (typeof capabilityMarket.token_in_symbol === "string" ? capabilityMarket.token_in_symbol : "execution asset");
+  const tokenOutSymbol = market?.token_out_symbol
+    || (typeof capabilityMarket.token_out_symbol === "string" ? capabilityMarket.token_out_symbol : "result asset");
   const capabilitySourceUrl = typeof capability.source_url === "string" ? capability.source_url.trim() : "";
   const sessionAddress = typeof capability.session_key_address === "string" ? capability.session_key_address : request.agent_session_key;
   const sessionPublicKey = typeof capability.session_key_public_key === "string" ? capability.session_key_public_key : null;
