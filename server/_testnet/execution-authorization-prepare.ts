@@ -2,7 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createPublicClient, http, type Address, type Hex } from "viem";
 import { bscTestnet } from "viem/chains";
 import { getAuthenticatedUser, serverClient } from "../_auth.js";
-import { invokeProviderOperation, resolveProviderOperation } from "./provider-operation.js";
+import { invokeProviderOperation, resolveProviderOperation, type ProviderAction } from "./provider-operation.js";
 
 const COMMERCE = "0xa206c0517b6371c6638cd9e4a42cc9f02a33b0de" as Address;
 const COMMERCE_ABI = [{ type: "function", name: "getJob", stateMutability: "view", inputs: [{ name: "jobId", type: "uint256" }], outputs: [{ name: "job", type: "tuple", components: [{ name: "id", type: "uint256" }, { name: "client", type: "address" }, { name: "provider", type: "address" }, { name: "evaluator", type: "address" }, { name: "description", type: "string" }, { name: "budget", type: "uint256" }, { name: "expiredAt", type: "uint256" }, { name: "status", type: "uint8" }, { name: "hook", type: "address" }, { name: "submittedAt", type: "uint256" }, { name: "deliverable", type: "bytes32" }] }], }] as const;
@@ -22,7 +22,8 @@ function findExecutionDescriptor(value: unknown): JsonRecord | null {
   const root = object(value);
   const candidates = [root, object(root.execution_capability), object(root.executionCapability), object(root.authorization), object(root.capability), object(root.data)];
   for (const candidate of candidates) {
-    if (String(candidate.network || "").toLowerCase() !== "bsc-testnet" || Number(candidate.chainId ?? candidate.chain_id) !== 97) continue;
+    const network = String(candidate.network || "").toLowerCase();
+    if (!(network === "bsc-testnet" || network === "bnb-testnet") || Number(candidate.chainId ?? candidate.chain_id) !== 97) continue;
     if (typeof candidate.execution !== "string" && typeof candidate.execution_mode !== "string" && typeof candidate.mode !== "string") continue;
     if (candidate.private_key_exposed === true) continue;
     if (candidate.allowed_targets !== undefined && (!Array.isArray(candidate.allowed_targets) || candidate.allowed_targets.some((item) => !address(item)))) continue;
@@ -31,7 +32,6 @@ function findExecutionDescriptor(value: unknown): JsonRecord | null {
   }
   return null;
 }
-
 function findAuthorizationRequest(value: JsonRecord, fallback: { amount: number; duration: number; purpose: string }) {
   const candidates = [value, object(value.authorization_request), object(value.authorizationRequest), object(value.execution_capital), object(value.executionCapital), object(value.authorization), object(value.request)];
   for (const candidate of candidates) {
@@ -43,20 +43,68 @@ function findAuthorizationRequest(value: JsonRecord, fallback: { amount: number;
   return fallback;
 }
 
+async function resolveCapabilityOperation(endpoint: { endpoint_url: string; protocol: string; status: string; metadata?: unknown }) {
+  const declared = await resolveProviderOperation(endpoint, "execution_capabilities" as ProviderAction);
+  if (declared) return { operation: declared, fallback: false };
+
+  // Provider-neutral convention: execution-capability descriptors are exposed from
+  // /execution-capabilities when the provider has not explicitly included the route
+  // in its machine-readable manifest. This is a discovery fallback, not a strategy rule.
+  const base = endpoint.endpoint_url.replace(/\/+$/, "");
+  const url = base.endsWith("/execution-capabilities") ? base : `${base}/execution-capabilities`;
+  return {
+    operation: {
+      action: "execution_capabilities" as ProviderAction,
+      endpoint: url,
+      method: "GET",
+      transport: "http",
+      name: "execution_capabilities",
+      metadata: {},
+    },
+    fallback: true,
+  };
+}
+
 async function capability(agent: JsonRecord, jobContext: JsonRecord) {
   const { data: endpoints, error } = await serverClient().from("agent_endpoints").select("endpoint_url,protocol,status,metadata").eq("agent_id", String(agent.id || "")).order("last_checked_at", { ascending: false }).limit(20);
   if (error) throw new Error(error.message);
+
+  let fallbackAuthorizationOperation: { operation: Awaited<ReturnType<typeof resolveProviderOperation>>; endpoint: JsonRecord } | null = null;
   for (const endpoint of (endpoints || []) as JsonRecord[]) {
     try {
-      const operation = await resolveProviderOperation(endpoint as { endpoint_url: string; protocol: string; status: string; metadata?: unknown }, "authorization");
-      if (!operation) continue;
-      const result = await invokeProviderOperation(operation, jobContext);
+      const record = endpoint as { endpoint_url: string; protocol: string; status: string; metadata?: unknown };
+      const resolved = await resolveCapabilityOperation(record);
+      const result = await invokeProviderOperation(resolved.operation, jobContext);
       const descriptor = findExecutionDescriptor(result.body);
-      if (descriptor) return { descriptor, source_url: result.endpoint, operation: { action: operation.action, endpoint: result.endpoint, method: operation.method, transport: operation.transport, name: operation.name } };
+      if (descriptor) return {
+        descriptor,
+        source_url: result.endpoint,
+        operation: { action: resolved.operation.action, endpoint: result.endpoint, method: resolved.operation.method, transport: resolved.operation.transport, name: resolved.operation.name, discovery_fallback: resolved.fallback },
+      };
+
+      if (!fallbackAuthorizationOperation) {
+        const authorization = await resolveProviderOperation(record, "authorization");
+        if (authorization) fallbackAuthorizationOperation = { operation: authorization, endpoint };
+      }
     } catch {
-      // Continue to the next declared provider authorization operation.
+      // Continue through declared and conventional provider capability sources.
     }
   }
+
+  if (fallbackAuthorizationOperation?.operation) {
+    try {
+      const result = await invokeProviderOperation(fallbackAuthorizationOperation.operation, jobContext);
+      const descriptor = findExecutionDescriptor(result.body);
+      if (descriptor) return {
+        descriptor,
+        source_url: result.endpoint,
+        operation: { action: fallbackAuthorizationOperation.operation.action, endpoint: result.endpoint, method: fallbackAuthorizationOperation.operation.method, transport: fallbackAuthorizationOperation.operation.transport, name: fallbackAuthorizationOperation.operation.name, discovery_fallback: "authorization-operation" },
+      };
+    } catch {
+      // No usable capability descriptor was returned.
+    }
+  }
+
   return null;
 }
 
@@ -100,7 +148,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const fallbackRequest = { amount: requestedAmount ?? MAX_TESTNET_EXECUTION_CAPITAL, duration: requestedDuration, purpose };
     const cap = await capability(agent as JsonRecord, { chain_job_id: Number(chainJobId), job_id: job.id, agent_id: agent.agent_id, client_wallet: auth.user.wallet_address, provider_wallet: chainJob.provider, evaluator_wallet: chainJob.evaluator, network: "bsc-testnet", environment: "testnet", purpose, duration_seconds: requestedDuration, capital_requested: requestedAmount ?? null });
-    if (!cap) return res.status(200).json({ ok: true, required: false, created: false, chain_job_id: Number(chainJobId), note: "Provider does not currently advertise a verified execution-authorization capability." });
+    if (!cap) return res.status(200).json({ ok: true, required: false, created: false, chain_job_id: Number(chainJobId), note: "Provider does not currently advertise a verified execution capability descriptor." });
 
     const requested = findAuthorizationRequest(cap.descriptor, fallbackRequest);
     if (requested.amount <= 0 || requested.amount > MAX_TESTNET_EXECUTION_CAPITAL) return res.status(409).json({ error: `Provider-declared Testnet execution capital is outside the global ${MAX_TESTNET_EXECUTION_CAPITAL} unit safety ceiling`, requested_amount: requested.amount });
@@ -127,7 +175,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       authorization_model: authorizationModel,
       status: "requested",
       evidence: {
-        source: "provider_declared_authorization_operation",
+        source: "provider_execution_capability",
         chain_id: 97,
         chain_job_id: Number(chainJobId),
         provider_agent_id: agent.agent_id,
