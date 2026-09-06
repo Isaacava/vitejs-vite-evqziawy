@@ -48,25 +48,30 @@ export type PublicExecutionCapability = {
 };
 
 function validateCapability(body: unknown, expectedJobId?: number): PublicExecutionCapability {
-  if (!body || typeof body !== "object") throw new Error("Grid execution capability response is not an object");
+  if (!body || typeof body !== "object") throw new Error("Provider execution capability response is not an object");
   const value = body as Record<string, unknown>;
-  if (value.network !== "bsc-testnet" || Number(value.chainId) !== 97) throw new Error("Grid execution capability is not for BSC Testnet");
-  if (value.execution !== "altana-scoped-session") throw new Error("Grid execution service does not advertise Altana scoped-session execution");
-  if (value.wallet_provider !== "altana" || value.authorization_model !== "scoped_session") throw new Error("Grid execution service did not advertise the required Altana scoped-session model");
-  if (value.private_key_exposed !== false) throw new Error("Grid execution capability response must not expose a private key");
-  if (value.selectors_required !== true) throw new Error("Grid execution service must require an explicit selector allowlist");
-  if (!address(value.session_key_address)) throw new Error("Grid execution capability has an invalid session key address");
-  if (!hex(value.session_key_public_key) || value.session_key_public_key.length < 100) throw new Error("Grid execution capability has an invalid session public key");
+  const providerNetwork = String(value.network ?? "").trim().toLowerCase();
+  const providerChainId = Number(value.chainId ?? value.chain_id);
+  const isBscTestnetNetwork = ["bsc-testnet", "bnb-testnet"].includes(providerNetwork);
+  if (!isBscTestnetNetwork || providerChainId !== 97) {
+    throw new Error(`Provider execution capability is not for BSC Testnet (network=${value.network ?? "missing"}, chain_id=${value.chainId ?? value.chain_id ?? "missing"})`);
+  }
+  if (value.execution !== "altana-scoped-session") throw new Error("Provider execution service does not advertise Altana scoped-session execution");
+  if (value.wallet_provider !== "altana" || value.authorization_model !== "scoped_session") throw new Error("Provider execution service did not advertise the required Altana scoped-session model");
+  if (value.private_key_exposed !== false) throw new Error("Provider execution capability response must not expose a private key");
+  if (value.selectors_required !== true) throw new Error("Provider execution service must require an explicit selector allowlist");
+  if (!address(value.session_key_address)) throw new Error("Provider execution capability has an invalid session key address");
+  if (!hex(value.session_key_public_key) || value.session_key_public_key.length < 100) throw new Error("Provider execution capability has an invalid session public key");
   const derivedAddress = publicKeyToAddress(value.session_key_public_key);
-  if (derivedAddress.toLowerCase() !== value.session_key_address.toLowerCase()) throw new Error("Grid execution session address does not match its public key");
-  if (!Array.isArray(value.allowed_targets) || value.allowed_targets.length === 0 || !value.allowed_targets.every(address)) throw new Error("Grid execution capability has no valid contract target allowlist");
-  if (!Array.isArray(value.allowed_selectors) || value.allowed_selectors.length === 0 || !value.allowed_selectors.every(selector)) throw new Error("Grid execution capability has no valid function selector allowlist");
+  if (derivedAddress.toLowerCase() !== value.session_key_address.toLowerCase()) throw new Error("Provider execution session address does not match its public key");
+  if (!Array.isArray(value.allowed_targets) || value.allowed_targets.length === 0 || !value.allowed_targets.every(address)) throw new Error("Provider execution capability has no valid contract target allowlist");
+  if (!Array.isArray(value.allowed_selectors) || value.allowed_selectors.length === 0 || !value.allowed_selectors.every(selector)) throw new Error("Provider execution capability has no valid function selector allowlist");
 
   if (expectedJobId !== undefined) {
-    if (value.session_scope !== "request-scoped") throw new Error(`Grid execution capability for job ${expectedJobId} is not request-scoped`);
+    if (value.session_scope !== "request-scoped") throw new Error(`Provider execution capability for job ${expectedJobId} is not request-scoped`);
     const returnedJobId = Number(value.job_id);
     if (!Number.isSafeInteger(returnedJobId) || returnedJobId !== expectedJobId) {
-      throw new Error(`Grid execution capability returned job_id ${value.job_id ?? "null"}, expected ${expectedJobId}`);
+      throw new Error(`Provider execution capability returned job_id ${value.job_id ?? "null"}, expected ${expectedJobId}`);
     }
   }
 
