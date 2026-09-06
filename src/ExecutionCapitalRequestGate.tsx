@@ -97,7 +97,8 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
 
   const symbol = requirement?.execution_capital?.symbol || requirement?.execution_market?.token_in_symbol || "execution token";
   const action = decision?.decision?.action || "state-changing action";
-  const decisionSource = decision?.decision?.source || decision?.observation?.source || "provider metadata";
+  const rawDecisionSource = decision?.decision?.source || decision?.observation?.source || "provider metadata";
+  const decisionSource = typeof rawDecisionSource === "string" || typeof rawDecisionSource === "number" ? String(rawDecisionSource) : "provider metadata";
 
   async function requestCapital() {
     const amount = 1;
@@ -117,7 +118,7 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
     try {
       const response = await fetch("/api/testnet?route=execution-capital", {
         method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ job_id: marketplaceJobId, chain_job_id: chainJobId, capital_requested: amount, purpose: purpose.trim() || "Agent execution", duration_seconds: hours * 60 * 60, wallet_provider: "altana", authorization_model: "scoped_session" }),
+        body: JSON.stringify({ job_id: marketplaceJobId, chain_job_id: chainJobId, capital_requested: amount, purpose: purpose.trim() || "Agent execution", duration_seconds: hours * 60 * 60 }),
       });
       const body = await response.json() as { error?: string; request?: unknown; created?: boolean };
       if (response.status !== 201 && response.status !== 200) throw new Error(body.error || "Unable to prepare execution authorization");
@@ -133,7 +134,7 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
     <section className="border border-line rounded-[16px_8px_18px_9px] bg-paper p-5">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <small className="block font-mono text-[8.5px] uppercase tracking-widest text-brass mb-1.5">Execution Capital · Provider Decision</small>
+          <small className="block font-mono text-[8.5px] uppercase tracking-widest text-brass mb-1.5">Execution Capital · Agent Decision</small>
           <h3 className="font-display text-[18px] font-bold m-0">{status === "not_required" ? "No execution authorization required" : "Execution authorization required"}</h3>
           <p className="text-[11px] text-inksoft mt-1.5 max-w-[620px]">
             {status === "not_required"
