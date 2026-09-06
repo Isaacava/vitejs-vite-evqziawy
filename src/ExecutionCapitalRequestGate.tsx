@@ -3,11 +3,13 @@ import { useEffect, useRef, useState } from "react";
 type Props = { jobId: string; jobBudget: string | number | null; jobCurrency: string; onRequested?: () => void };
 type Requirement = { execution_capital?: { token?: string; symbol?: string; required_amount?: string }; execution_market?: { token_in_symbol?: string; token_out_symbol?: string; fee?: number | null } };
 type Decision = { execution_required?: boolean; authorization_required?: boolean; decision?: { action?: string; target_lower?: number; target_upper?: number }; observation?: Record<string, unknown>; error?: string; pending?: boolean };
+type JobLookup = { job?: { chain_job_id?: number | null }; chain?: { chain_job_id?: number | null } };
 
 export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Props) {
   const [capital] = useState("1");
   const [purpose] = useState("Agent execution");
   const [durationHours] = useState("24");
+  const [chainJobId, setChainJobId] = useState<string>("");
   const [requirement, setRequirement] = useState<Requirement | null>(null);
   const [decision, setDecision] = useState<Decision | null>(null);
   const [status, setStatus] = useState<"waiting_decision" | "submitting" | "requested" | "not_required" | "error">("waiting_decision");
@@ -17,9 +19,31 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
   useEffect(() => {
     let active = true;
     let timer: number | undefined;
+    const resolveChainJob = async () => {
+      try {
+        const response = await fetch(`/api/jobs?id=${encodeURIComponent(jobId)}`, { credentials: "include", cache: "no-store" });
+        const body = await response.json().catch(() => null) as JobLookup | null;
+        const resolved = body?.chain?.chain_job_id ?? body?.job?.chain_job_id;
+        if (resolved !== null && resolved !== undefined) {
+          if (active) setChainJobId(String(resolved));
+          return;
+        }
+      } catch {
+        // Keep retrying until the indexed job exposes its chain id.
+      }
+      if (active) timer = window.setTimeout(() => void resolveChainJob(), 2000);
+    };
+    void resolveChainJob();
+    return () => { active = false; if (timer) window.clearTimeout(timer); };
+  }, [jobId]);
+
+  useEffect(() => {
+    if (!chainJobId) return;
+    let active = true;
+    let timer: number | undefined;
     const refreshDecision = async () => {
       try {
-        const response = await fetch(`/api/testnet?route=execution-decision&job=${encodeURIComponent(jobId)}`, { credentials: "include", cache: "no-store" });
+        const response = await fetch(`/api/testnet?route=execution-decision&job=${encodeURIComponent(chainJobId)}`, { credentials: "include", cache: "no-store" });
         const body = await response.json().catch(() => null) as Decision | null;
         if (!active) return;
         if (body?.decision) setDecision(body);
@@ -44,14 +68,14 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
     return () => { active = false; if (timer) window.clearTimeout(timer); };
     // requestCapital is intentionally referenced as the stable local function below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobId]);
+  }, [chainJobId]);
 
   useEffect(() => {
-    if (!decision?.execution_required) return;
+    if (!decision?.execution_required || !chainJobId) return;
     let active = true;
     void (async () => {
       try {
-        const response = await fetch(`/api/testnet?route=execution-capital-requirement&job=${encodeURIComponent(jobId)}`, { credentials: "include", cache: "no-store" });
+        const response = await fetch(`/api/testnet?route=execution-capital-requirement&job=${encodeURIComponent(chainJobId)}`, { credentials: "include", cache: "no-store" });
         const body = await response.json().catch(() => null) as Requirement & { error?: string };
         if (response.ok && active) setRequirement(body);
       } catch {
@@ -59,7 +83,7 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
       }
     })();
     return () => { active = false; };
-  }, [jobId, decision?.execution_required]);
+  }, [chainJobId, decision?.execution_required]);
 
   const symbol = requirement?.execution_capital?.symbol || requirement?.execution_market?.token_in_symbol || "execution token";
   const action = decision?.decision?.action || "state-changing action";
@@ -67,6 +91,11 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
   async function requestCapital() {
     const amount = 1;
     const hours = Number(durationHours);
+    if (!chainJobId) {
+      setStatus("error");
+      setError("The live ERC-8183 job ID is not available yet.");
+      return;
+    }
     if (!Number.isInteger(hours) || hours < 1 || hours > 168) {
       setStatus("error");
       setError("Duration must be between 1 and 168 hours.");
@@ -77,7 +106,7 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
     try {
       const response = await fetch("/api/testnet?route=execution-capital", {
         method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ job_id: jobId, capital_requested: amount, purpose: purpose.trim() || "Agent execution", duration_seconds: hours * 60 * 60, wallet_provider: "altana", authorization_model: "scoped_session" }),
+        body: JSON.stringify({ job_id: chainJobId, chain_job_id: chainJobId, capital_requested: amount, purpose: purpose.trim() || "Agent execution", duration_seconds: hours * 60 * 60, wallet_provider: "altana", authorization_model: "scoped_session" }),
       });
       const body = await response.json() as { error?: string; request?: unknown };
       if (response.status !== 201 && response.status !== 409) throw new Error(body.error || "Unable to prepare execution authorization");
@@ -101,7 +130,7 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
               : `The Rebalancing agent evaluated the funded job and chose ${action}. AgentMarket is preparing authorization only because that decision requires a state-changing action.`}
           </p>
         </div>
-        <span className="font-mono text-[9px] px-2.5 py-1 rounded-lg status-brass">{status === "not_required" ? "NOT REQUIRED" : status === "requested" ? "WAITING" : "DECIDING"}</span>
+        <span className="font-mono text-[9px] px-2.5 py-1 rounded-lg status-brass">{status === "not_required" ? "NOT REQUIRED" : status === "requested" ? "WAITING" : status === "submitting" ? "PREPARING" : "DECIDING"}</span>
       </div>
 
       {decision?.decision && (
@@ -112,7 +141,8 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
         </div>
       )}
 
-      {status === "waiting_decision" && <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi px-4 py-3 text-[11px] text-inksoft">Waiting for the Rebalancing agent to evaluate the funded job…</div>}
+      {!chainJobId && status === "waiting_decision" && <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi px-4 py-3 text-[11px] text-inksoft">Resolving the live ERC-8183 job ID…</div>}
+      {chainJobId && status === "waiting_decision" && <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi px-4 py-3 text-[11px] text-inksoft">Waiting for the Rebalancing agent to evaluate the funded job…</div>}
       {status === "submitting" && <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi px-4 py-3 text-[11px] text-inksoft">Preparing the authorization record…</div>}
       {status === "requested" && <div className="mt-4 border border-green/30 bg-green/5 rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]"><strong className="text-green">Authorization request ready.</strong> Continue to the Altana wallet gate below. The Rebalancing agent remains paused until the grant is verified.</div>}
       {status === "not_required" && <div className="mt-4 border border-green/30 bg-green/5 rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]"><strong className="text-green">Observation-only execution.</strong> The agent will submit its result without an execution-capital request.</div>}
