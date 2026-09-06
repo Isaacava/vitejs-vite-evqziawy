@@ -194,7 +194,7 @@ function materializeEndpoint(endpoint: string, body: Record<string, unknown>) {
     jobId: ["chainJobId", "chain_job_id", "provider_job_id", "jobId", "job_id"],
     chain_job_id: ["chain_job_id", "chainJobId", "provider_job_id", "job_id", "jobId"],
     chainJobId: ["chainJobId", "chain_job_id", "provider_job_id", "jobId", "job_id"],
-    id: ["chain_job_id", "chainJobId", "provider_job_id", "job_id", "jobId", "id"],
+    id: ["chain_job_id", "chainJobId", "provider_job_id", "job_id", "jobId"],
   };
   return endpoint.replace(/\{(job_id|jobId|chain_job_id|chainJobId|id)\}/g, (match, key: string) => {
     const value = aliases[key]?.map((candidate) => body[candidate]).find((candidate) => candidate !== undefined && candidate !== null);
@@ -260,4 +260,11 @@ async function requestA2A(operation: ProviderOperation, body: Record<string, unk
     try { parsed = rawText ? JSON.parse(rawText) : {}; } catch { parsed = { raw: rawText }; }
     return { status: response.status, body: parsed, rawText, endpoint, method: "POST", transport: "a2a" };
   } finally { clearTimeout(timer); }
+}
+
+export async function invokeProviderOperation(operation: ProviderOperation, body: Record<string, unknown>): Promise<OperationResponse> {
+  if (operation.transport === "a2a") {
+    return requestA2A(operation, body);
+  }
+  return requestJson(operation, body);
 }
