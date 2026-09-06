@@ -16,71 +16,58 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
-          import re
 
           p = Path('agents/grid/app/service/main.py')
           s = p.read_text()
-
-          anchor = 'config = validate_runtime_config()\n'
-          schema = '''\n\n# Machine-readable task contract consumed by AgentMarket discovery.\nCAPABILITY_SCHEMA = {\n    "type": "object",\n    "inputs": [\n        {"name": "lower_price", "required": True, "type": "number", "description": "Lower grid price."},\n        {"name": "upper_price", "required": True, "type": "number", "description": "Upper grid price; must be greater than lower_price."},\n        {"name": "grid_levels", "required": True, "type": "integer", "description": "Number of grid levels, from 2 to 100."},\n        {"name": "notional", "required": True, "type": "number", "description": "Total Testnet settlement notional."},\n        {"name": "max_slippage_bps", "required": False, "type": "integer", "default": 50, "description": "Maximum swap slippage in basis points; capped at 150."},\n    ],\n}\n'''
           if 'CAPABILITY_SCHEMA = {' not in s:
-              if anchor not in s:
-                  raise SystemExit('main.py config anchor not found')
+              anchor = 'config = validate_runtime_config()\n'
+              schema = '''\n\n# Machine-readable task contract consumed by AgentMarket discovery.\nCAPABILITY_SCHEMA = {\n    "type": "object",\n    "inputs": [\n        {"name": "lower_price", "required": True, "type": "number", "description": "Lower grid price."},\n        {"name": "upper_price", "required": True, "type": "number", "description": "Upper grid price; must be greater than lower_price."},\n        {"name": "grid_levels", "required": True, "type": "integer", "description": "Number of grid levels, from 2 to 100."},\n        {"name": "notional", "required": True, "type": "number", "description": "Total Testnet settlement notional."},\n        {"name": "max_slippage_bps", "required": False, "type": "integer", "default": 50, "description": "Maximum swap slippage in basis points; capped at 150."},\n    ],\n}\n'''
+              if anchor not in s: raise SystemExit('Grid config anchor not found')
               s = s.replace(anchor, anchor + schema, 1)
 
-          s = s.replace(
-              'async def _proxy_execution(request: Request, endpoint: str) -> Response:',
-              'async def _proxy_execution(request: Request, endpoint: str, method: str | None = None) -> Response:',
-              1,
-          )
-          s = s.replace(
-              'body = None if request.method in {"GET", "HEAD"} else await request.body()',
-              'upstream_method = method or request.method\n    body = None if upstream_method in {"GET", "HEAD"} else await request.body()',
-              1,
-          )
-          s = s.replace(
-              'upstream = await client.request(request.method, f"{_EXECUTION_INTERNAL_URL}{endpoint}", headers=headers, content=body)',
-              'upstream = await client.request(upstream_method, f"{_EXECUTION_INTERNAL_URL}{endpoint}", headers=headers, content=body)',
-              1,
-          )
+          if 'async def _proxy_execution(request: Request, endpoint: str, method: str | None = None) -> Response:' not in s:
+              s = s.replace(
+                  'async def _proxy_execution(request: Request, endpoint: str) -> Response:',
+                  'async def _proxy_execution(request: Request, endpoint: str, method: str | None = None) -> Response:',
+                  1,
+              )
+              s = s.replace(
+                  'body = None if request.method in {"GET", "HEAD"} else await request.body()',
+                  'upstream_method = method or request.method\n    body = None if upstream_method in {"GET", "HEAD"} else await request.body()',
+                  1,
+              )
+              s = s.replace(
+                  'upstream = await client.request(request.method, f"{_EXECUTION_INTERNAL_URL}{endpoint}", headers=headers, content=body)',
+                  'upstream = await client.request(upstream_method, f"{_EXECUTION_INTERNAL_URL}{endpoint}", headers=headers, content=body)',
+                  1,
+              )
 
-          old = 'return await _proxy_execution(request, f"/execution-capabilities?job_id={job_id}{separator}{query}" if query else f"/execution-capabilities?job_id={job_id}")'
-          new = 'return await _proxy_execution(request, f"/execution-capabilities?job_id={job_id}{separator}{query}" if query else f"/execution-capabilities?job_id={job_id}", method="GET")'
-          if old not in s:
-              raise SystemExit('execution authorization proxy call not found')
-          s = s.replace(old, new, 1)
+          if 'method="GET"' not in s[s.find('async def execution_authorization'):s.find('async def execution_authorization') + 1200]:
+              old = 'return await _proxy_execution(request, f"/execution-capabilities?job_id={job_id}{separator}{query}" if query else f"/execution-capabilities?job_id={job_id}")'
+              new = 'return await _proxy_execution(request, f"/execution-capabilities?job_id={job_id}{separator}{query}" if query else f"/execution-capabilities?job_id={job_id}", method="GET")'
+              if old not in s: raise SystemExit('execution authorization proxy call not found')
+              s = s.replace(old, new, 1)
           p.write_text(s)
 
           p = Path('agents/start_agent_v2.sh')
           s = p.read_text()
-          old = '    cap_id, cap_name, cap_desc = defaults.get(kind, (f"{kind}.service", display, f"Provide the {display} capability through a machine-readable provider contract."))\n'
-          # no-op anchor check to protect against applying to a structurally different launcher
-          if old not in s:
-              raise SystemExit('manifest capability anchor not found')
-          old = '    result = {\n'
-          insert = '''    capability_schema = getattr(module, "CAPABILITY_SCHEMA", None)\n    if not isinstance(capability_schema, dict):\n        capability_schema = None\n\n'''
           if 'capability_schema = getattr(module, "CAPABILITY_SCHEMA", None)' not in s:
-              if old not in s:
-                  raise SystemExit('manifest result anchor not found')
-              s = s.replace(old, insert + old, 1)
+              marker = '    result = {\n'
+              insert = '    capability_schema = getattr(module, "CAPABILITY_SCHEMA", None)\n    if not isinstance(capability_schema, dict):\n        capability_schema = None\n\n'
+              if marker not in s: raise SystemExit('manifest result anchor not found')
+              s = s.replace(marker, insert + marker, 1)
           old = '      "capabilities": [{"id": cap_id, "name": cap_name, "description": cap_desc, "metadata": {"agent_kind": kind}}],\n'
           new = '      "capabilities": [{"id": cap_id, "name": cap_name, "description": cap_desc, "metadata": {"agent_kind": kind, **({"input_schema": capability_schema} if capability_schema else {})}}],\n'
-          if old not in s:
-              raise SystemExit('capabilities manifest line not found')
+          if old not in s: raise SystemExit('capabilities manifest line not found')
           s = s.replace(old, new, 1)
           old = '      "metadata": {"discovery": "agent-provider/v1", "generated_by": "shared-agent-runtime"},\n'
           new = '      "metadata": {"discovery": "agent-provider/v1", "generated_by": "shared-agent-runtime", **({"capability_schema": capability_schema} if capability_schema else {})},\n'
-          if old not in s:
-              raise SystemExit('manifest metadata line not found')
+          if old not in s: raise SystemExit('manifest metadata line not found')
           s = s.replace(old, new, 1)
           p.write_text(s)
 
-          # Sanity checks before committing.
           compile(Path('agents/grid/app/service/main.py').read_text(), 'agents/grid/app/service/main.py', 'exec')
-          text = Path('agents/start_agent_v2.sh').read_text()
-          if 'CAPABILITY_SCHEMA' not in text or 'capability_schema' not in text:
-              raise SystemExit('capability schema was not wired into shared manifest bootstrap')
-          print('Grid provider contract patch prepared.')
+          print('Grid provider contract fix prepared.')
       - name: Remove one-time workflow and commit
         shell: bash
         run: |
