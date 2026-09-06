@@ -43,6 +43,14 @@ function findAuthorizationRequest(value: JsonRecord, fallback: { amount: number;
   return fallback;
 }
 
+function isCompleteScopedSessionDescriptor(value: unknown): boolean {
+  const descriptor = findExecutionDescriptor(value);
+  if (!descriptor) return false;
+  if (String(descriptor.wallet_provider || "").toLowerCase() !== "altana") return true;
+  if (String(descriptor.authorization_model || "").toLowerCase() !== "scoped_session") return true;
+  return address(descriptor.session_key_address) && typeof descriptor.session_key_public_key === "string" && descriptor.session_key_public_key.trim().length > 0;
+}
+
 async function resolveCapabilityOperation(endpoint: { endpoint_url: string; protocol: string; status: string; metadata?: unknown }) {
   const declared = await resolveProviderOperation(endpoint, "execution_capabilities" as ProviderAction);
   if (declared) return { operation: declared, fallback: false };
@@ -159,7 +167,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const token = address(market.token_in) ? market.token_in : null;
     const existingQuery = await supabase.from("execution_capital_requests").select("*").eq("job_id", job.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (existingQuery.error) throw new Error(existingQuery.error.message);
-    if (existingQuery.data) return res.status(200).json({ ok: true, required: true, created: false, request: existingQuery.data, chain_job_id: Number(chainJobId) });
+
+    if (existingQuery.data) {
+      // Keep this endpoint idempotent while allowing a previously-created request
+      // to recover from a provider descriptor that was invalid at creation time.
+      // Never rewrite an authorization that has already moved beyond requested.
+      if (existingQuery.data.status === "requested" && isCompleteScopedSessionDescriptor(cap.descriptor) && !isCompleteScopedSessionDescriptor(object(existingQuery.data.evidence).execution_capability)) {
+        const fetchedAt = new Date().toISOString();
+        const mergedEvidence = {
+          ...object(existingQuery.data.evidence),
+          source: "provider_execution_capability",
+          chain_id: 97,
+          chain_job_id: Number(chainJobId),
+          provider_agent_id: agent.agent_id,
+          execution_capability: {
+            ...cap.descriptor,
+            source_url: cap.source_url,
+            endpoint_id: "provider_operation",
+            operation: cap.operation,
+            fetched_at: fetchedAt,
+            independently_authorized: false,
+          },
+          authorization_request: {
+            capital_requested: requested.amount,
+            duration_seconds: requested.duration,
+            purpose: requested.purpose,
+            derived_from_provider: true,
+          },
+        };
+        const { data: refreshed, error: refreshError } = await supabase.from("execution_capital_requests").update({
+          user_execution_wallet: address(cap.descriptor.execution_wallet) ? cap.descriptor.execution_wallet : existingQuery.data.user_execution_wallet,
+          agent_session_key: address(cap.descriptor.session_key_address) ? cap.descriptor.session_key_address : existingQuery.data.agent_session_key,
+          capital_requested: String(requested.amount),
+          capital_token: token || (typeof cap.descriptor.capital_token === "string" ? cap.descriptor.capital_token : existingQuery.data.capital_token),
+          purpose: requested.purpose,
+          duration_seconds: requested.duration,
+          wallet_provider: walletProvider,
+          authorization_model: authorizationModel,
+          evidence: mergedEvidence,
+        }).eq("id", existingQuery.data.id).select("*").single();
+        if (refreshError) throw new Error(refreshError.message);
+        return res.status(200).json({ ok: true, required: true, created: false, refreshed: true, request: refreshed, chain_job_id: Number(chainJobId) });
+      }
+
+      return res.status(200).json({ ok: true, required: true, created: false, request: existingQuery.data, chain_job_id: Number(chainJobId) });
+    }
 
     const fetchedAt = new Date().toISOString();
     const requestRow: JsonRecord = {
