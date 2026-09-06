@@ -97,7 +97,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const { data: request, error: requestError } = await supabase
       .from("execution_capital_requests")
-      .select("id,status,capital_requested,capital_authorized,capital_token,user_execution_wallet,agent_session_key,session_key_id,session_expiry,duration_seconds,evidence,created_at,updated_at")
+      .select("id,status,capital_requested,capital_authorized,capital_token,user_execution_wallet,agent_session_key,session_key_id,session_expiry,duration_seconds,evidence,wallet_provider,authorization_model,created_at,updated_at")
       .eq("job_id", job?.id || "")
       .order("created_at", { ascending: false })
       .limit(1)
@@ -144,6 +144,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const capability = recordObject(evidence.execution_capability);
     const executionMarket = recordObject(capability.execution_market);
     const capabilityToken = typeof executionMarket.token_in === "string" ? executionMarket.token_in : null;
+    const providerWalletProvider = typeof request.wallet_provider === "string" && request.wallet_provider.trim() ? request.wallet_provider.trim() : null;
+    const providerAuthorizationModel = typeof request.authorization_model === "string" && request.authorization_model.trim() ? request.authorization_model.trim() : null;
+    const capabilityWalletProvider = typeof capability.wallet_provider === "string" && capability.wallet_provider.trim() ? capability.wallet_provider.trim() : null;
+    const capabilityAuthorizationModel = typeof capability.authorization_model === "string" && capability.authorization_model.trim() ? capability.authorization_model.trim() : null;
 
     return res.status(200).json({
       ok: true,
@@ -160,8 +164,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             session_expiry: request.session_expiry || null,
             capital_token: request.capital_token || capabilityToken,
             capital_authorized: request.capital_authorized || request.capital_requested || null,
-            wallet_provider: "altana",
-            authorization_model: "scoped_session",
+            wallet_provider: providerWalletProvider || capabilityWalletProvider,
+            authorization_model: providerAuthorizationModel || capabilityAuthorizationModel,
             allowed_targets: Array.isArray(capability.allowed_targets) ? capability.allowed_targets : [],
             allowed_selectors: Array.isArray(capability.allowed_selectors) ? capability.allowed_selectors : [],
           }
