@@ -23,14 +23,19 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
   const [capital] = useState("1");
   const [purpose] = useState("Agent execution");
   const [durationHours] = useState("24");
-  const [marketplaceJobId, setMarketplaceJobId] = useState("");
-  const [chainJobId, setChainJobId] = useState<string>("");
+  const [marketplaceJobId, setMarketplaceJobId] = useState(() => jobId.trim());
+  const [chainJobId, setChainJobId] = useState<string>(/^\d+$/.test(jobId.trim()) ? jobId.trim() : "");
   const [providerLabel, setProviderLabel] = useState("Selected provider");
   const [requirement, setRequirement] = useState<Requirement | null>(null);
   const [decision, setDecision] = useState<Decision | null>(null);
   const [status, setStatus] = useState<"waiting_decision" | "submitting" | "requested" | "provider_authorization" | "not_required" | "error">("waiting_decision");
   const [error, setError] = useState("");
-  const startedRef = useRef(false);
+  const capitalRequestAttemptedRef = useRef(false);
+
+  useEffect(() => {
+    setMarketplaceJobId(jobId.trim());
+    if (/^\d+$/.test(jobId.trim())) setChainJobId(jobId.trim());
+  }, [jobId]);
 
   useEffect(() => {
     let active = true;
@@ -40,12 +45,8 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
         const response = await fetch(`/api/jobs?id=${encodeURIComponent(jobId)}`, { credentials: "include", cache: "no-store" });
         const body = await response.json().catch(() => null) as JobLookup | null;
         const resolved = body?.chain?.chain_job_id ?? body?.job?.chain_job_id;
-        const resolvedMarketplaceId = typeof body?.job?.id === "string" ? body.job.id.trim() : "";
         const resolvedProvider = body?.agent?.name || body?.provider?.name || body?.task?.role || body?.task?.title || body?.agent?.agent_id || body?.provider?.agent_id || "Selected provider";
-        if (active) {
-          if (resolvedMarketplaceId) setMarketplaceJobId(resolvedMarketplaceId);
-          setProviderLabel(String(resolvedProvider));
-        }
+        if (active) setProviderLabel(String(resolvedProvider));
         if (resolved !== null && resolved !== undefined) {
           if (active) setChainJobId(String(resolved));
           return;
@@ -59,6 +60,37 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
     return () => { active = false; if (timer) window.clearTimeout(timer); };
   }, [jobId]);
 
+  // Provider-declared execution capital is the requirement source of truth.
+  // Do not gate creation on the separate decision endpoint: decision and capital
+  // discovery are independent provider operations and can arrive in either order.
+  useEffect(() => {
+    if (!chainJobId) return;
+    let active = true;
+    let timer: number | undefined;
+    const refreshRequirement = async () => {
+      try {
+        const response = await fetch(`/api/testnet?route=execution-capital-requirement&job=${encodeURIComponent(chainJobId)}`, { credentials: "include", cache: "no-store" });
+        const body = await response.json().catch(() => null) as Requirement & { error?: string };
+        if (!active) return;
+        if (!response.ok) throw new Error(body?.error || "Unable to resolve the provider execution-capital requirement");
+        setRequirement(body);
+        if (body.required === false || !body.execution_capital) {
+          setStatus("provider_authorization");
+          setError("");
+          return;
+        }
+        setStatus((current) => current === "requested" ? current : "submitting");
+      } catch (cause) {
+        if (!active) return;
+        setError(cause instanceof Error ? cause.message : "Unable to resolve the provider execution-capital requirement");
+        setStatus("error");
+        timer = window.setTimeout(() => void refreshRequirement(), 2500);
+      }
+    };
+    void refreshRequirement();
+    return () => { active = false; if (timer) window.clearTimeout(timer); };
+  }, [chainJobId]);
+
   useEffect(() => {
     if (!chainJobId) return;
     let active = true;
@@ -71,53 +103,23 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
         if (body?.provider?.name) setProviderLabel(body.provider.name);
         if (body?.provider?.agent_id && !body.provider.name) setProviderLabel(body.provider.agent_id);
         if (body?.decision) setDecision(body);
-        if (response.ok && body?.decision) {
-          if (body.execution_required) {
-            if (!startedRef.current) {
-              startedRef.current = true;
-              void resolveRequirementAndContinue();
-            }
-          } else {
-            setStatus("not_required");
-            setError("");
-          }
-          return;
-        }
+        return;
       } catch {
-        // Keep polling until the provider metadata/operation is available.
+        // Decision metadata is advisory for this gate; continue retrying for display.
       }
-      if (active) timer = window.setTimeout(() => void refreshDecision(), 2000);
+      if (active) timer = window.setTimeout(() => void refreshDecision(), 2500);
     };
     void refreshDecision();
     return () => { active = false; if (timer) window.clearTimeout(timer); };
-    // resolveRequirementAndContinue is intentionally referenced as the stable local function below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chainJobId]);
 
-  async function resolveRequirementAndContinue() {
-    if (!chainJobId) return;
-    try {
-      const response = await fetch(`/api/testnet?route=execution-capital-requirement&job=${encodeURIComponent(chainJobId)}`, { credentials: "include", cache: "no-store" });
-      const body = await response.json().catch(() => null) as Requirement & { error?: string };
-      if (!response.ok) throw new Error(body?.error || "Unable to resolve the provider authorization contract");
-      setRequirement(body);
-      if (body.required === false) {
-        setStatus("provider_authorization");
-        setError("");
-        return;
-      }
-      if (!body.execution_capital) {
-        setStatus("provider_authorization");
-        setError("");
-        return;
-      }
-      void requestCapital();
-    } catch (cause) {
-      startedRef.current = false;
-      setStatus("error");
-      setError(cause instanceof Error ? cause.message : "Unable to resolve the provider authorization contract");
-    }
-  }
+  useEffect(() => {
+    if (!marketplaceJobId || !chainJobId || !requirement?.execution_capital || capitalRequestAttemptedRef.current) return;
+    capitalRequestAttemptedRef.current = true;
+    void requestCapital();
+    // requestCapital is intentionally referenced as the stable local function below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [marketplaceJobId, chainJobId, requirement]);
 
   const symbol = requirement?.execution_capital?.symbol || requirement?.execution_market?.token_in_symbol || "execution token";
   const action = decision?.decision?.action || "state-changing action";
@@ -127,16 +129,22 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
   const providerNeedsCapital = Boolean(requirement?.execution_capital);
 
   async function requestCapital() {
-    const amount = 1;
+    const amount = Number(requirement?.execution_capital?.required_amount || capital);
     const hours = Number(durationHours);
     if (!marketplaceJobId || !chainJobId) {
       setStatus("error");
       setError("The live marketplace and ERC-8183 job IDs are not available yet.");
+      capitalRequestAttemptedRef.current = false;
       return;
     }
     if (!Number.isInteger(hours) || hours < 1 || hours > 168) {
       setStatus("error");
       setError("Duration must be between 1 and 168 hours.");
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0 || !Number.isInteger(amount)) {
+      setStatus("error");
+      setError("The provider execution-capital requirement must contain a valid positive integer amount.");
       return;
     }
     setStatus("submitting");
@@ -146,11 +154,12 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
         method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ job_id: marketplaceJobId, chain_job_id: chainJobId, capital_requested: amount, purpose: purpose.trim() || "Agent execution", duration_seconds: hours * 60 * 60 }),
       });
-      const body = await response.json() as { error?: string; request?: unknown; created?: boolean };
-      if (response.status !== 201 && response.status !== 200) throw new Error(body.error || "Unable to prepare execution authorization");
+      const body = await response.json().catch(() => null) as { error?: string; request?: unknown; created?: boolean } | null;
+      if (response.status !== 201 && response.status !== 200) throw new Error(body?.error || "Unable to prepare execution authorization");
       setStatus("requested");
       onRequested?.();
     } catch (cause) {
+      capitalRequestAttemptedRef.current = false;
       setStatus("error");
       setError(cause instanceof Error ? cause.message : "Unable to prepare execution authorization");
     }
@@ -169,10 +178,12 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
               ? `${providerLabel} declared an observation-only path for this funded job, so no execution-capital request is created.`
               : status === "provider_authorization"
                 ? `${providerLabel} declared a state-changing path using ${authorizationModel}. AgentMarket will use the authorization contract published by this provider instead of inventing an Altana or strategy-specific flow.`
-                : `${providerLabel} declared a state-changing execution path (${action}). AgentMarket is resolving the authorization contract published by the provider.`}
+                : status === "submitting"
+                  ? `${providerLabel} declared execution capital. AgentMarket is creating the provider-scoped execution-capital request before any authorization or asset action.`
+                  : `${providerLabel} declared a state-changing execution path (${action}). AgentMarket is resolving the provider-declared execution requirement.`}
           </p>
         </div>
-        <span className="font-mono text-[9px] px-2.5 py-1 rounded-lg status-brass">{status === "not_required" ? "NOT REQUIRED" : status === "provider_authorization" ? "PROVIDER MODEL" : status === "requested" ? "WAITING" : status === "submitting" ? "PREPARING" : "DECIDING"}</span>
+        <span className="font-mono text-[9px] px-2.5 py-1 rounded-lg status-brass">{status === "not_required" ? "NOT REQUIRED" : status === "provider_authorization" ? "PROVIDER MODEL" : status === "requested" ? "WAITING" : status === "submitting" ? "PREPARING" : status === "error" ? "ERROR" : "DECIDING"}</span>
       </div>
 
       {decision?.decision && (
@@ -183,14 +194,11 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
         </div>
       )}
 
-      {providerNeedsCapital && decision?.decision && <div className="mt-3 text-[10px] text-inksoft">Provider-declared execution capital: <strong>{capital} {symbol}</strong></div>}
-      {!providerNeedsCapital && status === "provider_authorization" && <div className="mt-4 border border-green/30 bg-green/5 rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]"><strong className="text-green">No execution-capital request invented.</strong> The provider declares its own authorization model, so AgentMarket keeps the authorization semantics provider-defined.</div>}
-      {!chainJobId && status === "waiting_decision" && <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi px-4 py-3 text-[11px] text-inksoft">Resolving the live ERC-8183 job ID…</div>}
-      {chainJobId && status === "waiting_decision" && <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi px-4 py-3 text-[11px] text-inksoft">Reading {providerLabel} decision metadata…</div>}
-      {status === "submitting" && <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi px-4 py-3 text-[11px] text-inksoft">Preparing the provider authorization record…</div>}
-      {status === "requested" && <div className="mt-4 border border-green/30 bg-green/5 rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]"><strong className="text-green">Authorization request ready.</strong> Continue to the provider authorization step below. {providerLabel} remains paused until the provider's authorization is verified.</div>}
-      {status === "not_required" && <div className="mt-4 border border-green/30 bg-green/5 rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]"><strong className="text-green">Observation-only execution.</strong> The provider does not require an execution-capital request for this path.</div>}
-      {error && <div className="mt-4 border border-[#cfad9f] bg-rustsoft text-rust rounded-[12px_7px_13px_8px] p-3 text-[11px] break-words"><strong className="block mb-1">Authorization preparation failed.</strong>{error}</div>}
+      {providerNeedsCapital && <div className="mt-3 text-[10px] text-inksoft">Provider-declared execution capital: <strong>{requirement?.execution_capital?.required_amount || capital} {symbol}</strong></div>}
+      {status === "submitting" && <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi px-4 py-3 text-[11px] text-inksoft">Preparing the provider-scoped execution-capital request…</div>}
+      {status === "requested" && <div className="mt-4 border border-green/30 bg-green/5 rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]"><strong className="text-green">Execution-capital request created.</strong> Continue to the provider authorization step below. {providerLabel} remains paused until the provider's authorization is verified.</div>}
+      {status === "provider_authorization" && <div className="mt-4 border border-green/30 bg-green/5 rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]"><strong className="text-green">Provider-defined execution authorization.</strong> No marketplace-specific wallet or strategy semantics are invented.</div>}
+      {error && <div className="mt-4 border border-[#cfad9f] bg-rustsoft text-rust rounded-[12px_7px_13px_8px] p-3 text-[11px] break-words"><strong className="block mb-1">Execution-capital preparation failed.</strong>{error}</div>}
       <p className="mt-4 text-[10px] text-inksoft">No token transfer, allowance, execution, or on-chain submission is performed by this preparation step.</p>
     </section>
   );
