@@ -2,7 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createPublicClient, encodeFunctionData, http, type Address, type Hex } from "viem";
 import { bscTestnet } from "viem/chains";
 import { getAuthenticatedUser, serverClient } from "../_auth.js";
-import { runGridPreflight, assertGridExecutionCapability, type GridPreflightInput } from "./gridExecutionAdapter.js";
+import { runProviderPreflight, assertProviderExecutionCapability, type ProviderPreflightInput } from "./providerExecutionAdapter.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_CAPABILITY_BYTES = 64 * 1024;
@@ -206,15 +206,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const evidence = object(request.evidence);
     const storedCapability = object(evidence.execution_capability);
-    assertGridExecutionCapability(storedCapability);
+    assertProviderExecutionCapability(storedCapability);
 
     const capability = await fetchLiveExecutionCapability(storedCapability);
-    assertGridExecutionCapability(capability);
+    assertProviderExecutionCapability(capability);
 
     const allowedTargets = normalizedTargets(capability.allowed_targets);
     const allowedSelectors = normalizedSelectors(capability.allowed_selectors);
     if (allowedTargets.length === 0 || allowedSelectors.length === 0) return res.status(409).json({ error: "Provider execution capability has no usable target/selector scope" });
-    if (capability.network !== "bsc-testnet" || Number(capability.chainId) !== TESTNET_CHAIN_ID) return res.status(409).json({ error: "Provider execution capability is not BSC Testnet" });
 
     const protocol = typeof capability.protocol === "string" && capability.protocol.trim()
       ? capability.protocol.trim().toLowerCase()
@@ -269,7 +268,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    const gridInput: GridPreflightInput = {
+    const providerInput: ProviderPreflightInput = {
       router,
       tokenIn: requestedTokenIn,
       tokenOut: requestedTokenOut,
@@ -278,11 +277,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       amountIn: requestedAmountIn.toString(),
       amountOutMinimum: requestedMinimumOut.toString(),
     };
-    const response = await runGridPreflight({ ...request, evidence: { ...evidence, execution_capability: capability } } as Record<string, unknown>, gridInput, protocol);
+    const response = await runProviderPreflight({ ...request, evidence: { ...evidence, execution_capability: capability } } as Record<string, unknown>, providerInput);
     const result = object(response.result);
     if (result.broadcast !== false) return res.status(502).json({ error: "Testnet execution adapter did not prove that no transaction was broadcast" });
 
-    const returnedSelector = typeof result.selector === "string" && isHex(result.selector) ? selectorOf(result.selector) : "";
+    const returnedSelectorValue = typeof result.selector === "string"
+      ? result.selector
+      : Array.isArray(result.selectors) && typeof result.selectors[0] === "string"
+        ? result.selectors[0]
+        : "";
+    const returnedSelector = isHex(returnedSelectorValue) ? selectorOf(returnedSelectorValue) : "";
     if (!returnedSelector || !allowedSelectors.includes(returnedSelector)) {
       return res.status(409).json({
         error: "Testnet execution adapter produced a function selector outside the verified provider capability scope",
@@ -307,7 +311,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
       asset_state: assetState,
       preflight: result,
-      note: "Read-only preflight completed through the Testnet execution adapter. No transaction was broadcast.",
+      note: "Read-only preflight completed through the provider-declared Testnet execution adapter. No transaction was broadcast.",
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected Testnet preflight error";
