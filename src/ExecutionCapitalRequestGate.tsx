@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 
 type Props = { jobId: string; jobBudget: string | number | null; jobCurrency: string; onRequested?: () => void };
 type Requirement = { execution_capital?: { token?: string; symbol?: string; required_amount?: string }; execution_market?: { token_in_symbol?: string; token_out_symbol?: string; fee?: number | null } };
-type Decision = { execution_required?: boolean; authorization_required?: boolean; decision?: { action?: string; target_lower?: number; target_upper?: number }; observation?: Record<string, unknown>; error?: string; pending?: boolean };
-type JobLookup = { job?: { id?: string; chain_job_id?: number | null }; chain?: { chain_job_id?: number | null } };
+type Decision = { execution_required?: boolean; authorization_required?: boolean; decision?: { action?: string; [key: string]: unknown }; observation?: Record<string, unknown>; error?: string; pending?: boolean };
+type JobLookup = { job?: { id?: string; chain_job_id?: number | null; status?: string }; chain?: { chain_job_id?: number | null }; task?: { title?: string | null; role?: string | null }; agent?: { name?: string | null; agent_id?: string | null }; provider?: { name?: string | null; agent_id?: string | null } };
 
 export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Props) {
   const [capital] = useState("1");
@@ -11,6 +11,7 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
   const [durationHours] = useState("24");
   const [marketplaceJobId, setMarketplaceJobId] = useState("");
   const [chainJobId, setChainJobId] = useState<string>("");
+  const [providerLabel, setProviderLabel] = useState("Selected provider");
   const [requirement, setRequirement] = useState<Requirement | null>(null);
   const [decision, setDecision] = useState<Decision | null>(null);
   const [status, setStatus] = useState<"waiting_decision" | "submitting" | "requested" | "not_required" | "error">("waiting_decision");
@@ -26,13 +27,17 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
         const body = await response.json().catch(() => null) as JobLookup | null;
         const resolved = body?.chain?.chain_job_id ?? body?.job?.chain_job_id;
         const resolvedMarketplaceId = typeof body?.job?.id === "string" ? body.job.id.trim() : "";
-        if (resolvedMarketplaceId && active) setMarketplaceJobId(resolvedMarketplaceId);
+        const resolvedProvider = body?.agent?.name || body?.provider?.name || body?.task?.role || body?.task?.title || body?.agent?.agent_id || body?.provider?.agent_id || "Selected provider";
+        if (active) {
+          if (resolvedMarketplaceId) setMarketplaceJobId(resolvedMarketplaceId);
+          setProviderLabel(String(resolvedProvider));
+        }
         if (resolved !== null && resolved !== undefined) {
           if (active) setChainJobId(String(resolved));
           return;
         }
       } catch {
-        // Keep retrying until the indexed job exposes its chain id.
+        // Keep retrying until the indexed job exposes its chain id and provider identity.
       }
       if (active) timer = window.setTimeout(() => void resolveChainJob(), 2000);
     };
@@ -129,8 +134,8 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
           <h3 className="font-display text-[18px] font-bold m-0">{status === "not_required" ? "No execution authorization required" : "Execution authorization required"}</h3>
           <p className="text-[11px] text-inksoft mt-1.5 max-w-[620px]">
             {status === "not_required"
-              ? "The Rebalancing agent evaluated the funded job and chose an observation-only action, so no execution-capital request is created."
-              : `The Rebalancing agent evaluated the funded job and chose ${action}. AgentMarket is preparing authorization only because that decision requires a state-changing action.`}
+              ? `${providerLabel} evaluated the funded job and chose an observation-only action, so no execution-capital request is created.`
+              : `${providerLabel} evaluated the funded job and chose ${action}. AgentMarket is preparing authorization only because that decision requires a state-changing action.`}
           </p>
         </div>
         <span className="font-mono text-[9px] px-2.5 py-1 rounded-lg status-brass">{status === "not_required" ? "NOT REQUIRED" : status === "requested" ? "WAITING" : status === "submitting" ? "PREPARING" : "DECIDING"}</span>
@@ -145,9 +150,9 @@ export default function ExecutionCapitalRequestGate({ jobId, onRequested }: Prop
       )}
 
       {!chainJobId && status === "waiting_decision" && <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi px-4 py-3 text-[11px] text-inksoft">Resolving the live ERC-8183 job ID…</div>}
-      {chainJobId && status === "waiting_decision" && <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi px-4 py-3 text-[11px] text-inksoft">Waiting for the Rebalancing agent to evaluate the funded job…</div>}
+      {chainJobId && status === "waiting_decision" && <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi px-4 py-3 text-[11px] text-inksoft">Waiting for {providerLabel} to evaluate the funded job…</div>}
       {status === "submitting" && <div className="mt-4 border border-line rounded-[12px_7px_13px_8px] bg-paperhi px-4 py-3 text-[11px] text-inksoft">Preparing the authorization record…</div>}
-      {status === "requested" && <div className="mt-4 border border-green/30 bg-green/5 rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]"><strong className="text-green">Authorization request ready.</strong> Continue to the Altana wallet gate below. The Rebalancing agent remains paused until the grant is verified.</div>}
+      {status === "requested" && <div className="mt-4 border border-green/30 bg-green/5 rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]"><strong className="text-green">Authorization request ready.</strong> Continue to the Altana wallet gate below. {providerLabel} remains paused until the grant is verified.</div>}
       {status === "not_required" && <div className="mt-4 border border-green/30 bg-green/5 rounded-[12px_7px_13px_8px] px-4 py-3 text-[11px]"><strong className="text-green">Observation-only execution.</strong> The agent will submit its result without an execution-capital request.</div>}
       {error && <div className="mt-4 border border-[#cfad9f] bg-rustsoft text-rust rounded-[12px_7px_13px_8px] p-3 text-[11px] break-words"><strong className="block mb-1">Authorization preparation failed.</strong>{error}</div>}
       <p className="mt-4 text-[10px] text-inksoft">No token transfer, allowance, execution, or on-chain submission is performed by this preparation step.</p>
