@@ -9,7 +9,7 @@ type EndpointRecord = {
   version?: string | null;
 };
 
-type ProviderAction = "quote" | "decision" | "authorization" | "execute" | "preflight" | "result" | "health";
+export type ProviderAction = "quote" | "decision" | "authorization" | "execute" | "preflight" | "result" | "health";
 
 type ProviderOperation = {
   action: ProviderAction;
@@ -244,7 +244,8 @@ async function requestA2A(operation: ProviderOperation, body: Record<string, unk
   const envelope = metadata.request_envelope && typeof metadata.request_envelope === "object" ? object(metadata.request_envelope) : null;
   const requestPayload = envelope ? { ...envelope, ...body } : { method: rpcMethod, action: operation.action, ...body };
   try {
-    const response = await fetch(materializeEndpoint(operation.endpoint, body), {
+    const endpoint = materializeEndpoint(operation.endpoint, body);
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: { Accept: "application/json", "Content-Type": "application/json" },
       body: JSON.stringify(requestPayload),
@@ -253,7 +254,7 @@ async function requestA2A(operation: ProviderOperation, body: Record<string, unk
     const rawText = await response.text();
     let parsed: unknown = {};
     try { parsed = rawText ? JSON.parse(rawText) : {}; } catch { parsed = { raw: rawText }; }
-    return { status: response.status, body: parsed, rawText, endpoint: materializeEndpoint(operation.endpoint, body), method: "POST", transport: "a2a" };
+    return { status: response.status, body: parsed, rawText, endpoint, method: "POST", transport: "a2a" };
   } finally { clearTimeout(timer); }
 }
 
