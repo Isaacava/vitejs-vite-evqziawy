@@ -39,6 +39,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (endpointError) throw new Error(endpointError.message);
 
     let lastError = "Provider has not published a decision yet.";
+    let lastAttempt: Record<string, unknown> | null = null;
     for (const endpoint of (endpoints || []) as EndpointRecord[]) {
       const operation = await resolveProviderOperation(endpoint, "decision");
       if (!operation) continue;
@@ -51,15 +52,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           network: "bsc-testnet",
         });
         const body = object(result.body);
+        lastAttempt = { endpoint: result.endpoint, method: result.method, transport: result.transport, status: result.status, body };
         if (body.execution_required !== undefined || body.decision !== undefined || body.approved !== undefined || body.verdict !== undefined) {
           return res.status(200).json({ ok: true, source_url: result.endpoint, operation: { action: operation.action, endpoint: result.endpoint, method: operation.method, transport: operation.transport, name: operation.name }, ...body });
         }
-        lastError = "Provider decision operation returned no decision payload.";
+        lastError = `Provider decision operation returned HTTP ${result.status} without a decision payload.`;
       } catch (error) {
         lastError = error instanceof Error ? error.message : "Provider decision operation failed";
+        lastAttempt = { endpoint: operation.endpoint, method: operation.method, transport: operation.transport, error: lastError };
       }
     }
-    return res.status(202).json({ ok: false, pending: true, error: lastError });
+    return res.status(202).json({ ok: false, pending: true, error: lastError, attempt: lastAttempt });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : "Unable to resolve provider execution decision" });
   }
