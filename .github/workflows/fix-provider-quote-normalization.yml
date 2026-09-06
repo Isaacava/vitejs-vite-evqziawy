@@ -1,0 +1,50 @@
+name: Normalize provider quote units
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  normalize-quote:
+    if: ${{ !contains(github.event.head_commit.message, '[quote-normalized]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Patch quote normalization
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('server/_testnet/quotes.ts')
+          s = p.read_text()
+
+          old_type = 'type ProviderQuote = { accepted?: boolean; price?: string | number; currency?: string; provider_sig?: string; provider_signature?: string; quote_expires_at?: string | number; chain_id?: number; [key: string]: unknown };'
+          new_type = 'type ProviderQuote = { accepted?: boolean; price?: string | number; price_raw?: string | number; priceRaw?: string | number; raw_price?: string | number; amount_raw?: string | number; amountRaw?: string | number; settlement_amount_raw?: string | number; price_unit?: string; unit?: string; amount_unit?: string; currency?: string; provider_sig?: string; provider_signature?: string; quote_expires_at?: string | number; chain_id?: number; [key: string]: unknown };'
+          if old_type in s:
+              s = s.replace(old_type, new_type, 1)
+
+          old_fn = '''function normalizedPrice(value: unknown) {\n  if (typeof value === "string" && /^\\d+$/.test(value)) return value;\n  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return String(value);\n  throw new Error("Provider quote did not contain a valid integer price in raw settlement-token units");\n}'''
+          new_fn = '''function normalizedPrice(quote: ProviderQuote, settlementToken: string, settlementSymbol: string, decimals: number) {\n  const rawCandidates = [quote.price_raw, quote.priceRaw, quote.raw_price, quote.amount_raw, quote.amountRaw, quote.settlement_amount_raw];\n  for (const candidate of rawCandidates) {\n    if (typeof candidate === "string" && /^\\d+$/.test(candidate.trim())) return candidate.trim();\n    if (typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate >= 0) return String(candidate);\n  }\n\n  const value = quote.price;\n  const unit = typeof quote.price_unit === "string" ? quote.price_unit.trim().toLowerCase() : typeof quote.unit === "string" ? quote.unit.trim().toLowerCase() : typeof quote.amount_unit === "string" ? quote.amount_unit.trim().toLowerCase() : "";\n  const currency = typeof quote.currency === "string" ? quote.currency.trim() : "";\n  const currencyMatchesSettlement = !currency || currency.toLowerCase() === settlementSymbol.toLowerCase() || currency.toLowerCase() === settlementToken.toLowerCase();\n\n  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {\n    if (unit === "raw" || unit === "base" || unit === "atomic" || unit === "wei") {\n      if (!Number.isSafeInteger(value)) throw new Error("Provider raw quote price must be an integer");\n      return String(value);\n    }\n    if (currencyMatchesSettlement) return parseUnitsExact(String(value), decimals);\n  }\n\n  if (typeof value === "string" && value.trim()) {\n    const text = value.trim();\n    if (unit === "raw" || unit === "base" || unit === "atomic" || unit === "wei") {\n      if (/^\\d+$/.test(text)) return text;\n      throw new Error("Provider raw quote price must be an integer");\n    }\n    if (unit === "token" || unit === "decimal" || unit === "human" || currencyMatchesSettlement && /\\./.test(text)) return parseUnitsExact(text, decimals);\n    if (/^\\d+$/.test(text)) {\n      const integer = BigInt(text);\n      const tokenScale = 10n ** BigInt(decimals);\n      if (currencyMatchesSettlement && integer < tokenScale) return (integer * tokenScale).toString();\n      return text;\n    }\n  }\n\n  throw new Error("Provider quote did not contain a usable price; expected price_raw (recommended) or a price with settlement-token units");\n}\n\nfunction parseUnitsExact(value: string, decimals: number) {\n  if (!/^\\d+(?:\\.\\d+)?$/.test(value.trim())) throw new Error("Provider decimal quote price is invalid");\n  const [whole, fraction = ""] = value.trim().split(".");\n  if (fraction.length > decimals) throw new Error(`Provider quote has more than ${decimals} decimal places`);\n  return (BigInt(whole) * (10n ** BigInt(decimals)) + BigInt((fraction + "0".repeat(decimals)).slice(0, decimals) || "0")).toString();\n}'''
+          if old_fn not in s:
+              raise SystemExit('normalizedPrice function shape not found')
+          s = s.replace(old_fn, new_fn, 1)
+          old_call = '  const price = normalizedPrice(providerQuote.price);'
+          new_call = '  const price = normalizedPrice(providerQuote, String(payment.token), payment.symbol, payment.decimals);'
+          if old_call not in s:
+              raise SystemExit('normalizedPrice call not found')
+          s = s.replace(old_call, new_call, 1)
+          p.write_text(s)
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server/_testnet/quotes.ts .github/workflows/fix-provider-quote-normalization.yml
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: accept provider human or raw quote prices [quote-normalized]"
+          git push
