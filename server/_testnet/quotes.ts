@@ -186,6 +186,33 @@ async function discoverQuoteOperation(endpoint: StoredEndpoint) {
   return operation;
 }
 
+function providerQuoteFromBody(body: unknown): ProviderQuote {
+  const object = (value: unknown): Record<string, unknown> | null =>
+    value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  const root = object(body);
+  if (!root) throw new Error("Provider quote endpoint returned a non-object JSON response");
+
+  const queue: unknown[] = [root];
+  const visited = new Set<object>();
+  const priceKeys = ["price_raw", "priceRaw", "raw_price", "amount_raw", "amountRaw", "settlement_amount_raw", "price"];
+  const nestedKeys = ["quote", "data", "result", "response", "output", "operation_result"];
+
+  while (queue.length > 0) {
+    const candidate = queue.shift();
+    const value = object(candidate);
+    if (!value || visited.has(value)) continue;
+    visited.add(value);
+
+    if (priceKeys.some((key) => key in value)) return value as ProviderQuote;
+    for (const key of nestedKeys) {
+      const nested = value[key];
+      if (nested && typeof nested === "object") queue.push(nested);
+    }
+  }
+
+  throw new Error("Provider quote response did not expose a quote object with a supported price field");
+}
+
 async function requestProviderQuote(endpoint: StoredEndpoint, taskDescription: string, terms: Record<string, unknown>) {
   const operation = await discoverQuoteOperation(endpoint);
   const result = await invokeProviderOperation(operation, {
@@ -196,8 +223,15 @@ async function requestProviderQuote(endpoint: StoredEndpoint, taskDescription: s
     network: "bsc-testnet",
     environment: TESTNET_ENVIRONMENT,
   });
-  if (!result.body || typeof result.body !== "object") throw new Error(`Provider quote endpoint ${operation.endpoint} returned a non-JSON response`);
-  return { quote: result.body as ProviderQuote, operation };
+
+  if (result.status < 200 || result.status >= 300) {
+    const detail = result.body && typeof result.body === "object"
+      ? JSON.stringify(result.body).slice(0, 320)
+      : result.rawText.slice(0, 320);
+    throw new Error(`Provider quote request failed with HTTP ${result.status} at ${operation.method} ${operation.endpoint}${detail ? `: ${detail}` : ""}`);
+  }
+
+  return { quote: providerQuoteFromBody(result.body), operation };
 }
 
 async function requestQuote(req: VercelRequest, res: VercelResponse, user: NonNullable<Awaited<ReturnType<typeof getAuthenticatedUser>>>) {
