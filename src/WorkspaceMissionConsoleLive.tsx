@@ -105,10 +105,10 @@ export default function WorkspaceMissionConsole() {
   const disputeDeadline = submittedAt !== null && disputeWindowSeconds !== null ? submittedAt + disputeWindowSeconds : null;
   const remaining = disputeDeadline === null ? null : Math.max(disputeDeadline - now, 0);
   const disputeOpen = liveStatus === "submitted" && remaining !== null && remaining > 0;
-  const settlementReady = liveStatus === "submitted";
+  const settlementReady = liveStatus === "submitted" && remaining !== null && remaining <= 0;
   const refundReady = liveStatus === "submitted" && remaining !== null && remaining <= 0 && policy?.verdict === 0n;
   const evaluatorLabel = data.evaluation?.verdict || (policy?.verdict === 1n ? "Approved" : policy?.verdict === 2n ? "Rejected" : terminal ? human(liveStatus) : "Pending");
-  const settlementLabel = liveStatus === "completed" || liveStatus === "settled" || liveStatus === "terminal" ? "Completed" : liveStatus === "rejected" ? "Rejected" : liveStatus === "expired" ? "Expired / refund path" : liveStatus === "submitted" ? "Awaiting terminal settlement" : "Pending";
+  const settlementLabel = liveStatus === "completed" || liveStatus === "settled" || liveStatus === "terminal" ? "Completed" : liveStatus === "rejected" ? "Rejected" : liveStatus === "expired" ? "Expired / refund path" : liveStatus === "submitted" && disputeOpen ? `Waiting · ${formatTime(remaining || 0)} dispute window` : liveStatus === "submitted" ? "Ready for protocol settlement" : "Pending";
   const disputeLabel = disputeOpen ? `Open · ${formatTime(remaining || 0)} remaining` : terminal ? "Closed · terminal" : remaining === null ? "Waiting for submitted timestamp" : "Closed";
   const provider = data.chain?.chain_provider || "Not yet observed";
   const evaluator = data.chain?.chain_evaluator || "Not yet observed";
