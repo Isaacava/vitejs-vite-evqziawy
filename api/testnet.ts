@@ -1,6 +1,26 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { serverClient } from "../server/_auth.js";
 
 type Handler = (req: VercelRequest, res: VercelResponse) => unknown;
+
+async function normalizeExecutionEvidenceJob(req: VercelRequest, route: string) {
+  if (route !== "execution-evidence") return;
+  const rawJob = typeof req.query?.job === "string" ? req.query.job.trim() : "";
+  if (!rawJob || /^\d+$/.test(rawJob)) return;
+
+  const supabase = serverClient();
+  const { data, error } = await supabase
+    .from("jobs")
+    .select("id,chain_job_id")
+    .eq("id", rawJob)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (data?.chain_job_id === null || data?.chain_job_id === undefined) {
+    throw new Error("Marketplace job has no ERC-8183 chain job ID yet");
+  }
+
+  req.query = { ...req.query, job: String(data.chain_job_id) };
+}
 
 async function loadHandler(route: string): Promise<Handler | null> {
   switch (route) {
@@ -40,6 +60,7 @@ async function loadHandler(route: string): Promise<Handler | null> {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const route = typeof req.query?.route === "string" ? req.query.route : "";
   try {
+    await normalizeExecutionEvidenceJob(req, route);
     const target = await loadHandler(route);
     if (!target) return res.status(404).json({ error: "Unknown Testnet API route", route });
     return await target(req, res);
