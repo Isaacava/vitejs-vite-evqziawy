@@ -74,7 +74,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (requestedAmount !== null && requestedAmount > MAX_TESTNET_EXECUTION_CAPITAL) return res.status(400).json({ error: `Requested Testnet execution capital exceeds the global ${MAX_TESTNET_EXECUTION_CAPITAL} unit safety ceiling` });
 
     const supabase = serverClient();
-    const { data: job, error: jobError } = await supabase.from("jobs").select("id,mission_task_id,client_wallet,chain_job_id").eq("id", jobId).maybeSingle();
+    const jobQuery = /^\d+$/.test(jobId)
+      ? supabase.from("jobs").select("id,mission_task_id,client_wallet,chain_job_id").eq("chain_job_id", Number(jobId)).maybeSingle()
+      : supabase.from("jobs").select("id,mission_task_id,client_wallet,chain_job_id").eq("id", jobId).maybeSingle();
+    const { data: job, error: jobError } = await jobQuery;
     if (jobError) throw new Error(jobError.message);
     if (!job || !job.mission_task_id) return res.status(404).json({ error: "Marketplace job not found" });
     if (!auth.user.wallet_address || String(job.client_wallet || "").toLowerCase() !== auth.user.wallet_address.toLowerCase()) return res.status(403).json({ error: "The authenticated wallet does not own this job" });
