@@ -1,0 +1,60 @@
+name: Normalize execution capability validator
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-validator:
+    if: github.event.head_commit.message != 'Normalize execution capability validator'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch provider-neutral validation
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('server/_testnet/execution-capital.ts')
+          s = p.read_text()
+          old = '  if (value.network !== "bsc-testnet" || Number(value.chainId) !== 97) throw new Error("Grid execution capability is not for BSC Testnet");'
+          new = '''  const providerNetwork = String(value.network ?? "").trim().toLowerCase();
+  const isBscTestnetNetwork = ["bsc-testnet", "bnb-testnet"].includes(providerNetwork);
+  if (!isBscTestnetNetwork || Number(value.chainId) !== 97) throw new Error(`Provider execution capability is not for BSC Testnet (network=${value.network ?? "missing"}, chain_id=${value.chainId ?? "missing"})`);'''
+          if old in s:
+              s = s.replace(old, new, 1)
+          replacements = {
+            'Grid execution capability response is not an object': 'Provider execution capability response is not an object',
+            'Grid execution service does not advertise Altana scoped-session execution': 'Provider execution service does not advertise Altana scoped-session execution',
+            'Grid execution service did not advertise the required Altana scoped-session model': 'Provider execution service did not advertise the required Altana scoped-session model',
+            'Grid execution capability response must not expose a private key': 'Provider execution capability response must not expose a private key',
+            'Grid execution service must require an explicit selector allowlist': 'Provider execution service must require an explicit selector allowlist',
+            'Grid execution capability has an invalid session key address': 'Provider execution capability has an invalid session key address',
+            'Grid execution capability has an invalid session public key': 'Provider execution capability has an invalid session public key',
+            'Grid execution session address does not match its public key': 'Provider execution session address does not match its public key',
+            'Grid execution capability has no valid contract target allowlist': 'Provider execution capability has no valid contract target allowlist',
+            'Grid execution capability has no valid function selector allowlist': 'Provider execution capability has no valid function selector allowlist',
+            'Grid execution capability for job ${expectedJobId} is not request-scoped': 'Provider execution capability for job ${expectedJobId} is not request-scoped',
+            'Grid execution capability returned job_id ${value.job_id ?? "null"}, expected ${expectedJobId}': 'Provider execution capability returned job_id ${value.job_id ?? "null"}, expected ${expectedJobId}',
+          }
+          for a, b in replacements.items():
+              s = s.replace(a, b)
+          p.write_text(s)
+          PY
+      - name: Commit validator fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server/_testnet/execution-capital.ts
+          if git diff --cached --quiet; then
+            echo 'No validator changes needed.'
+            exit 0
+          fi
+          git commit -m "Normalize execution capability validator"
+          git push
