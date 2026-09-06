@@ -1,0 +1,38 @@
+name: Deploy AgentMarket production quote fix
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy to Vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: team_xiDx3kTa653lWo4vl2dZw8Ag
+          VERCEL_PROJECT_ID: prj_JJ4mXogGGJKPXL892Z5fQwzR3sSR
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "VERCEL_TOKEN secret is not configured"
+            exit 1
+          fi
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN" --scope="$VERCEL_ORG_ID"
+          npx --yes vercel@latest deploy --prod --yes --token="$VERCEL_TOKEN" --scope="$VERCEL_ORG_ID" --project="$VERCEL_PROJECT_ID"
+
+      - name: Remove temporary workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/deploy-vercel-quote-fix.yml
+          git commit -m "chore: remove temporary Vercel deployment workflow"
+          git push
