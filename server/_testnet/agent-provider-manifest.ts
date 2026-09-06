@@ -32,8 +32,8 @@ export type AgentProviderManifest = {
 };
 
 type EndpointRecord = { endpoint_url: string; metadata?: unknown };
-type OperationName = "health" | "quote" | "decision" | "authorization" | "preflight" | "execute" | "result";
-const OPERATIONS: OperationName[] = ["health", "quote", "decision", "authorization", "preflight", "execute", "result"];
+type OperationName = "health" | "quote" | "decision" | "execution_capabilities" | "authorization" | "preflight" | "execute" | "result";
+const OPERATIONS: OperationName[] = ["health", "quote", "decision", "execution_capabilities", "authorization", "preflight", "execute", "result"];
 const TIMEOUT_MS = 8_000;
 const MAX_BYTES = 512 * 1024;
 
@@ -106,14 +106,6 @@ function normalizeManifest(raw: JsonObject, manifestUrl: string): AgentProviderM
   if (!name || !version || protocols.length === 0) return null;
   const rawEndpoints = object(raw.endpoints), endpoints: Record<string, AgentProviderOperation> = {};
   for (const key of OPERATIONS) { const op = normalizeOperation(rawEndpoints[key], manifestUrl); if (op) endpoints[key] = op; }
-  // Providers may advertise the standardized capability route separately from authorization.
-  // The current execution-capital preparation flow uses the authorization slot only to
-  // discover a verified execution descriptor, so a declared execution-capabilities route
-  // is preferred whenever the authorization declaration is merely a POST request trigger.
-  if (endpoints.authorization && endpoints.authorization.method === "POST") {
-    const capability = normalizeOperation(rawEndpoints.execution_capabilities ?? rawEndpoints.executionCapabilities ?? rawEndpoints.capabilities, manifestUrl);
-    if (capability) endpoints.authorization = capability;
-  }
   return {
     spec: "agent-provider/v1", name, description: text(raw.description) || undefined, version,
     agent: object(raw.agent), protocols,
@@ -125,16 +117,9 @@ function normalizeManifest(raw: JsonObject, manifestUrl: string): AgentProviderM
 
 function normalizeLegacyErc8183Root(raw: JsonObject, endpoint: EndpointRecord, sourceUrl: string): AgentProviderManifest | null {
   const rawEndpoints = object(raw.endpoints); if (!Object.keys(rawEndpoints).length) return null;
-  const aliases: Record<string, OperationName> = { health: "health", negotiate: "quote", quote: "quote", decision: "decision", authorization: "authorization", execution_authorization: "authorization", preflight: "preflight", execute: "execute", job_response: "result", response: "result", result: "result" };
+  const aliases: Record<string, OperationName> = { health: "health", negotiate: "quote", quote: "quote", decision: "decision", execution_capabilities: "execution_capabilities", executionCapabilities: "execution_capabilities", capabilities: "execution_capabilities", authorization: "authorization", execution_authorization: "authorization", preflight: "preflight", execute: "execute", job_response: "result", response: "result", result: "result" };
   const endpoints: Record<string, AgentProviderOperation> = {};
   for (const key of Object.keys(rawEndpoints)) { const operation = aliases[key]; if (!operation) continue; const normalized = normalizeOperation(rawEndpoints[key], sourceUrl); if (!normalized || endpoints[operation]) continue; endpoints[operation] = normalized; }
-  // Legacy ERC-8183 roots commonly expose execution_capabilities as a separate GET route.
-  // When the declared authorization operation is POST, use that standard GET descriptor
-  // as the discovery operation consumed by execution-capital preparation.
-  if (endpoints.authorization && endpoints.authorization.method === "POST") {
-    const capabilityRaw = rawEndpoints.execution_capabilities ?? rawEndpoints.executionCapabilities ?? rawEndpoints.capabilities;
-    const capability = normalizeOperation(capabilityRaw, sourceUrl); if (capability) endpoints.authorization = capability;
-  }
   if (!endpoints.health) { const fallback = normalizeOperation("/erc8183/health", sourceUrl); if (fallback) endpoints.health = fallback; }
   if (!endpoints.quote) { const fallback = normalizeOperation("/erc8183/negotiate", sourceUrl); if (fallback) endpoints.quote = fallback; }
   if (!endpoints.result) { const fallback = normalizeOperation("/erc8183/job/{job_id}/response", sourceUrl); if (fallback) endpoints.result = fallback; }
