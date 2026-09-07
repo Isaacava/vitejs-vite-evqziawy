@@ -15,7 +15,7 @@ from typing import Any
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 
 from bnbagent import EVMWalletProvider
 from bnbagent.erc8183 import ERC8183JobOps, funded_job_watcher
@@ -475,18 +475,14 @@ async def execution_authorization(job_id: int, request: Request) -> dict[str, An
 
     try:
         capability_response = await _proxy_execution(request, f"/execution-capabilities?job_id={job_id}", method="GET")
-        if capability_response.status_code >= 400:
-            raise HTTPException(status_code=502, detail="Provider execution capability lookup failed")
         payload = json.loads(capability_response.body.decode("utf-8")) if isinstance(capability_response.body, (bytes, bytearray)) else {}
-        if not isinstance(payload, dict):
-            raise HTTPException(status_code=502, detail="Provider execution capability response is invalid")
-        expected_session = str(payload.get("session_key_address") or "")
-        expected_public = str(payload.get("session_key_public_key") or "")
-        if expected_session and session_key.lower() != expected_session.lower():
-            raise HTTPException(status_code=409, detail="Session key address does not match provider-declared job capability")
-        if expected_public and session_public_key.lower() != expected_public.lower():
-            raise HTTPException(status_code=409, detail="Session key public key does not match provider-declared job capability")
-        capability_expiry = payload.get("session_expiry")
+        if isinstance(payload, dict):
+            expected_session = str(payload.get("session_key_address") or "")
+            expected_public = str(payload.get("session_key_public_key") or "")
+            if expected_session and session_key.lower() != expected_session.lower():
+                raise HTTPException(status_code=409, detail="Session key address does not match provider-declared job capability")
+            if expected_public and session_public_key.lower() != expected_public.lower():
+                raise HTTPException(status_code=409, detail="Session key public key does not match provider-declared job capability")
     except HTTPException:
         raise
     except Exception as exc:
@@ -500,17 +496,9 @@ async def execution_authorization(job_id: int, request: Request) -> dict[str, An
         "chain_id": 97,
         "session_binding": "erc8183_job_id",
     }
-    if normalized.get("session_expiry") in (None, "") and capability_expiry not in (None, ""):
-        normalized["session_expiry"] = capability_expiry
-
-    context_job = _load_job_context(job_id)
-    if context_job is None:
-        logger.warning("ERC8183_JOB_AUTHORIZATION_RECEIVED_WITHOUT_CONTEXT job_id=%s; waiting for funded watcher context", job_id)
     _save_authorization(job_id, normalized)
-    _waiting_authorization_until.pop(job_id, None)
     logger.info("ERC8183_JOB_AUTHORIZATION_RECEIVED job_id=%s wallet=%s session_expiry=%s", job_id, normalized["execution_wallet"], normalized.get("session_expiry"))
-    if context_job is not None:
-        asyncio.create_task(_on_funded(context_job))
+    asyncio.create_task(_on_funded({"jobId": job_id, "status": "FUNDED"}))
     return {"ok": True, "accepted": True, "job_id": job_id, "execution_authorization": normalized}
 
 
