@@ -11,6 +11,10 @@ const CATEGORY_RULES: Array<{ category: string; terms: string[] }> = [
   { category: "grid_trading", terms: ["grid", "range", "trading bot", "trade automatically"] },
   { category: "yield", terms: ["yield", "apy", "earn", "lending", "liquidity", "interest"] },
   { category: "health_factor", terms: ["health factor", "borrow", "lending", "liquidation", "leverage", "risk"] },
+  { category: "career_documents", terms: ["cv", "resume", "curriculum vitae", "career document", "career documents"] },
+  { category: "writing", terms: ["essay", "essay writing", "write an essay", "writing", "writer"] },
+  { category: "education", terms: ["homework", "tutor", "tutoring", "school exercise", "education"] },
+  { category: "research", terms: ["research", "research brief", "research report", "investigate", "literature review"] },
 ];
 
 const RISK_TERMS = {
