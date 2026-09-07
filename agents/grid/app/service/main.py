@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import logging
 import os
@@ -14,12 +15,11 @@ from typing import Any
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 
 from bnbagent import EVMWalletProvider
 from bnbagent.erc8183 import ERC8183JobOps, funded_job_watcher
 from bnbagent.storage import LocalStorageProvider
-
 from app.agent.main import fulfill_grid_job_with_execution
 from app.service.config import validate_runtime_config
 
@@ -27,8 +27,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger("grid_agent")
 config = validate_runtime_config()
 
-
-# Machine-readable task contract consumed by AgentMarket discovery.
 CAPABILITY_SCHEMA = {
     "type": "object",
     "inputs": [
@@ -58,6 +56,10 @@ def _payment_token() -> str | None:
         return str(_ops.erc8183_client.payment_token)
     except Exception:
         return None
+
+
+def _path(name: str, job_id: int) -> Path:
+    return _STORAGE_DIR / f"erc8183-{name}-{job_id}.json"
 
 
 def _pending_submission_path(job_id: int) -> Path:
@@ -109,6 +111,68 @@ def _submission_hash(submission: Any) -> str | None:
     return None
 
 
+def _authorization_path(job_id: int) -> Path:
+    return _path("authorization", job_id)
+
+
+def _decision_path(job_id: int) -> Path:
+    return _path("decision", job_id)
+
+
+def _save_decision(job_id: int, job: dict[str, Any], decision: dict[str, Any]) -> None:
+    _STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+    _decision_path(job_id).write_text(json.dumps({"job": job, "decision": decision, "updated_at": int(time.time())}, separators=(",", ":")), encoding="utf-8")
+
+
+def _load_decision(job_id: int) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    try:
+        payload = json.loads(_decision_path(job_id).read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return None
+    job = payload.get("job") if isinstance(payload, dict) else None
+    decision = payload.get("decision") if isinstance(payload, dict) else None
+    return (job, decision) if isinstance(job, dict) and isinstance(decision, dict) else None
+
+
+def _save_authorization(job_id: int, authorization: dict[str, Any]) -> None:
+    _STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+    _authorization_path(job_id).write_text(json.dumps({"job_id": job_id, "authorization": authorization, "updated_at": int(time.time())}, separators=(",", ":")), encoding="utf-8")
+
+
+def _load_authorization(job_id: int) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(_authorization_path(job_id).read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return None
+    authorization = payload.get("authorization") if isinstance(payload, dict) else None
+    return authorization if isinstance(authorization, dict) else None
+
+
+def _obj(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict): return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def _valid_address(value: Any) -> bool:
+    return isinstance(value, str) and value.strip().startswith("0x") and len(value.strip()) == 42
+
+
+def _with_authorization(job: dict[str, Any], authorization: dict[str, Any]) -> dict[str, Any]:
+    updated = dict(job)
+    metadata = _obj(job.get("metadata"))
+    metadata["execution_authorization"] = authorization
+    if authorization.get("execution_wallet"):
+        metadata["wallet_address"] = authorization["execution_wallet"]
+    updated["metadata"] = json.dumps(metadata, separators=(",", ":"))
+    return updated
+
+
 async def _submit(job_id: int, deliverable: str, metadata: dict[str, Any]) -> str | None:
     _save_pending_submission(job_id, deliverable, metadata)
     try:
@@ -127,12 +191,7 @@ async def _submit(job_id: int, deliverable: str, metadata: dict[str, Any]) -> st
 
 def _is_waiting_authorization_error(exc: Exception) -> bool:
     text = str(exc).lower()
-    return (
-        "allowance is below amountin" in text
-        or "user must approve" in text
-        or "authorization" in text and "execution wallet" in text
-        or "does not contain a bound altana execution wallet" in text
-    )
+    return "authorization" in text or "execution wallet" in text or "allowance" in text
 
 
 async def _on_funded(job: dict[str, Any]) -> None:
@@ -142,37 +201,34 @@ async def _on_funded(job: dict[str, Any]) -> None:
     except (TypeError, ValueError):
         logger.warning("Funded job callback received invalid jobId=%r", raw_job_id)
         return
-
     now = time.time()
     wait_until = _waiting_authorization_until.get(job_id, 0.0)
     if wait_until > now:
-        remaining = int(wait_until - now)
-        logger.info("ERC8183_WAITING_FOR_USER_AUTHORIZATION job_id=%s retry_in=%ss", job_id, max(1, remaining))
+        logger.info("ERC8183_WAITING_FOR_USER_AUTHORIZATION job_id=%s retry_in=%ss", job_id, max(1, int(wait_until - now)))
         return
     _waiting_authorization_until.pop(job_id, None)
-
     _runtime["last_funded_job_observed"] = int(now)
     _runtime["last_job_id"] = job_id
     logger.info("ERC8183_FUNDED_JOB_OBSERVED job_id=%s provider=%s network=%s chain_id=97 poll_interval=%s", job_id, _provider_address(), config["network"], config["poll_interval"])
-
     try:
         pending = _load_pending_submission(job_id)
         if pending is not None:
             deliverable, metadata = pending
-            logger.info("ERC8183_PENDING_SUBMISSION_RETRY job_id=%s provider=%s", job_id, _provider_address())
             tx_hash = await _submit(job_id, deliverable, metadata)
             _runtime["last_submission"] = {"timestamp": int(time.time()), "job_id": job_id, "tx_hash": tx_hash}
             _runtime["last_error"] = None
             return
 
+        module = importlib.import_module("app.agent.main")
+        authorization = _load_authorization(job_id)
+        execution_job = _with_authorization(job, authorization) if authorization else job
         _runtime["last_execution_started"] = int(time.time())
-        logger.info("ERC8183_AGENT_EXECUTION_STARTED job_id=%s provider=%s network=%s chain_id=97", job_id, _provider_address(), config["network"])
-        deliverable, metadata = await fulfill_grid_job_with_execution(job)
+        logger.info("ERC8183_AGENT_EXECUTION_STARTED job_id=%s provider=%s network=%s chain_id=97 authorization=%s", job_id, _provider_address(), config["network"], "present" if authorization else "absent")
+        deliverable, metadata = await module.fulfill_grid_job_with_execution(execution_job)
         execution_status = str(metadata.get("execution_status") or "").lower()
         transaction_hash = str(metadata.get("transaction_hash") or "")
         if execution_status != "executed" or not transaction_hash:
             raise RuntimeError(f"Grid execution did not produce successful execution evidence for job {job_id}; execution_status={execution_status or 'unknown'}")
-
         _runtime["last_execution_completed"] = int(time.time())
         tx_hash = await _submit(job_id, deliverable, metadata)
         _runtime["last_submission"] = {"timestamp": int(time.time()), "job_id": job_id, "tx_hash": tx_hash}
@@ -192,13 +248,7 @@ async def _on_funded(job: dict[str, Any]) -> None:
         if _is_waiting_authorization_error(exc):
             retry_seconds = max(120, min(600, int(config["poll_interval"]) * 10))
             _waiting_authorization_until[job_id] = time.time() + retry_seconds
-            logger.warning(
-                "ERC8183_WAITING_FOR_USER_AUTHORIZATION job_id=%s provider=%s retry_in=%ss reason=%s",
-                job_id,
-                _provider_address(),
-                retry_seconds,
-                str(exc),
-            )
+            logger.warning("ERC8183_WAITING_FOR_USER_AUTHORIZATION job_id=%s provider=%s retry_in=%ss reason=%s", job_id, _provider_address(), retry_seconds, str(exc))
             return
         logger.exception("ERC8183_AGENT_EXECUTION_FAILED job_id=%s provider=%s network=%s chain_id=97", job_id, _provider_address(), config["network"])
         raise
@@ -210,8 +260,7 @@ async def _proxy_execution(request: Request, endpoint: str, method: str | None =
     headers: dict[str, str] = {}
     for name in ("authorization", "content-type", "accept"):
         value = request.headers.get(name)
-        if value:
-            headers[name] = value
+        if value: headers[name] = value
     try:
         async with httpx.AsyncClient(timeout=90.0) as client:
             upstream = await client.request(upstream_method, f"{_EXECUTION_INTERNAL_URL}{endpoint}", headers=headers, content=body)
@@ -286,17 +335,71 @@ async def execution_capabilities(request: Request) -> Response:
 
 
 @app.post("/erc8183/job/{job_id}/execution-authorization")
-async def execution_authorization(job_id: int, request: Request) -> Response:
+async def execution_authorization(job_id: int, request: Request) -> dict[str, Any]:
     if job_id <= 0:
         raise HTTPException(status_code=400, detail="job_id must be positive")
-    query = request.url.query
-    separator = "&" if query else ""
-    return await _proxy_execution(request, f"/execution-capabilities?job_id={job_id}{separator}{query}" if query else f"/execution-capabilities?job_id={job_id}", method="GET")
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Request body must be an object")
+    authorization = body.get("execution_authorization") if isinstance(body.get("execution_authorization"), dict) else body
+    if not isinstance(authorization, dict):
+        raise HTTPException(status_code=400, detail="execution_authorization is required")
+
+    execution_wallet = next((authorization.get(key) for key in ("execution_wallet", "wallet_address", "wallet", "execution_wallet_address") if _valid_address(authorization.get(key))), None)
+    session_key = next((authorization.get(key) for key in ("session_key_address", "agent_session_address") if _valid_address(authorization.get(key))), None)
+    session_public_key = next((authorization.get(key) for key in ("session_key_public_key", "agent_session_public_key") if isinstance(authorization.get(key), str) and authorization.get(key).strip()), None)
+    if not execution_wallet:
+        raise HTTPException(status_code=409, detail="A valid job-scoped execution wallet is required")
+    if not session_key or not session_public_key:
+        raise HTTPException(status_code=409, detail="A complete job-scoped execution session is required")
+
+    try:
+        capability = await (asyncio.to_thread(lambda: None))
+        capability_response = await _proxy_execution(request, f"/execution-capabilities?job_id={job_id}", method="GET")
+        capability_payload = json.loads(capability_response.body.decode("utf-8")) if isinstance(capability_response.body, (bytes, bytearray)) else {}
+        if isinstance(capability_payload, dict):
+            expected_session = str(capability_payload.get("session_key_address") or "")
+            expected_public = str(capability_payload.get("session_key_public_key") or "")
+            if expected_session and session_key.lower() != expected_session.lower():
+                raise HTTPException(status_code=409, detail="Session key address does not match provider-declared job capability")
+            if expected_public and session_public_key.lower() != expected_public.lower():
+                raise HTTPException(status_code=409, detail="Session key public key does not match provider-declared job capability")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Unable to validate execution capability: {exc}") from exc
+
+    normalized = {
+        **authorization,
+        "execution_wallet": str(execution_wallet).strip(),
+        "wallet_provider": "altana",
+        "authorization_model": "scoped_session",
+        "chain_id": 97,
+        "session_binding": "erc8183_job_id",
+    }
+    _save_authorization(job_id, normalized)
+    return {"ok": True, "accepted": True, "job_id": job_id, "execution_authorization": normalized}
 
 
-@app.get("/erc8183/execution-health")
-async def execution_health(request: Request) -> Response:
-    return await _proxy_execution(request, "/health")
+@app.get("/erc8183/job/{job_id}/response")
+async def job_response(job_id: int) -> Response:
+    filepath = _response_path(job_id)
+    try:
+        content = filepath.read_bytes()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="No deliverable found for this job") from exc
+    return Response(content=content, media_type="application/json", headers={"cache-control": "no-store"})
+
+
+@app.get("/erc8183/job/{job_id}/authorization")
+async def job_authorization(job_id: int) -> dict[str, Any]:
+    authorization = _load_authorization(job_id)
+    if not authorization:
+        raise HTTPException(status_code=404, detail="Execution authorization not available for this job")
+    return {"ok": True, "job_id": job_id, "execution_authorization": authorization}
 
 
 @app.post("/erc8183/preflight/pancake")
@@ -314,11 +417,6 @@ async def execution_receipt(transaction_hash: str, request: Request) -> Response
     return await _proxy_execution(request, f"/receipt/{transaction_hash}")
 
 
-@app.get("/erc8183/job/{job_id}/response")
-async def job_response(job_id: int) -> Response:
-    filepath = _response_path(job_id)
-    try:
-        content = filepath.read_bytes()
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="No deliverable found for this job") from exc
-    return Response(content=content, media_type="application/json", headers={"cache-control": "no-store"})
+@app.get("/erc8183/execution-health")
+async def execution_health(request: Request) -> Response:
+    return await _proxy_execution(request, "/health")
