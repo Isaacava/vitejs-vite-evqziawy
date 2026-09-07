@@ -130,17 +130,33 @@ function materializeEndpoint(endpoint: string, body: Record<string, unknown>) {
     return encodeURIComponent(String(value));
   });
 }
+function canonicalExecutionCapabilityJobId(body: Record<string, unknown>) {
+  const value = body.chain_job_id ?? body.chainJobId ?? body.provider_job_id;
+  const jobId = String(value ?? "").trim();
+  if (/^\d+$/.test(jobId) && Number(jobId) > 0) return jobId;
+  const fallback = String(body.job_id ?? body.jobId ?? "").trim();
+  if (/^\d+$/.test(fallback) && Number(fallback) > 0) return fallback;
+  throw new Error("execution_capabilities requires the numeric ERC-8183 chain job id");
+}
 async function requestJson(operation: ProviderOperation, body: Record<string, unknown>): Promise<OperationResponse> {
   const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
     let endpoint = materializeEndpoint(operation.endpoint, body); let requestBody: string | undefined;
     if (operation.method === "GET") {
       const url = new URL(endpoint);
-      for (const [key, value] of Object.entries(body)) {
-        if (value === undefined || value === null) continue;
-        if (operation.action === "execution_capabilities" && key === "job_id") continue;
-        const queryKey = operation.action === "execution_capabilities" && key === "chain_job_id" ? "job_id" : key;
-        if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") url.searchParams.set(queryKey, String(value));
+      if (operation.action === "execution_capabilities") {
+        const canonicalJobId = canonicalExecutionCapabilityJobId(body);
+        for (const key of ["job_id", "jobId", "chain_job_id", "chainJobId", "provider_job_id", "id"]) url.searchParams.delete(key);
+        url.searchParams.set("job_id", canonicalJobId);
+        for (const [key, value] of Object.entries(body)) {
+          if (value === undefined || value === null || ["job_id", "jobId", "chain_job_id", "chainJobId", "provider_job_id", "id"].includes(key)) continue;
+          if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") url.searchParams.set(key, String(value));
+        }
+      } else {
+        for (const [key, value] of Object.entries(body)) {
+          if (value === undefined || value === null) continue;
+          if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") url.searchParams.set(key, String(value));
+        }
       }
       endpoint = url.toString();
     } else requestBody = JSON.stringify(selectBody(operation.action, body));
