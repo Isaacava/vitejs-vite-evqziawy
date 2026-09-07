@@ -89,17 +89,39 @@ function metadataCapabilityUrls(agent: Record<string, unknown>) {
     .filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => value.trim());
 }
 
+function capabilityUrlCandidates(base: string) {
+  const clean = base.replace(/\/+$/, "");
+  try {
+    const parsed = new URL(clean);
+    const path = parsed.pathname.replace(/\/+$/, "");
+    if (/\/execution-capabilit(?:y|ies)$/.test(path)) return [clean];
+    parsed.pathname = `${path}/execution-capabilities`;
+    parsed.search = "";
+    return [parsed.toString()];
+  } catch {
+    return [`${clean}/execution-capabilities`];
+  }
+}
+
 async function loadCapability(supabase: ReturnType<typeof serverClient>, agent: Record<string, unknown>, chainJobId: string) {
   const { data: endpoints, error } = await supabase.from("agent_endpoints").select("endpoint_url,protocol,version,metadata").eq("agent_id", String(agent.id || "")).limit(20);
   if (error) throw new Error(error.message);
   const interop = await discoverUniversalAgentInterop(agent, endpoints || []);
   const explicitCapabilityUrls = metadataCapabilityUrls(agent);
   const capabilityOperation = pickOperation(interop, "capability");
-  const candidates = [...new Set([...explicitCapabilityUrls, capabilityOperation?.endpoint || ""].filter(Boolean))];
+  const registeredCapabilityUrls = (endpoints || []).flatMap((endpoint) => capabilityUrlCandidates(String(endpoint.endpoint_url || "")));
+  const discoveredCapabilityUrls = capabilityOperation?.endpoint ? capabilityUrlCandidates(capabilityOperation.endpoint) : [];
+  const candidates = [...new Set([...explicitCapabilityUrls, ...registeredCapabilityUrls, ...discoveredCapabilityUrls].filter(Boolean))];
   const failures: string[] = [];
   for (const base of candidates) {
-    try { const url = new URL(base); url.searchParams.set("job_id", chainJobId); return { capability: await fetchCapability(url.toString()), endpointUrl: url.toString(), interop }; }
-    catch (error) { failures.push(`${base}: ${error instanceof Error ? error.message : "capability fetch failed"}`); }
+    try {
+      const url = new URL(base);
+      url.searchParams.set("job_id", chainJobId);
+      const resolvedUrl = url.toString();
+      return { capability: await fetchCapability(resolvedUrl), endpointUrl: resolvedUrl, interop };
+    } catch (error) {
+      failures.push(`${base}: ${error instanceof Error ? error.message : "capability fetch failed"}`);
+    }
   }
   const executionOperation = pickOperation(interop, "execute");
   const documentedAsAltana = executionOperation && [executionOperation.protocol, executionOperation.name, executionOperation.description, executionOperation.evidence].filter(Boolean).join(" ").toLowerCase().includes("altana");
@@ -146,9 +168,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!capability) return res.status(200).json({ ok: true, required: false, network: "bsc-testnet", chain_id: 97, provider_agent_id: agent.agent_id, capability_source_url: endpointUrl, erc8183: { job_id: job.chain_job_id, status: Number(chainJob.status), client: chainJob.client, provider: chainJob.provider }, execution: null, wallet_provider: null, authorization_model: null, execution_capital: { status: "not_advertised", requested_amount: null, requested_amount_raw: null, token: null, symbol: null, detection_source: "published_agent_capabilities", warning: loaded.note || warning, discovered_operations: interop.operations.map((operation) => ({ kind: operation.kind, protocol: operation.protocol, endpoint: operation.endpoint, method: operation.method, name: operation.name, evidence: operation.evidence })) }, note: loaded.note || "No execution-token requirement was declared by the provider." });
 
     let effectiveRequest = request as Record<string, unknown> | null;
-    // The requirement route is already polled by the mission console. Use that
-    // polling path to repair an older requested record whose stored descriptor was
-    // captured before the provider began returning the request-scoped session key.
     if (effectiveRequest && effectiveRequest.status === "requested" && !storedCapabilityIsComplete(effectiveRequest)) {
       const evidence = object(effectiveRequest.evidence);
       const refreshedEvidence = {
@@ -182,7 +201,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (key && /^0x[a-fA-F0-9]{64}$/.test(key) && executionWallet) { sessionKeyId = key as Hex; const now = Math.floor(Date.now() / 1000); sessionVerified = Boolean(sessionExpiry && sessionExpiry > now) && await publicClient.readContract({ address: process.env.ALTANA_KEYSTORE_ADDRESS as Address, abi: KEYSTORE_ABI, functionName: "isValidKey", args: [executionWallet, sessionKeyId] }).catch(() => false); }
     }
     const market = capability.execution_market || {};
-    const storedAmount = effectiveRequest ? getString(effectiveRequest, "requested_amount", "required_amount", "amount") : null;
+    const storedAmount = effectiveRequest ? getString(effectiveRequest, "requested_amount", "required_amount", "amount", "capital_requested") : null;
     const storedAmountRaw = effectiveRequest ? getString(effectiveRequest, "requested_amount_raw", "required_amount_raw", "amount_raw") : null;
     const storedToken = effectiveRequest && address(effectiveRequest.capital_token) ? effectiveRequest.capital_token as Address : address(market.token_in) ? market.token_in : null;
     return res.status(200).json({
