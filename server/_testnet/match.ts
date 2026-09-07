@@ -80,40 +80,17 @@ function metadataRegistration(agent: AgentRow): Record<string, unknown> {
   return registration && typeof registration === "object" ? registration as Record<string, unknown> : {};
 }
 
-function discoveredProviderManifests(endpoints: EndpointRow[]) {
-  return endpoints.flatMap((endpoint) => {
-    const metadata = endpoint.metadata;
-    if (!metadata || typeof metadata !== "object") return [];
-    const manifest = (metadata as Record<string, unknown>).provider_manifest;
-    return manifest && typeof manifest === "object" ? [manifest as Record<string, unknown>] : [];
-  });
-}
-
-function manifestValues(manifests: Record<string, unknown>[]) {
-  return manifests.flatMap((manifest) => {
-    const protocols = Array.isArray(manifest.protocols) ? manifest.protocols : [];
-    const erc8183 = manifest.erc8183 && typeof manifest.erc8183 === "object" ? ["erc-8183", "erc8183", "commerce"] : [];
-    const hiring = manifest.hiring && typeof manifest.hiring === "object" ? [JSON.stringify(manifest.hiring)] : [];
-    return [...protocols, ...erc8183, ...hiring]
-      .filter((value): value is string => typeof value === "string")
-      .map((value) => value.toLowerCase());
-  });
-}
-
 function deriveExecutionProfile(agent: AgentRow, endpoints: EndpointRow[]) {
   const metadata = agent.metadata ?? {};
   const execution = metadata.execution && typeof metadata.execution === "object" ? metadata.execution as Record<string, unknown> : {};
   const commerce = metadata.commerce && typeof metadata.commerce === "object" ? metadata.commerce as Record<string, unknown> : {};
   const communication = metadata.communication && typeof metadata.communication === "object" ? metadata.communication as Record<string, unknown> : {};
   const registration = metadataRegistration(agent);
-  const manifests = discoveredProviderManifests(endpoints);
-  const discoveredValues = manifestValues(manifests);
   const declared = [
     ...normalizedStrings(registration.capabilities),
     ...normalizedStrings(registration.skills),
     ...normalizedStrings(registration.services),
     ...normalizedStrings(registration.endpoints),
-    ...discoveredValues,
   ];
   const endpointText = endpoints.map((endpoint) => `${endpoint.protocol ?? ""} ${endpoint.endpoint_url ?? ""} ${JSON.stringify(endpoint.metadata ?? {})}`).join(" ").toLowerCase();
   const registrationText = JSON.stringify(registration).toLowerCase();
@@ -332,18 +309,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const matches = candidateAgents
       .map((agent) => {
         const agentEndpoints = endpointsByAgent.get(agent.id) ?? [];
-        const erc8183EndpointOnline = agentEndpoints.some((endpoint) => {
-          if (endpoint.status !== "online") return false;
-          if (/erc[- ]?8183/i.test(String(endpoint.protocol ?? ""))) return true;
-          const metadata = endpoint.metadata;
-          if (!metadata || typeof metadata !== "object") return false;
-          const manifest = (metadata as Record<string, unknown>).provider_manifest;
-          if (!manifest || typeof manifest !== "object") return false;
-          const providerManifest = manifest as Record<string, unknown>;
-          const protocols = Array.isArray(providerManifest.protocols) ? providerManifest.protocols : [];
-          const protocolText = protocols.filter((value): value is string => typeof value === "string").join(" ").toLowerCase();
-          return /erc[- ]?8183/.test(protocolText) || Boolean(providerManifest.erc8183 && typeof providerManifest.erc8183 === "object");
-        });
+        const erc8183EndpointOnline = agentEndpoints.some((endpoint) => endpoint.protocol === "erc8183" && endpoint.status === "online");
         const profile = deriveExecutionProfile(agent, agentEndpoints);
         return {
           agent,
