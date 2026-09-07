@@ -118,10 +118,6 @@ export function getExecutionCapability(request: ExecutionCapitalRequest | null |
     typeof value.wallet_provider !== "string" ||
     typeof value.authorization_model !== "string" ||
     value.private_key_exposed !== false ||
-    typeof value.source_url !== "string" ||
-    typeof value.endpoint_id !== "string" ||
-    typeof value.fetched_at !== "string" ||
-    typeof value.independently_authorized !== "boolean" ||
     !Array.isArray(value.allowed_targets) ||
     !value.allowed_targets.every(isAddress) ||
     !Array.isArray(value.allowed_selectors) ||
@@ -132,9 +128,13 @@ export function getExecutionCapability(request: ExecutionCapitalRequest | null |
   if (selectorsRequired && (value.allowed_targets.length === 0 || value.allowed_selectors.length === 0)) return null;
 
   const altanaScoped = value.wallet_provider === "altana" && value.authorization_model === "scoped_session";
-  if (altanaScoped) {
-    if (!isAddress(value.session_key_address) || !isHex(value.session_key_public_key)) return null;
-  }
+  if (altanaScoped && (!isAddress(value.session_key_address) || !isHex(value.session_key_public_key))) return null;
+
+  const sourceUrl = typeof value.source_url === "string" && value.source_url.trim() ? value.source_url : "persisted-provider-capability";
+  const endpointId = typeof value.endpoint_id === "string" && value.endpoint_id.trim() ? value.endpoint_id : "provider_execution_capability";
+  const fetchedAt = typeof value.fetched_at === "string" && value.fetched_at.trim() ? value.fetched_at : new Date(0).toISOString();
+  const endpointStatus = typeof value.endpoint_status === "string" ? value.endpoint_status : null;
+  const independentlyAuthorized = typeof value.independently_authorized === "boolean" ? value.independently_authorized : false;
 
   return {
     network: "bsc-testnet",
@@ -151,11 +151,11 @@ export function getExecutionCapability(request: ExecutionCapitalRequest | null |
     ...(typeof value.protocol === "string" && value.protocol.trim() ? { protocol: value.protocol.trim().toLowerCase() } : {}),
     ...(typeof value.preflight_path === "string" && value.preflight_path.trim().startsWith("/") ? { preflight_path: value.preflight_path.trim() } : {}),
     execution_market: parseExecutionMarket(value.execution_market),
-    source_url: value.source_url,
-    endpoint_id: value.endpoint_id,
-    endpoint_status: typeof value.endpoint_status === "string" ? value.endpoint_status : null,
-    fetched_at: value.fetched_at,
-    independently_authorized: value.independently_authorized,
+    source_url: sourceUrl,
+    endpoint_id: endpointId,
+    endpoint_status: endpointStatus,
+    fetched_at: fetchedAt,
+    independently_authorized: independentlyAuthorized,
   };
 }
 
