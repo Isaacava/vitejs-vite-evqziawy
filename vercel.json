@@ -1,4 +1,18 @@
 {
+  "headers": [
+    {
+      "source": "/index.html",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store, no-cache, must-revalidate, proxy-revalidate" }
+      ]
+    },
+    {
+      "source": "/(app|dashboard|discover|missions|mission|activity|payments|execution-wallet|permissions|agent/evidence|prepare|prepare/execute|evaluator|provider/submit|lifecycle|agents/register|agent/inbox|testnet)(/.*)?",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store, no-cache, must-revalidate, proxy-revalidate" }
+      ]
+    }
+  ],
   "rewrites": [
     { "source": "/api/8004scan", "destination": "/api/marketplace?route=8004scan" },
     { "source": "/api/agents/register", "destination": "/api/marketplace?route=agent-register" },
