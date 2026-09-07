@@ -91,8 +91,6 @@ def _job_execution_wallet(job: dict[str, Any], params: dict[str, Any]) -> str:
         None,
     )
 
-    # When an authorization envelope is present it is authoritative. Never
-    # silently execute against a different wallet supplied elsewhere in the job.
     if authorized_wallet:
         for other in (job_wallet, top_level_wallet):
             if other and other.lower() != authorized_wallet.lower():
@@ -108,6 +106,24 @@ def _job_execution_wallet(job: dict[str, Any], params: dict[str, Any]) -> str:
     )
 
 
+def _job_session_expiry(params: dict[str, Any]) -> int | None:
+    authorization = params.get("execution_authorization")
+    if not isinstance(authorization, dict):
+        authorization = params.get("authorization")
+    if not isinstance(authorization, dict):
+        authorization = {}
+    raw = authorization.get("session_expiry") or params.get("session_expiry") or params.get("sessionExpiry")
+    if raw in (None, ""):
+        return None
+    try:
+        expiry = int(raw)
+    except (TypeError, ValueError):
+        raise RuntimeError("Grid execution authorization contains an invalid session expiry")
+    if expiry <= 0:
+        raise RuntimeError("Grid execution authorization contains an invalid session expiry")
+    return expiry
+
+
 async def execute_grid_trade(job: dict[str, Any]) -> dict[str, Any]:
     """Run Grid's BSC Testnet execution path with the wallet supplied by this job."""
     params = _job_execution_parameters(job)
@@ -120,6 +136,7 @@ async def execute_grid_trade(job: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("ERC-8183 jobId must be positive")
 
     wallet_address = _job_execution_wallet(job, params)
+    session_expiry = _job_session_expiry(params)
     base_url = (_env("GRID_EXECUTION_INTERNAL_URL", "http://127.0.0.1:8788") or "http://127.0.0.1:8788").rstrip("/")
     router = _required_address("PANCAKE_TESTNET_ROUTER", str(market.get("router") or market.get("target") or DEFAULT_ROUTER))
     token_in = _required_address("GRID_DEFAULT_TOKEN_IN", str(market.get("token_in") or DEFAULT_TOKEN_IN))
@@ -184,10 +201,14 @@ async def execute_grid_trade(job: dict[str, Any]) -> dict[str, Any]:
         if str(swap_call.get("data"))[:10].lower() != SWAP_SELECTOR:
             raise RuntimeError(f"Grid swap calldata uses unexpected selector; expected {SWAP_SELECTOR}")
 
-        execute_response = await client.post(
-            f"{base_url}/execute-configured",
-            json={"job_id": job_id, "wallet_address": wallet_address, "calls": [swap_call]},
-        )
+        execution_request: dict[str, Any] = {
+            "job_id": job_id,
+            "wallet_address": wallet_address,
+            "calls": [swap_call],
+        }
+        if session_expiry is not None:
+            execution_request["session_expiry"] = session_expiry
+        execute_response = await client.post(f"{base_url}/execute-configured", json=execution_request)
         try:
             execute_body = execute_response.json()
         except ValueError as exc:
@@ -214,6 +235,7 @@ async def execute_grid_trade(job: dict[str, Any]) -> dict[str, Any]:
             "calls_id": execution.get("callsId"),
             "status": execution.get("status"),
             "execution_wallet": wallet_address,
+            "session_expiry": session_expiry,
             "preflight": result,
             "receipt": receipt,
         }
