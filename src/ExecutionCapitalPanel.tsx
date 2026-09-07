@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPublicClient, http, parseUnits, type Address, type Hex } from "viem";
 import { bscTestnet } from "viem/chains";
-import type { ExecutionCapitalRequest } from "./lib/executionCapital";
+import type { ExecutionCapitalRequest, ExecutionCapabilityDescriptor } from "./lib/executionCapital";
 import { getExecutionCapability, TESTNET_U_TOKEN_ADDRESS } from "./lib/executionCapital";
 import ExecutionCapitalCard, { type OnchainExecutionSummary } from "./ExecutionCapitalCard";
 import ExecutionCapitalRequestGate from "./ExecutionCapitalRequestGate";
@@ -17,12 +17,28 @@ type Props = {
 };
 
 type ExecutionRequirement = {
+  execution?: string | null;
+  wallet_provider?: string | null;
+  authorization_model?: string | null;
+  network?: string | null;
+  chain_id?: number | null;
+  capability_source_url?: string;
   execution_market?: {
     token_in?: string | null;
     token_out?: string | null;
     token_in_symbol?: string | null;
     token_out_symbol?: string | null;
     fee?: number | null;
+    protocol?: string | null;
+  };
+  authorization?: {
+    session_key_address?: string | null;
+    session_key_public_key?: string | null;
+    allowed_targets?: string[];
+    allowed_selectors?: string[];
+    selectors_required?: boolean;
+    expiry?: number | null;
+    execution_wallet?: string | null;
   };
   execution_capital?: {
     token?: string | null;
@@ -100,10 +116,63 @@ function requestedRawAmount(value: string | null, decimals: number) {
   }
 }
 
+function capabilityFromRequirement(requirement: ExecutionRequirement | null): ExecutionCapabilityDescriptor | null {
+  const authorization = requirement?.authorization;
+  const sessionAddress = authorization?.session_key_address;
+  const sessionPublicKey = authorization?.session_key_public_key;
+  const allowedTargets = authorization?.allowed_targets || [];
+  const allowedSelectors = authorization?.allowed_selectors || [];
+  if (
+    requirement?.network !== "bsc-testnet" ||
+    Number(requirement.chain_id) !== 97 ||
+    requirement.execution !== "altana-scoped-session" ||
+    requirement.wallet_provider !== "altana" ||
+    requirement.authorization_model !== "scoped_session" ||
+    !/^0x[a-fA-F0-9]{40}$/.test(String(sessionAddress || "")) ||
+    !/^0x[a-fA-F0-9]+$/.test(String(sessionPublicKey || "")) ||
+    !allowedTargets.every((value) => /^0x[a-fA-F0-9]{40}$/.test(value)) ||
+    !allowedSelectors.every((value) => /^0x[a-fA-F0-9]{8}$/.test(value)) ||
+    allowedTargets.length === 0 ||
+    allowedSelectors.length === 0
+  ) return null;
+
+  const market = requirement.execution_market;
+  const tokenIn = market?.token_in && /^0x[a-fA-F0-9]{40}$/.test(market.token_in) ? market.token_in as `0x${string}` : undefined;
+  const tokenOut = market?.token_out && /^0x[a-fA-F0-9]{40}$/.test(market.token_out) ? market.token_out as `0x${string}` : null;
+  return {
+    network: "bsc-testnet",
+    chainId: 97,
+    execution: requirement.execution,
+    wallet_provider: requirement.wallet_provider,
+    authorization_model: requirement.authorization_model,
+    session_key_address: sessionAddress as `0x${string}`,
+    session_key_public_key: sessionPublicKey as `0x${string}`,
+    allowed_targets: allowedTargets as `0x${string}`[],
+    allowed_selectors: allowedSelectors as `0x${string}`[],
+    selectors_required: authorization?.selectors_required !== false,
+    private_key_exposed: false,
+    ...(typeof market?.protocol === "string" && market.protocol.trim() ? { protocol: market.protocol.trim().toLowerCase() } : {}),
+    ...(tokenIn ? {
+      execution_market: {
+        token_in: tokenIn,
+        token_out: tokenOut,
+        token_in_symbol: market?.token_in_symbol?.trim() || "TOKEN",
+        token_out_symbol: market?.token_out_symbol?.trim() || null,
+        fee: Number.isInteger(Number(market?.fee)) ? Number(market?.fee) : null,
+      },
+    } : {}),
+    source_url: requirement.capability_source_url || requirement.source_url || "provider-capability",
+    endpoint_id: "provider_operation",
+    endpoint_status: "live",
+    fetched_at: new Date().toISOString(),
+    independently_authorized: false,
+  };
+}
+
 export default function ExecutionCapitalPanel({ request, jobBudget, jobCurrency }: Props) {
-  const capability = getExecutionCapability(request);
-  const capitalAmount = parseCapitalAmount(request?.capital_requested || null);
   const [requirement, setRequirement] = useState<ExecutionRequirement | null>(null);
+  const capability = getExecutionCapability(request) ?? capabilityFromRequirement(requirement);
+  const capitalAmount = parseCapitalAmount(request?.capital_requested || null);
   const [requirementError, setRequirementError] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [onchainExecution, setOnchainExecution] = useState<OnchainExecutionSummary | null>(null);
