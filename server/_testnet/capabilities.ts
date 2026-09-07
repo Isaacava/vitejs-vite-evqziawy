@@ -44,16 +44,8 @@ function schemaInputs(schema: Record<string, unknown>): Array<Record<string, unk
 
 function capabilityToResponseSchema(capability: AgentCapability): Record<string, unknown> {
   const metadata = object(capability.metadata);
-  const declaredCapabilitySchema = object(
-    metadata.capability_schema ??
-    metadata.capabilitySchema,
-  );
-  const inputSchema = object(
-    capability.input_schema ??
-    metadata.input_schema ??
-    metadata.inputSchema ??
-    declaredCapabilitySchema,
-  );
+  const declaredCapabilitySchema = object(metadata.capability_schema ?? metadata.capabilitySchema);
+  const inputSchema = object(capability.input_schema ?? metadata.input_schema ?? metadata.inputSchema ?? declaredCapabilitySchema);
   const inputs = schemaInputs(inputSchema);
   const defaults = object(declaredCapabilitySchema.defaults ?? metadata.defaults);
 
@@ -66,14 +58,7 @@ function capabilityToResponseSchema(capability: AgentCapability): Record<string,
 
 function capabilityMatchesAgent(capability: AgentCapability, agentId: string) {
   const metadata = object(capability.metadata);
-  const ids = [
-    metadata.erc8004_agent_id,
-    metadata.erc8004AgentId,
-    metadata.agent_id,
-    metadata.agentId,
-    metadata.capability_id,
-    metadata.capabilityId,
-  ];
+  const ids = [metadata.erc8004_agent_id, metadata.erc8004AgentId, metadata.agent_id, metadata.agentId, metadata.capability_id, metadata.capabilityId];
   return ids.some((value) => typeof value === "string" && value.trim() === agentId);
 }
 
@@ -88,23 +73,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!agentId) return res.status(400).json({ error: "agent_id is required" });
 
     const supabase = serverClient();
-    const [{ data: agent, error }, { data: endpoints, error: endpointError }] = await Promise.all([
-      supabase
-        .from("agents")
-        .select("id,agent_id,name,category,chain,status,verification_status,owner,metadata")
-        .eq("chain", "bsc-testnet")
-        .eq("agent_id", agentId)
-        .maybeSingle(),
-      supabase
-        .from("agent_endpoints")
-        .select("endpoint_url,metadata")
-        .eq("agent_id", agentId),
-    ]);
+    const { data: agent, error } = await supabase
+      .from("agents")
+      .select("id,agent_id,name,category,chain,status,verification_status,owner,metadata")
+      .eq("chain", "bsc-testnet")
+      .eq("agent_id", agentId)
+      .maybeSingle();
 
     if (error) throw new Error(error.message);
-    if (endpointError) throw new Error(endpointError.message);
     if (!agent) return res.status(404).json({ error: "Testnet agent not found" });
     if (agent.verification_status === "revoked") return res.status(409).json({ error: "Agent identity is revoked" });
+
+    const { data: endpoints, error: endpointError } = await supabase
+      .from("agent_endpoints")
+      .select("endpoint_url,metadata")
+      .eq("agent_id", String(agent.id));
+    if (endpointError) throw new Error(endpointError.message);
 
     const snapshot = await discoverAgentCapabilities(
       agent as Record<string, unknown>,
