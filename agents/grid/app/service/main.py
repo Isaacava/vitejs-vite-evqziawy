@@ -42,8 +42,23 @@ _STORAGE_DIR = Path(os.getenv("STORAGE_LOCAL_PATH") or ".agent-data")
 _EXECUTION_INTERNAL_URL = (os.getenv("GRID_EXECUTION_INTERNAL_URL") or "http://127.0.0.1:8788").rstrip("/")
 _wallet = EVMWalletProvider(password=os.environ["WALLET_PASSWORD"], private_key=os.environ.get("PRIVATE_KEY"))
 _storage = LocalStorageProvider(base_dir=str(_STORAGE_DIR))
-_ops = ERC8183JobOps(_wallet, network=config["network"], storage_provider=_storage, service_price=config["service_price"], agent_url=config["endpoint"])
-_runtime: dict[str, Any] = {"watcher_started_at": None, "last_funded_job_observed": None, "last_job_id": None, "last_execution_started": None, "last_execution_completed": None, "last_execution_failed": None, "last_submission": None, "last_error": None}
+_ops = ERC8183JobOps(
+    _wallet,
+    network=config["network"],
+    storage_provider=_storage,
+    service_price=config["service_price"],
+    agent_url=config["endpoint"],
+)
+_runtime: dict[str, Any] = {
+    "watcher_started_at": None,
+    "last_funded_job_observed": None,
+    "last_job_id": None,
+    "last_execution_started": None,
+    "last_execution_completed": None,
+    "last_execution_failed": None,
+    "last_submission": None,
+    "last_error": None,
+}
 _waiting_authorization_until: dict[int, float] = {}
 
 
@@ -72,12 +87,18 @@ def _response_path(job_id: int) -> Path:
 
 def _save_pending_submission(job_id: int, deliverable: str, metadata: dict[str, Any]) -> None:
     _STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-    _pending_submission_path(job_id).write_text(json.dumps({"job_id": job_id, "deliverable": deliverable, "metadata": metadata}, separators=(",", ":")), encoding="utf-8")
+    _pending_submission_path(job_id).write_text(
+        json.dumps({"job_id": job_id, "deliverable": deliverable, "metadata": metadata}, separators=(",", ":")),
+        encoding="utf-8",
+    )
 
 
 def _save_response(job_id: int, deliverable: str, metadata: dict[str, Any], tx_hash: str | None) -> None:
     _STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-    _response_path(job_id).write_text(json.dumps({"job_id": job_id, "deliverable": deliverable, "metadata": metadata, "transaction_hash": tx_hash, "submitted_at": int(time.time())}, separators=(",", ":")), encoding="utf-8")
+    _response_path(job_id).write_text(
+        json.dumps({"job_id": job_id, "deliverable": deliverable, "metadata": metadata, "transaction_hash": tx_hash, "submitted_at": int(time.time())}, separators=(",", ":")),
+        encoding="utf-8",
+    )
 
 
 def _load_pending_submission(job_id: int) -> tuple[str, dict[str, Any]] | None:
@@ -121,7 +142,10 @@ def _decision_path(job_id: int) -> Path:
 
 def _save_decision(job_id: int, job: dict[str, Any], decision: dict[str, Any]) -> None:
     _STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-    _decision_path(job_id).write_text(json.dumps({"job": job, "decision": decision, "updated_at": int(time.time())}, separators=(",", ":")), encoding="utf-8")
+    _decision_path(job_id).write_text(
+        json.dumps({"job": job, "decision": decision, "updated_at": int(time.time())}, separators=(",", ":")),
+        encoding="utf-8",
+    )
 
 
 def _load_decision(job_id: int) -> tuple[dict[str, Any], dict[str, Any]] | None:
@@ -136,7 +160,10 @@ def _load_decision(job_id: int) -> tuple[dict[str, Any], dict[str, Any]] | None:
 
 def _save_authorization(job_id: int, authorization: dict[str, Any]) -> None:
     _STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-    _authorization_path(job_id).write_text(json.dumps({"job_id": job_id, "authorization": authorization, "updated_at": int(time.time())}, separators=(",", ":")), encoding="utf-8")
+    _authorization_path(job_id).write_text(
+        json.dumps({"job_id": job_id, "authorization": authorization, "updated_at": int(time.time())}, separators=(",", ":")),
+        encoding="utf-8",
+    )
 
 
 def _load_authorization(job_id: int) -> dict[str, Any] | None:
@@ -149,7 +176,8 @@ def _load_authorization(job_id: int) -> dict[str, Any] | None:
 
 
 def _obj(value: Any) -> dict[str, Any]:
-    if isinstance(value, dict): return value
+    if isinstance(value, dict):
+        return value
     if isinstance(value, str) and value.strip():
         try:
             parsed = json.loads(value)
@@ -223,7 +251,13 @@ async def _on_funded(job: dict[str, Any]) -> None:
         authorization = _load_authorization(job_id)
         execution_job = _with_authorization(job, authorization) if authorization else job
         _runtime["last_execution_started"] = int(time.time())
-        logger.info("ERC8183_AGENT_EXECUTION_STARTED job_id=%s provider=%s network=%s chain_id=97 authorization=%s", job_id, _provider_address(), config["network"], "present" if authorization else "absent")
+        logger.info(
+            "ERC8183_AGENT_EXECUTION_STARTED job_id=%s provider=%s network=%s chain_id=97 authorization=%s",
+            job_id,
+            _provider_address(),
+            config["network"],
+            "present" if authorization else "absent",
+        )
         deliverable, metadata = await module.fulfill_grid_job_with_execution(execution_job)
         execution_status = str(metadata.get("execution_status") or "").lower()
         transaction_hash = str(metadata.get("transaction_hash") or "")
@@ -233,7 +267,7 @@ async def _on_funded(job: dict[str, Any]) -> None:
         tx_hash = await _submit(job_id, deliverable, metadata)
         _runtime["last_submission"] = {"timestamp": int(time.time()), "job_id": job_id, "tx_hash": tx_hash}
         _runtime["last_error"] = None
-        logger.info("ERC8183_SUBMISSION_CONFIRMED job_id=%s provider=%s tx_hash=%s network=%s chain_id=97", job_id, _provider_address(), tx_hash or "unknown", config["network"])
+        logger.info("ERC8183_SUBMISSION_CONFIRMED job_id=%s provider=%s tx_hash=%s network=%s chain_id=97", job_id, _provider_address(), tx_hash or "unknown", config["network"],)
     except ValueError as exc:
         message = str(exc)
         if message.startswith(("Grid range must", "grid_levels must", "notional must", "max_slippage_bps")):
@@ -260,14 +294,19 @@ async def _proxy_execution(request: Request, endpoint: str, method: str | None =
     headers: dict[str, str] = {}
     for name in ("authorization", "content-type", "accept"):
         value = request.headers.get(name)
-        if value: headers[name] = value
+        if value:
+            headers[name] = value
     try:
         async with httpx.AsyncClient(timeout=90.0) as client:
             upstream = await client.request(upstream_method, f"{_EXECUTION_INTERNAL_URL}{endpoint}", headers=headers, content=body)
     except httpx.HTTPError as exc:
         logger.exception("Grid local execution service unavailable")
         raise HTTPException(status_code=503, detail="Grid execution service unavailable") from exc
-    return Response(content=upstream.content, status_code=upstream.status_code, headers={"content-type": upstream.headers.get("content-type", "application/json"), "cache-control": "no-store"})
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        headers={"content-type": upstream.headers.get("content-type", "application/json"), "cache-control": "no-store"},
+    )
 
 
 _watcher_task: asyncio.Task | None = None
@@ -300,7 +339,26 @@ async def health() -> dict[str, str]:
 
 @app.get("/erc8183")
 async def erc8183_root() -> dict[str, Any]:
-    return {"status": "ok", "service": "Grid Agent ERC-8183 provider", "network": "bsc-testnet", "chain_id": 97, "agent_address": _provider_address(), "endpoints": {"health": "/erc8183/health", "status": "/erc8183/status", "runtime_status": "/erc8183/runtime-status", "negotiate": "/erc8183/negotiate", "execution_capabilities": "/erc8183/execution-capabilities", "execution_authorization": "/erc8183/job/{job_id}/execution-authorization", "execution_health": "/erc8183/execution-health", "preflight_pancake": "/erc8183/preflight/pancake", "execute": "/erc8183/execute", "receipt": "/erc8183/receipt/{transaction_hash}", "job_response": "/erc8183/job/{job_id}/response"}}
+    return {
+        "status": "ok",
+        "service": "Grid Agent ERC-8183 provider",
+        "network": "bsc-testnet",
+        "chain_id": 97,
+        "agent_address": _provider_address(),
+        "endpoints": {
+            "health": "/erc8183/health",
+            "status": "/erc8183/status",
+            "runtime_status": "/erc8183/runtime-status",
+            "negotiate": "/erc8183/negotiate",
+            "execution_capabilities": "/erc8183/execution-capabilities",
+            "execution_authorization": "/erc8183/job/{job_id}/execution-authorization",
+            "execution_health": "/erc8183/execution-health",
+            "preflight_pancake": "/erc8183/preflight/pancake",
+            "execute": "/erc8183/execute",
+            "receipt": "/erc8183/receipt/{transaction_hash}",
+            "job_response": "/erc8183/job/{job_id}/response",
+        },
+    }
 
 
 @app.get("/erc8183/health")
@@ -310,12 +368,47 @@ async def erc8183_health() -> dict[str, Any]:
 
 @app.get("/erc8183/status")
 async def erc8183_status() -> dict[str, Any]:
-    return {"status": "ok", "network": "bsc-testnet", "chain_id": 97, "agent_address": _provider_address(), "commerce_address": str(_ops.erc8183_client.commerce.address), "router_address": str(_ops.erc8183_client.router.address), "policy_address": str(_ops.erc8183_client.policy.address), "service_price": config["service_price"], "payment_token": _payment_token(), "poll_interval": config["poll_interval"]}
+    return {
+        "status": "ok",
+        "network": "bsc-testnet",
+        "chain_id": 97,
+        "agent_address": _provider_address(),
+        "commerce_address": str(_ops.erc8183_client.commerce.address),
+        "router_address": str(_ops.erc8183_client.router.address),
+        "policy_address": str(_ops.erc8183_client.policy.address),
+        "service_price": config["service_price"],
+        "payment_token": _payment_token(),
+        "poll_interval": config["poll_interval"],
+    }
 
 
 @app.get("/erc8183/runtime-status")
 async def erc8183_runtime_status() -> dict[str, Any]:
-    return {"status": "ok", "network": "bsc-testnet", "chain_id": 97, "provider": _provider_address(), "commerce_address": str(_ops.erc8183_client.commerce.address), "watcher": {"created": _watcher_task is not None, "running": bool(_watcher_task and not _watcher_task.done()), "done": bool(_watcher_task and _watcher_task.done()), "cancelled": bool(_watcher_task and _watcher_task.cancelled()), "started_at": _runtime["watcher_started_at"], "poll_interval_seconds": config["poll_interval"]}, "last_job": {"funded_job_observed_at": _runtime["last_funded_job_observed"], "job_id": _runtime["last_job_id"], "execution_started_at": _runtime["last_execution_started"], "execution_completed_at": _runtime["last_execution_completed"], "execution_failed_at": _runtime["last_execution_failed"]}, "last_submission": _runtime["last_submission"], "last_error": _runtime["last_error"], "waiting_for_user_authorization": {str(job_id): max(0, int(until - time.time())) for job_id, until in _waiting_authorization_until.items() if until > time.time()}}
+    return {
+        "status": "ok",
+        "network": "bsc-testnet",
+        "chain_id": 97,
+        "provider": _provider_address(),
+        "commerce_address": str(_ops.erc8183_client.commerce.address),
+        "watcher": {
+            "created": _watcher_task is not None,
+            "running": bool(_watcher_task and not _watcher_task.done()),
+            "done": bool(_watcher_task and _watcher_task.done()),
+            "cancelled": bool(_watcher_task and _watcher_task.cancelled()),
+            "started_at": _runtime["watcher_started_at"],
+            "poll_interval_seconds": config["poll_interval"],
+        },
+        "last_job": {
+            "funded_job_observed_at": _runtime["last_funded_job_observed"],
+            "job_id": _runtime["last_job_id"],
+            "execution_started_at": _runtime["last_execution_started"],
+            "execution_completed_at": _runtime["last_execution_completed"],
+            "execution_failed_at": _runtime["last_execution_failed"],
+        },
+        "last_submission": _runtime["last_submission"],
+        "last_error": _runtime["last_error"],
+        "waiting_for_user_authorization": {str(job_id): max(0, int(until - time.time())) for job_id, until in _waiting_authorization_until.items() if until > time.time()},
+    }
 
 
 @app.post("/erc8183/negotiate")
@@ -326,7 +419,19 @@ async def negotiate(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Invalid JSON") from exc
     if not isinstance(data, dict):
         raise HTTPException(status_code=400, detail="Request body must be an object")
-    return {"accepted": True, "quote_id": f"grid-{int(time.time())}", "price": str(config["service_price"]), "currency": _payment_token() or "testnet-settlement-token", "quote_expires_at": int(time.time()) + 300, "chain_id": 97, "network": "bsc-testnet", "environment": "testnet", "provider_address": _provider_address(), "task_description": data.get("task_description") or "", "terms": data.get("terms") if isinstance(data.get("terms"), dict) else {}}
+    return {
+        "accepted": True,
+        "quote_id": f"grid-{int(time.time())}",
+        "price": str(config["service_price"]),
+        "currency": _payment_token() or "testnet-settlement-token",
+        "quote_expires_at": int(time.time()) + 300,
+        "chain_id": 97,
+        "network": "bsc-testnet",
+        "environment": "testnet",
+        "provider_address": _provider_address(),
+        "task_description": data.get("task_description") or "",
+        "terms": data.get("terms") if isinstance(data.get("terms"), dict) else {},
+    }
 
 
 @app.get("/erc8183/execution-capabilities")
@@ -344,25 +449,34 @@ async def execution_authorization(job_id: int, request: Request) -> dict[str, An
         raise HTTPException(status_code=400, detail="Invalid JSON") from exc
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="Request body must be an object")
+
     authorization = body.get("execution_authorization") if isinstance(body.get("execution_authorization"), dict) else body
     if not isinstance(authorization, dict):
         raise HTTPException(status_code=400, detail="execution_authorization is required")
 
-    execution_wallet = next((authorization.get(key) for key in ("execution_wallet", "wallet_address", "wallet", "execution_wallet_address") if _valid_address(authorization.get(key))), None)
-    session_key = next((authorization.get(key) for key in ("session_key_address", "agent_session_address") if _valid_address(authorization.get(key))), None)
-    session_public_key = next((authorization.get(key) for key in ("session_key_public_key", "agent_session_public_key") if isinstance(authorization.get(key), str) and authorization.get(key).strip()), None)
+    execution_wallet = next(
+        (authorization.get(key) for key in ("execution_wallet", "wallet_address", "wallet", "execution_wallet_address") if _valid_address(authorization.get(key))),
+        None,
+    )
+    session_key = next(
+        (authorization.get(key) for key in ("session_key_address", "agent_session_address") if _valid_address(authorization.get(key))),
+        None,
+    )
+    session_public_key = next(
+        (authorization.get(key) for key in ("session_key_public_key", "agent_session_public_key") if isinstance(authorization.get(key), str) and authorization.get(key).strip()),
+        None,
+    )
     if not execution_wallet:
         raise HTTPException(status_code=409, detail="A valid job-scoped execution wallet is required")
     if not session_key or not session_public_key:
         raise HTTPException(status_code=409, detail="A complete job-scoped execution session is required")
 
     try:
-        capability = await (asyncio.to_thread(lambda: None))
         capability_response = await _proxy_execution(request, f"/execution-capabilities?job_id={job_id}", method="GET")
-        capability_payload = json.loads(capability_response.body.decode("utf-8")) if isinstance(capability_response.body, (bytes, bytearray)) else {}
-        if isinstance(capability_payload, dict):
-            expected_session = str(capability_payload.get("session_key_address") or "")
-            expected_public = str(capability_payload.get("session_key_public_key") or "")
+        payload = json.loads(capability_response.body.decode("utf-8")) if isinstance(capability_response.body, (bytes, bytearray)) else {}
+        if isinstance(payload, dict):
+            expected_session = str(payload.get("session_key_address") or "")
+            expected_public = str(payload.get("session_key_public_key") or "")
             if expected_session and session_key.lower() != expected_session.lower():
                 raise HTTPException(status_code=409, detail="Session key address does not match provider-declared job capability")
             if expected_public and session_public_key.lower() != expected_public.lower():
@@ -381,7 +495,17 @@ async def execution_authorization(job_id: int, request: Request) -> dict[str, An
         "session_binding": "erc8183_job_id",
     }
     _save_authorization(job_id, normalized)
+    logger.info("ERC8183_JOB_AUTHORIZATION_RECEIVED job_id=%s wallet=%s", job_id, normalized["execution_wallet"])
+    asyncio.create_task(_on_funded({"jobId": job_id, "status": "FUNDED"}))
     return {"ok": True, "accepted": True, "job_id": job_id, "execution_authorization": normalized}
+
+
+@app.get("/erc8183/job/{job_id}/authorization")
+async def job_authorization(job_id: int) -> dict[str, Any]:
+    authorization = _load_authorization(job_id)
+    if not authorization:
+        raise HTTPException(status_code=404, detail="Execution authorization not available for this job")
+    return {"ok": True, "job_id": job_id, "execution_authorization": authorization}
 
 
 @app.get("/erc8183/job/{job_id}/response")
@@ -392,14 +516,6 @@ async def job_response(job_id: int) -> Response:
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="No deliverable found for this job") from exc
     return Response(content=content, media_type="application/json", headers={"cache-control": "no-store"})
-
-
-@app.get("/erc8183/job/{job_id}/authorization")
-async def job_authorization(job_id: int) -> dict[str, Any]:
-    authorization = _load_authorization(job_id)
-    if not authorization:
-        raise HTTPException(status_code=404, detail="Execution authorization not available for this job")
-    return {"ok": True, "job_id": job_id, "execution_authorization": authorization}
 
 
 @app.post("/erc8183/preflight/pancake")
