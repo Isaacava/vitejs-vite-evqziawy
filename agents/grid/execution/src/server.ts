@@ -97,6 +97,14 @@ function walletAddressFromRequest(req: IncomingMessage, input?: Record<string, u
   return raw;
 }
 
+function sessionExpiryFromRequest(input?: Record<string, unknown>): number | undefined {
+  const raw = input?.session_expiry ?? input?.sessionExpiry;
+  if (raw === undefined || raw === null || raw === "") return undefined;
+  const expiry = Number(raw);
+  if (!Number.isSafeInteger(expiry) || expiry <= 0) throw new Error("session_expiry must be a positive integer timestamp");
+  return expiry;
+}
+
 function parseJobDescription(description: unknown): Record<string, unknown> {
   if (typeof description !== "string" || !description.trim()) return {};
   try {
@@ -124,6 +132,12 @@ async function effectiveSessionExpiry(jobId: number | undefined): Promise<number
   }
   const configured = Number(process.env.ALTANA_SESSION_EXPIRY || "");
   return Number.isSafeInteger(configured) && configured > 0 ? configured : undefined;
+}
+
+async function effectiveSessionExpiryForRequest(jobId: number, input: Record<string, unknown>): Promise<number | undefined> {
+  const supplied = sessionExpiryFromRequest(input);
+  if (supplied !== undefined) return supplied;
+  return effectiveSessionExpiry(jobId);
 }
 
 async function publicExecutionCapabilities(req: IncomingMessage) {
@@ -199,7 +213,9 @@ const server = createServer(async (req, res) => {
       if (jobId === undefined) return json(res, 400, { error: "job_id is required for standalone Grid execution" });
       const walletAddress = walletAddressFromRequest(req, request);
       if (!walletAddress) return json(res, 400, { error: "wallet_address is required for job-bound Grid execution" });
-      const sessionExpiry = await effectiveSessionExpiry(jobId);
+      const sessionExpiry = await effectiveSessionExpiryForRequest(jobId, request);
+      if (!sessionExpiry) return json(res, 400, { error: "A valid job-scoped Altana session expiry is required for Grid execution" });
+      if (sessionExpiry <= Math.floor(Date.now() / 1000)) return json(res, 400, { error: "The job-bound Altana session has expired" });
       const configured = configuredSessionDescriptor(jobId, walletAddress, sessionExpiry);
       const jobSessionKey = deriveJobSessionPrivateKey(jobId);
       const expectedAddress = privateKeyToAccount(jobSessionKey).address.toLowerCase();
