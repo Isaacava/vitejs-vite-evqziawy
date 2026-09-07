@@ -96,9 +96,37 @@ function isSelector(value: unknown): value is `0x${string}` {
   return typeof value === "string" && /^0x[a-fA-F0-9]{8}$/.test(value);
 }
 
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function stringValue(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function addressList(...values: unknown[]) {
+  for (const value of values) {
+    if (!Array.isArray(value)) continue;
+    const list = value.filter(isAddress);
+    if (list.length) return list;
+  }
+  return [] as `0x${string}`[];
+}
+
+function selectorList(...values: unknown[]) {
+  for (const value of values) {
+    if (!Array.isArray(value)) continue;
+    const list = value.filter(isSelector);
+    if (list.length) return list;
+  }
+  return [] as `0x${string}`[];
+}
+
 function parseExecutionMarket(value: unknown): ExecutionMarketDescriptor | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const market = value as Record<string, unknown>;
+  const market = record(value);
   if (!isAddress(market.token_in)) return undefined;
   const tokenOut = market.token_out === null || market.token_out === undefined ? null : isAddress(market.token_out) ? market.token_out : null;
   const tokenInSymbol = typeof market.token_in_symbol === "string" && market.token_in_symbol.trim() ? market.token_in_symbol.trim() : "TOKEN";
@@ -108,54 +136,92 @@ function parseExecutionMarket(value: unknown): ExecutionMarketDescriptor | undef
 }
 
 export function getExecutionCapability(request: ExecutionCapitalRequest | null | undefined): ExecutionCapabilityDescriptor | null {
-  const raw = request?.evidence?.execution_capability;
-  if (!raw || typeof raw !== "object") return null;
-  const value = raw as Record<string, unknown>;
+  if (!request) return null;
+
+  const evidence = record(request.evidence);
+  const raw = record(evidence.execution_capability);
+  const authorization = record(evidence.authorization);
+  const executionAuthorization = record(evidence.execution_authorization);
+  const callAllowlist = record(request.call_allowlist);
+
+  const network = stringValue(raw.network, evidence.network) || "";
+  const chainId = Number(raw.chainId ?? raw.chain_id ?? evidence.chain_id);
+  const execution = stringValue(raw.execution, raw.execution_mode, evidence.execution);
+  const walletProvider = stringValue(raw.wallet_provider, request.wallet_provider);
+  const authorizationModel = stringValue(raw.authorization_model, request.authorization_model);
+
+  const allowedTargets = addressList(
+    raw.allowed_targets,
+    authorization.allowed_targets,
+    executionAuthorization.allowed_targets,
+    callAllowlist.allowed_targets,
+    callAllowlist.targets,
+  );
+  const allowedSelectors = selectorList(
+    raw.allowed_selectors,
+    authorization.allowed_selectors,
+    executionAuthorization.allowed_selectors,
+    callAllowlist.allowed_selectors,
+    callAllowlist.selectors,
+  );
+
+  const sessionKeyAddress = stringValue(
+    raw.session_key_address,
+    authorization.session_key_address,
+    executionAuthorization.session_key_address,
+    request.agent_session_key,
+  );
+  const sessionKeyPublicKey = stringValue(
+    raw.session_key_public_key,
+    authorization.session_key_public_key,
+    executionAuthorization.session_key_public_key,
+    evidence.session_key_public_key,
+  );
+
+  // A persisted provider capability is authoritative for display only after the
+  // server-side verification has already accepted it. This normalization tolerates
+  // equivalent persisted field locations without changing authorization semantics.
   if (
-    value.network !== "bsc-testnet" ||
-    Number(value.chainId ?? value.chain_id) !== 97 ||
-    typeof value.execution !== "string" ||
-    typeof value.wallet_provider !== "string" ||
-    typeof value.authorization_model !== "string" ||
-    value.private_key_exposed !== false ||
-    !Array.isArray(value.allowed_targets) ||
-    !value.allowed_targets.every(isAddress) ||
-    !Array.isArray(value.allowed_selectors) ||
-    !value.allowed_selectors.every(isSelector)
+    network !== "bsc-testnet" ||
+    chainId !== 97 ||
+    !execution ||
+    !walletProvider ||
+    !authorizationModel ||
+    !allowedTargets.length ||
+    !allowedSelectors.length ||
+    !isAddress(sessionKeyAddress) ||
+    !isHex(sessionKeyPublicKey)
   ) return null;
 
-  const selectorsRequired = value.selectors_required !== false;
-  if (selectorsRequired && (value.allowed_targets.length === 0 || value.allowed_selectors.length === 0)) return null;
-
-  const altanaScoped = value.wallet_provider === "altana" && value.authorization_model === "scoped_session";
-  if (altanaScoped && (!isAddress(value.session_key_address) || !isHex(value.session_key_public_key))) return null;
-
-  const sourceUrl = typeof value.source_url === "string" && value.source_url.trim() ? value.source_url : "persisted-provider-capability";
-  const endpointId = typeof value.endpoint_id === "string" && value.endpoint_id.trim() ? value.endpoint_id : "provider_execution_capability";
-  const fetchedAt = typeof value.fetched_at === "string" && value.fetched_at.trim() ? value.fetched_at : new Date(0).toISOString();
-  const endpointStatus = typeof value.endpoint_status === "string" ? value.endpoint_status : null;
-  const independentlyAuthorized = typeof value.independently_authorized === "boolean" ? value.independently_authorized : false;
+  const selectorsRequired = raw.selectors_required !== false;
+  const market = parseExecutionMarket(raw.execution_market) || parseExecutionMarket(evidence.execution_market);
+  const sourceUrl = stringValue(raw.source_url, evidence.source_url) || "persisted-provider-capability";
+  const endpointId = stringValue(raw.endpoint_id, evidence.endpoint_id) || "provider_execution_capability";
+  const fetchedAt = stringValue(raw.fetched_at, evidence.fetched_at) || request.updated_at || new Date(0).toISOString();
+  const endpointStatus = stringValue(raw.endpoint_status, evidence.endpoint_status);
+  const protocol = stringValue(raw.protocol, evidence.protocol);
+  const preflightPath = stringValue(raw.preflight_path, evidence.preflight_path);
 
   return {
     network: "bsc-testnet",
     chainId: 97,
-    execution: value.execution,
-    wallet_provider: value.wallet_provider,
-    authorization_model: value.authorization_model,
-    ...(isAddress(value.session_key_address) ? { session_key_address: value.session_key_address } : {}),
-    ...(isHex(value.session_key_public_key) ? { session_key_public_key: value.session_key_public_key } : {}),
-    allowed_targets: value.allowed_targets,
-    allowed_selectors: value.allowed_selectors,
+    execution,
+    wallet_provider: walletProvider,
+    authorization_model: authorizationModel,
+    session_key_address: sessionKeyAddress as `0x${string}`,
+    session_key_public_key: sessionKeyPublicKey as `0x${string}`,
+    allowed_targets: allowedTargets,
+    allowed_selectors: allowedSelectors,
     selectors_required: selectorsRequired,
     private_key_exposed: false,
-    ...(typeof value.protocol === "string" && value.protocol.trim() ? { protocol: value.protocol.trim().toLowerCase() } : {}),
-    ...(typeof value.preflight_path === "string" && value.preflight_path.trim().startsWith("/") ? { preflight_path: value.preflight_path.trim() } : {}),
-    execution_market: parseExecutionMarket(value.execution_market),
+    ...(protocol ? { protocol: protocol.toLowerCase() } : {}),
+    ...(preflightPath && preflightPath.startsWith("/") ? { preflight_path: preflightPath } : {}),
+    ...(market ? { execution_market: market } : {}),
     source_url: sourceUrl,
     endpoint_id: endpointId,
     endpoint_status: endpointStatus,
     fetched_at: fetchedAt,
-    independently_authorized: independentlyAuthorized,
+    independently_authorized: raw.independently_authorized === true,
   };
 }
 
