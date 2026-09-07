@@ -38,10 +38,14 @@ type Match = {
 type MatchResponse = { bestMatch: Match | null; bestHireableMatch?: Match | null; alternatives?: Match[] };
 
 const goals = [
-  "Manage my BNB portfolio conservatively",
-  "Find a safe yield strategy for my idle assets",
-  "Monitor my lending health factor and liquidation risk",
-  "Run a controlled grid strategy",
+  { goal: "Manage my BNB portfolio conservatively", category: "rebalancing" },
+  { goal: "Find a safe yield strategy for my idle assets", category: "yield" },
+  { goal: "Monitor my lending health factor and liquidation risk", category: "health_factor" },
+  { goal: "Run a controlled grid strategy", category: "grid_trading" },
+  { goal: "Create a professional CV for a software developer named Alex Johnson. Include a profile summary, skills, work experience, education, and projects.", category: "career_documents" },
+  { goal: "Write an original essay from a user-supplied topic, thesis direction, and requirements.", category: "writing" },
+  { goal: "Help a student understand school exercises with explanations and worked examples.", category: "education" },
+  { goal: "Produce a structured research brief from a supplied topic and requirements.", category: "research" },
 ];
 
 const human = (value: string) => value.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -105,7 +109,7 @@ export default function DemoDiscoverPage() {
 
   useEffect(() => {
     let active = true;
-    void Promise.all(goals.map(async (goal) => {
+    void Promise.all(goals.map(async ({ goal }) => {
       const response = await fetch("/api/testnet/match", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal }) });
       if (!response.ok) return null;
       return await response.json() as MatchResponse;
@@ -118,7 +122,7 @@ export default function DemoDiscoverPage() {
         if (seen.has(match.agent.agent_id)) return false;
         seen.add(match.agent.agent_id);
         return true;
-      }).slice(0, 8));
+      }).slice(0, 16));
     }).catch((cause) => {
       if (active) setError(cause instanceof Error ? cause.message : "Unable to load marketplace inventory");
     }).finally(() => {
@@ -127,7 +131,17 @@ export default function DemoDiscoverPage() {
     return () => { active = false; };
   }, []);
 
-  const filterLabels = ["All roles", "Grid trading", "Rebalancing", "Yield", "Health factor"];
+  const filterLabels = [
+    "All roles",
+    "Grid trading",
+    "Rebalancing",
+    "Yield",
+    "Health factor",
+    "Career Documents",
+    "Writing",
+    "Education",
+    "Research",
+  ];
   const visible = useMemo(() => activeFilter === "All roles" ? matches : matches.filter((match) => human(match.agent.category).toLowerCase() === activeFilter.toLowerCase()), [activeFilter, matches]);
 
   return <main className="mx-auto max-w-[1240px] px-6 py-8 md:px-8 text-ink">
