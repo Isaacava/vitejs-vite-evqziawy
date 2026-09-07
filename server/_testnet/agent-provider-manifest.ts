@@ -9,7 +9,7 @@ export type AgentProviderOperation = {
   inputSchema?: JsonObject | null;
   outputSchema?: JsonObject | null;
   authentication?: JsonObject | null;
-  async?: boolean;
+  async?: boolean | string;
   metadata: JsonObject;
 };
 
