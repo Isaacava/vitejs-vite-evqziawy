@@ -1,8 +1,7 @@
 """Agent-owned bridge from a funded Grid job to the local Altana executor.
 
-The user-controlled Altana execution wallet must establish the ERC-20 allowance
-before the agent session is granted. The autonomous Grid session executes only
-the allowlisted PancakeSwap router call; it never attempts ERC-20 approve().
+The execution wallet is always resolved from the ERC-8183 job's execution
+context. Grid never uses a global/user-specific wallet configuration.
 """
 
 from __future__ import annotations
@@ -62,33 +61,55 @@ def _job_execution_parameters(job: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
+def _valid_wallet(value: Any) -> str | None:
+    if isinstance(value, str):
+        candidate = value.strip()
+        if candidate.startswith("0x") and len(candidate) == 42:
+            return candidate
+    return None
+
+
 def _job_execution_wallet(job: dict[str, Any], params: dict[str, Any]) -> str:
-    execution_authorization = params.get("execution_authorization")
-    authorization_wallet = execution_authorization.get("execution_wallet") if isinstance(execution_authorization, dict) else None
-    candidates = [
-        params.get("wallet_address"),
-        params.get("execution_wallet"),
-        params.get("execution_wallet_address"),
-        authorization_wallet,
-        job.get("execution_wallet"),
-        job.get("execution_wallet_address"),
-        os.getenv("ALTANA_WALLET_ADDRESS"),
-    ]
-    for value in candidates:
-        if isinstance(value, str) and value.strip().startswith("0x") and len(value.strip()) == 42:
-            return value.strip()
+    """Resolve the wallet for this job only; never fall back to a global wallet."""
+    authorization = params.get("execution_authorization")
+    if not isinstance(authorization, dict):
+        authorization = params.get("authorization")
+    if not isinstance(authorization, dict):
+        authorization = {}
+
+    authorized_wallet = next(
+        (_valid_wallet(authorization.get(key)) for key in ("execution_wallet", "wallet_address", "wallet", "execution_wallet_address")),
+        None,
+    )
+
+    job_wallet = next(
+        (_valid_wallet(params.get(key)) for key in ("wallet_address", "execution_wallet", "execution_wallet_address", "user_altana_wallet")),
+        None,
+    )
+    top_level_wallet = next(
+        (_valid_wallet(job.get(key)) for key in ("wallet_address", "execution_wallet", "execution_wallet_address", "user_altana_wallet")),
+        None,
+    )
+
+    # When an authorization envelope is present it is authoritative. Never
+    # silently execute against a different wallet supplied elsewhere in the job.
+    if authorized_wallet:
+        for other in (job_wallet, top_level_wallet):
+            if other and other.lower() != authorized_wallet.lower():
+                raise RuntimeError("Grid execution wallet conflicts with the job-scoped execution authorization")
+        return authorized_wallet
+
+    wallet = job_wallet or top_level_wallet
+    if wallet:
+        return wallet
+
     raise RuntimeError(
-        "Grid execution wallet is unavailable: the ERC-8183 job contains no wallet and ALTANA_WALLET_ADDRESS is not configured."
+        "Grid execution is waiting for a job-scoped execution wallet/authorization; no global wallet fallback is permitted."
     )
 
 
 async def execute_grid_trade(job: dict[str, Any]) -> dict[str, Any]:
-    """Run Grid's own BSC Testnet execution path with the job-bound Altana session.
-
-    ERC-20 allowance is a user-wallet preparation step. The agent session is
-    deliberately limited to the PancakeSwap router swap call so Altana's
-    on-chain target scope and the local selector guardian agree.
-    """
+    """Run Grid's BSC Testnet execution path with the wallet supplied by this job."""
     params = _job_execution_parameters(job)
     market = params.get("execution_market") if isinstance(params.get("execution_market"), dict) else params
     try:
@@ -147,15 +168,13 @@ async def execute_grid_trade(job: dict[str, Any]) -> dict[str, Any]:
         if checked_fee != DEFAULT_FEE:
             raise RuntimeError(f"Grid preflight used fee tier {checked_fee}, but Grid requires {DEFAULT_FEE}")
         if checked_recipient.lower() != wallet_address.lower():
-            raise RuntimeError(f"Grid preflight recipient {checked_recipient} does not match the job-bound Altana wallet {wallet_address}")
+            raise RuntimeError(f"Grid preflight recipient {checked_recipient} does not match the job-scoped Altana wallet {wallet_address}")
 
         checks = result.get("checks") if isinstance(result.get("checks"), dict) else {}
         if checks.get("token_in_balance_ok") is False:
             raise RuntimeError("Grid execution preflight rejected the job because the wallet balance is below amountIn")
         if checks.get("token_in_allowance_ok") is False or result.get("requires_approval") is True:
-            raise RuntimeError(
-                "Grid execution wallet allowance is below amountIn. The user must approve the PancakeSwap router allowance before the Altana agent session can execute; the agent will not submit ERC-20 approve()."
-            )
+            raise RuntimeError("Grid execution wallet allowance is below amountIn. The user must approve the PancakeSwap router allowance before the Altana agent session can execute; the agent will not submit ERC-20 approve().")
 
         swap_call = result.get("call")
         if not isinstance(swap_call, dict) or not swap_call.get("to") or not swap_call.get("data"):
