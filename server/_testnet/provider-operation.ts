@@ -138,7 +138,9 @@ async function requestJson(operation: ProviderOperation, body: Record<string, un
       const url = new URL(endpoint);
       for (const [key, value] of Object.entries(body)) {
         if (value === undefined || value === null) continue;
-        if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") url.searchParams.set(key, String(value));
+        if (operation.action === "execution_capabilities" && key === "job_id") continue;
+        const queryKey = operation.action === "execution_capabilities" && key === "chain_job_id" ? "job_id" : key;
+        if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") url.searchParams.set(queryKey, String(value));
       }
       endpoint = url.toString();
     } else requestBody = JSON.stringify(selectBody(operation.action, body));
