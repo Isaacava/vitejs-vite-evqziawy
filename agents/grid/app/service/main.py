@@ -15,7 +15,7 @@ from typing import Any
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import Response
 
 from bnbagent import EVMWalletProvider
 from bnbagent.erc8183 import ERC8183JobOps, funded_job_watcher
@@ -379,12 +379,47 @@ async def erc8183_health() -> dict[str, Any]:
 
 @app.get("/erc8183/status")
 async def erc8183_status() -> dict[str, Any]:
-    return {"status": "ok", "network": "bsc-testnet", "chain_id": 97, "agent_address": _provider_address(), "commerce_address": str(_ops.erc8183_client.commerce.address), "router_address": str(_ops.erc8183_client.router.address), "policy_address": str(_ops.erc8183_client.policy.address), "service_price": config["service_price"], "payment_token": _payment_token(), "poll_interval": config["poll_interval"]}
+    return {
+        "status": "ok",
+        "network": "bsc-testnet",
+        "chain_id": 97,
+        "agent_address": _provider_address(),
+        "commerce_address": str(_ops.erc8183_client.commerce.address),
+        "router_address": str(_ops.erc8183_client.router.address),
+        "policy_address": str(_ops.erc8183_client.policy.address),
+        "service_price": config["service_price"],
+        "payment_token": _payment_token(),
+        "poll_interval": config["poll_interval"],
+    }
 
 
 @app.get("/erc8183/runtime-status")
 async def erc8183_runtime_status() -> dict[str, Any]:
-    return {"status": "ok", "network": "bsc-testnet", "chain_id": 97, "provider": _provider_address(), "commerce_address": str(_ops.erc8183_client.commerce.address), "watcher": {"created": _watcher_task is not None, "running": bool(_watcher_task and not _watcher_task.done()), "done": bool(_watcher_task and _watcher_task.done()), "cancelled": bool(_watcher_task and _watcher_task.cancelled()), "started_at": _runtime["watcher_started_at"], "poll_interval_seconds": config["poll_interval"]}, "last_job": {"funded_job_observed_at": _runtime["last_funded_job_observed"], "job_id": _runtime["last_job_id"], "execution_started_at": _runtime["last_execution_started"], "execution_completed_at": _runtime["last_execution_completed"], "execution_failed_at": _runtime["last_execution_failed"]}, "last_submission": _runtime["last_submission"], "last_error": _runtime["last_error"], "waiting_for_user_authorization": {str(job_id): max(0, int(until - time.time())) for job_id, until in _waiting_authorization_until.items() if until > time.time()}}
+    return {
+        "status": "ok",
+        "network": "bsc-testnet",
+        "chain_id": 97,
+        "provider": _provider_address(),
+        "commerce_address": str(_ops.erc8183_client.commerce.address),
+        "watcher": {
+            "created": _watcher_task is not None,
+            "running": bool(_watcher_task and not _watcher_task.done()),
+            "done": bool(_watcher_task and _watcher_task.done()),
+            "cancelled": bool(_watcher_task and _watcher_task.cancelled()),
+            "started_at": _runtime["watcher_started_at"],
+            "poll_interval_seconds": config["poll_interval"],
+        },
+        "last_job": {
+            "funded_job_observed_at": _runtime["last_funded_job_observed"],
+            "job_id": _runtime["last_job_id"],
+            "execution_started_at": _runtime["last_execution_started"],
+            "execution_completed_at": _runtime["last_execution_completed"],
+            "execution_failed_at": _runtime["last_execution_failed"],
+        },
+        "last_submission": _runtime["last_submission"],
+        "last_error": _runtime["last_error"],
+        "waiting_for_user_authorization": {str(job_id): max(0, int(until - time.time())) for job_id, until in _waiting_authorization_until.items() if until > time.time()},
+    }
 
 
 @app.post("/erc8183/negotiate")
@@ -395,7 +430,19 @@ async def negotiate(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Invalid JSON") from exc
     if not isinstance(data, dict):
         raise HTTPException(status_code=400, detail="Request body must be an object")
-    return {"accepted": True, "quote_id": f"grid-{int(time.time())}", "price": str(config["service_price"]), "currency": _payment_token() or "testnet-settlement-token", "quote_expires_at": int(time.time()) + 300, "chain_id": 97, "network": "bsc-testnet", "environment": "testnet", "provider_address": _provider_address(), "task_description": data.get("task_description") or "", "terms": data.get("terms") if isinstance(data.get("terms"), dict) else {}}
+    return {
+        "accepted": True,
+        "quote_id": f"grid-{int(time.time())}",
+        "price": str(config["service_price"]),
+        "currency": _payment_token() or "testnet-settlement-token",
+        "quote_expires_at": int(time.time()) + 300,
+        "chain_id": 97,
+        "network": "bsc-testnet",
+        "environment": "testnet",
+        "provider_address": _provider_address(),
+        "task_description": data.get("task_description") or "",
+        "terms": data.get("terms") if isinstance(data.get("terms"), dict) else {},
+    }
 
 
 @app.get("/erc8183/execution-capabilities")
@@ -465,3 +512,41 @@ async def execution_authorization(job_id: int, request: Request) -> dict[str, An
     if context_job is not None:
         asyncio.create_task(_on_funded(context_job))
     return {"ok": True, "accepted": True, "job_id": job_id, "execution_authorization": normalized}
+
+
+@app.get("/erc8183/job/{job_id}/authorization")
+async def job_authorization(job_id: int) -> dict[str, Any]:
+    authorization = _load_authorization(job_id)
+    if not authorization:
+        raise HTTPException(status_code=404, detail="Execution authorization not available for this job")
+    return {"ok": True, "job_id": job_id, "execution_authorization": authorization}
+
+
+@app.get("/erc8183/job/{job_id}/response")
+async def job_response(job_id: int) -> Response:
+    filepath = _response_path(job_id)
+    try:
+        content = filepath.read_bytes()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="No deliverable found for this job") from exc
+    return Response(content=content, media_type="application/json", headers={"cache-control": "no-store"})
+
+
+@app.post("/erc8183/preflight/pancake")
+async def pancake_preflight(request: Request) -> Response:
+    return await _proxy_execution(request, "/preflight/pancake")
+
+
+@app.post("/erc8183/execute")
+async def execute(request: Request) -> Response:
+    return await _proxy_execution(request, "/execute")
+
+
+@app.get("/erc8183/receipt/{transaction_hash}")
+async def execution_receipt(transaction_hash: str, request: Request) -> Response:
+    return await _proxy_execution(request, f"/receipt/{transaction_hash}")
+
+
+@app.get("/erc8183/execution-health")
+async def execution_health(request: Request) -> Response:
+    return await _proxy_execution(request, "/health")
