@@ -90,7 +90,7 @@ function normalizeOperation(value: unknown, manifestUrl: string): AgentProviderO
     inputSchema: Object.keys(object(raw.input_schema ?? raw.inputSchema)).length ? object(raw.input_schema ?? raw.inputSchema) : null,
     outputSchema: Object.keys(object(raw.output_schema ?? raw.outputSchema)).length ? object(raw.output_schema ?? raw.outputSchema) : null,
     authentication: Object.keys(object(raw.authentication ?? raw.auth)).length ? object(raw.authentication ?? raw.auth) : null,
-    async: typeof raw.async === "boolean" ? raw.async : undefined,
+    async: raw.async === true ? true : raw.async === false ? false : undefined,
     metadata: object(raw.metadata),
   };
 }
@@ -152,6 +152,6 @@ export function manifestToMetadata(manifest: AgentProviderManifest) {
   return {
     spec: manifest.spec, manifest_url: manifest.manifestUrl, manifest_resolved_at: manifest.resolvedAt, manifest_name: manifest.name, manifest_version: manifest.version,
     manifest_protocols: manifest.protocols, manifest_hiring: manifest.hiring, manifest_execution: manifest.execution, manifest_discovery: manifest.discovery, manifest_synthetic: manifest.metadata?.synthetic_manifest === true,
-    manifest_endpoints: Object.fromEntries(Object.entries(manifest.endpoints).map(([name, op]) => [name, { endpoint: op.url, method: op.method, transport: op.transport, capability: op.capability || null, name: op.name || null, input_schema: op.inputSchema || null, output_schema: op.outputSchema || null, authentication: op.authentication || null, async: op.async ?? false, metadata: op.metadata }])),
+    manifest_endpoints: Object.fromEntries(Object.entries(manifest.endpoints).map(([name, op]) => [name, { endpoint: op.url, method: op.method, transport: op.transport, capability: op.capability || null, name: op.name || null, input_schema: op.inputSchema || null, output_schema: op.outputSchema || null, authentication: op.authentication || null, async: op.async === true, metadata: op.metadata }])),
   };
 }
