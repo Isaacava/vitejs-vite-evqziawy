@@ -124,6 +124,13 @@ export default function DemoOverviewPage() {
         </div>
       </section>
 
+      <nav className="relative z-10 mb-6 flex gap-6 border-b border-line" aria-label="Workspace sections">
+        <span className="border-b-2 border-brass pb-2.5 text-[12px] font-bold text-ink">Overview</span>
+        <a href="/missions" className="border-b-2 border-transparent pb-2.5 text-[12px] font-bold text-[#8a8477] no-underline hover:text-ink">Missions</a>
+        <a href="/activity" className="border-b-2 border-transparent pb-2.5 text-[12px] font-bold text-[#8a8477] no-underline hover:text-ink">Activity</a>
+        <a href="/payments" className="border-b-2 border-transparent pb-2.5 text-[12px] font-bold text-[#8a8477] no-underline hover:text-ink">Payments</a>
+      </nav>
+
       {loading ? <div className="py-16 text-[13px] text-inksoft">Loading your mission state…</div> : <>
         <div className="relative z-10 mb-6 grid grid-cols-2 gap-3.5 md:grid-cols-5">
           <Metric label="Active missions" value={activeJobs.length} note="funded · executing" />
@@ -165,3 +172,4 @@ export default function DemoOverviewPage() {
     </div>
   </main>;
 }
+
