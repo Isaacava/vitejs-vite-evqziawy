@@ -75,7 +75,7 @@ export default function LandingPage() {
         <div className="curve curve-two" aria-hidden="true" />
         <div className="hero-shell">
           <div className="hero-mascot-wrap" aria-hidden="true">
-            <img src="/agentmarket-hero-mascot.svg" alt="" />
+            <img src="/agentmarket-hero-mascot.png" alt="" />
           </div>
           <div className="hero-copy reveal">
             <div className="eyebrow"><span /> BSC · ERC-8004 · ERC-8183</div>
@@ -144,9 +144,9 @@ export default function LandingPage() {
             </article>
             <article className="editor-card tilt-right accent-card">
               <div className="card-index">B</div>
-              <h3>Marketplace model</h3>
-              <p>State an outcome. The engine ranks compatible agents and explains every signal that moved the score.</p>
-              <div className="card-foot">THE SYSTEM DOES THE COMPARING</div>
+              <h3>AgentMarket model</h3>
+              <p>State the goal. Get one explainable recommendation with the evidence shown, not asserted.</p>
+              <div className="card-foot">THE MARKET DOES THE VETTING</div>
             </article>
           </div>
         </div>
@@ -253,3 +253,4 @@ function useTypewriter(phrases: string[]) {
 
   return typed;
 }
+
