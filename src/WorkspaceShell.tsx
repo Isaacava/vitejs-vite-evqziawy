@@ -139,3 +139,4 @@ export default function WorkspaceShell({ children }: { children: ReactNode }) {
     </div>
   );
 }
+
