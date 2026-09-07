@@ -63,19 +63,22 @@ def _job_execution_parameters(job: dict[str, Any]) -> dict[str, Any]:
 
 
 def _job_execution_wallet(job: dict[str, Any], params: dict[str, Any]) -> str:
+    execution_authorization = params.get("execution_authorization")
+    authorization_wallet = execution_authorization.get("execution_wallet") if isinstance(execution_authorization, dict) else None
     candidates = [
         params.get("wallet_address"),
         params.get("execution_wallet"),
         params.get("execution_wallet_address"),
+        authorization_wallet,
         job.get("execution_wallet"),
         job.get("execution_wallet_address"),
+        os.getenv("ALTANA_WALLET_ADDRESS"),
     ]
     for value in candidates:
         if isinstance(value, str) and value.strip().startswith("0x") and len(value.strip()) == 42:
             return value.strip()
     raise RuntimeError(
-        "ERC-8183 job does not contain a bound Altana execution wallet. "
-        "Create the job only after the user's Altana execution wallet is provisioned so the autonomous agent can use the same wallet that granted the session."
+        "Grid execution wallet is unavailable: the ERC-8183 job contains no wallet and ALTANA_WALLET_ADDRESS is not configured."
     )
 
 
