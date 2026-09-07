@@ -237,17 +237,20 @@ export async function discoverAgentCapabilities(
         const fallbackEndpoint = Object.values(manifest.endpoints)
           .find((operation) => operation.transport === "http" || operation.transport === "https")?.url || endpoint.endpoint_url;
         const capabilities = manifest.capabilities.flatMap((value) => {
+          const rawCapability = value && typeof value === "object" ? value as Record<string, unknown> : {};
+          const declaredInputSchema = rawCapability.input_schema || rawCapability.inputSchema || rawCapability.capability_schema || rawCapability.capabilitySchema || null;
           const normalized = normalizeAgentCapability({
             kind: "task_submission",
             name: typeof value.name === "string" ? value.name : manifest.name,
             description: typeof value.description === "string" ? value.description : manifest.description || null,
             endpoint: fallbackEndpoint,
             transport: "http",
-            input_schema: value.input_schema || value.inputSchema || null,
+            input_schema: declaredInputSchema,
             output_schema: value.output_schema || value.outputSchema || null,
             networks: manifest.networks || [],
             metadata: {
               ...(value.metadata && typeof value.metadata === "object" ? value.metadata : {}),
+              capability_schema: rawCapability.capability_schema || rawCapability.capabilitySchema || null,
               protocol: manifest.protocols.join(","),
               source_type: "agent_provider_manifest",
               manifest_url: manifest.manifestUrl,
