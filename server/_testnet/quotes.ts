@@ -213,9 +213,11 @@ function providerQuoteFromBody(body: unknown): ProviderQuote {
   throw new Error("Provider quote response did not expose a quote object with a supported price field");
 }
 
-async function requestProviderQuote(endpoint: StoredEndpoint, taskDescription: string, terms: Record<string, unknown>) {
+async function requestProviderQuote(endpoint: StoredEndpoint, agentIdentifier: string, taskDescription: string, taskInput: Record<string, unknown>, terms: Record<string, unknown>) {
   const operation = await discoverQuoteOperation(endpoint);
   const result = await invokeProviderOperation(operation, {
+    agent_id: agentIdentifier,
+    input: taskInput,
     task_description: taskDescription,
     goal: taskDescription,
     terms,
@@ -279,7 +281,7 @@ async function requestQuote(req: VercelRequest, res: VercelResponse, user: NonNu
     max_budget: maxBudgetFormatted,
   };
 
-  const { quote: providerQuote, operation } = await requestProviderQuote(providerEndpoint, goal, boundParameters);
+  const { quote: providerQuote, operation } = await requestProviderQuote(providerEndpoint, agent.agent_id, goal, requestMetadata, boundParameters);
   if (providerQuote.accepted === false) return res.status(409).json({ error: "Provider declined the requested terms", provider_quote: providerQuote, quote_endpoint: operation.endpoint });
   const price = normalizedPrice(providerQuote, String(payment.token), payment.symbol, payment.decimals);
   const priceRaw = BigInt(price);
@@ -358,9 +360,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const auth = await getAuthenticatedUser(req);
   if (!auth) return res.status(401).json({ error: "Authentication required" });
   try {
-    const action = typeof req.body?.action === "string" ? req.body.action : "request";
-    if (action === "accept") return await acceptQuote(req, res, auth);
-    if (action !== "request") return res.status(400).json({ error: "action must be request or accept" });
+    if (req.body?.action === "accept") return await acceptQuote(req, res, auth);
     return await requestQuote(req, res, auth);
-  } catch (error) { return res.status(400).json({ error: error instanceof Error ? error.message : "Unable to process Testnet quote" }); }
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Testnet quote request failed" });
+  }
 }
