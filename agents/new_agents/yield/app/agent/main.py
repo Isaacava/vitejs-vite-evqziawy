@@ -8,6 +8,27 @@ CHAIN = os.getenv("YIELD_CHAIN", "BSC")
 MIN_TVL = float(os.getenv("YIELD_MIN_TVL_USD", "100000"))
 MAX_APY = float(os.getenv("YIELD_MAX_APY", "500"))
 
+CAPABILITY_SCHEMA = {
+    "version": 1,
+    "inputs": [
+        {
+            "name": "protocols",
+            "label": "Preferred protocols",
+            "type": "string",
+            "required": False,
+            "help": "Optional comma-separated protocol names to prioritize, for example PancakeSwap or Venus. Leave blank to consider all qualifying BSC opportunities."
+        },
+        {
+            "name": "prefer_stablecoin",
+            "label": "Prefer stablecoin opportunities",
+            "type": "boolean",
+            "required": False,
+            "default": False,
+            "help": "Prefer opportunities marked as stablecoin pools when ranking current BSC yield opportunities."
+        }
+    ]
+}
+
 def _obj(v: Any) -> dict[str, Any]:
     if isinstance(v, dict): return v
     if isinstance(v, str) and v.strip():
@@ -52,7 +73,13 @@ def decide_job(job:dict[str,Any])->dict[str,Any]:
     p=_params(job); pools=fetch_current_pools()
     if not pools: raise RuntimeError("No current BSC yield opportunities met the agent's data-quality filters")
     prefer_stable=bool(p.get("prefer_stablecoin"))
-    wanted=[str(x).lower() for x in (p.get("protocols") if isinstance(p.get("protocols"),list) else [])]
+    wanted_value=p.get("protocols")
+    if isinstance(wanted_value,str):
+        wanted=[x.strip().lower() for x in wanted_value.split(",") if x.strip()]
+    elif isinstance(wanted_value,list):
+        wanted=[str(x).strip().lower() for x in wanted_value if str(x).strip()]
+    else:
+        wanted=[]
     if wanted:
         filtered=[x for x in pools if x["project"].lower() in wanted or any(w in x["project"].lower() for w in wanted)]
         if filtered: pools=filtered
