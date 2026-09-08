@@ -41,6 +41,10 @@ function cookieValue(req: VercelRequest, name: string) {
 }
 
 function requestedAgentId(req: VercelRequest) {
+  const body = req.body && typeof req.body === "object" ? req.body as Record<string, unknown> : {};
+  const bodyAgent = typeof body.agent_id === "string" ? body.agent_id.trim() : "";
+  if (bodyAgent) return bodyAgent;
+
   const cookie = cookieValue(req, "agentmarket_selected_agent").trim();
   if (cookie) return cookie;
 
@@ -162,7 +166,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .map(toMarketplaceMatch)
       .slice(0, 6);
 
-    const body = {
+    const responseBody = {
       ...capture.body,
       federatedMatches,
       discovery: {
@@ -173,8 +177,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
     };
 
+    if (requested) responseBody.discovery = { ...(responseBody.discovery ?? {}), requestedAgentId: requested, requestedAgentPinned: Boolean(pinnedBody !== capture.body) };
     if (requested) res.setHeader("Set-Cookie", "agentmarket_selected_agent=; Path=/; Max-Age=0; SameSite=Lax");
-    return res.status(200).json(body);
+    return res.status(200).json(responseBody);
   } catch (error) {
     if (requested) res.setHeader("Set-Cookie", "agentmarket_selected_agent=; Path=/; Max-Age=0; SameSite=Lax");
     return res.status(200).json({
