@@ -1,0 +1,62 @@
+name: One-time verified live-mark accounting
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/one-time-live-mark.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add onchain live mark to execution accounting
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("server/_testnet/execution-evidence-runtime.ts")
+          s = p.read_text()
+
+          # Add V3 slot0 to the existing generic pool ABI so the current mark is read from chain state.
+          slot0 = '''  {\n    type: "function",\n    name: "slot0",\n    stateMutability: "view",\n    inputs: [],\n    outputs: [\n      { name: "sqrtPriceX96", type: "uint160" },\n      { name: "tick", type: "int24" },\n      { name: "observationIndex", type: "uint16" },\n      { name: "observationCardinality", type: "uint16" },\n      { name: "observationCardinalityNext", type: "uint16" },\n      { name: "feeProtocol", type: "uint8" },\n      { name: "unlocked", type: "bool" },\n    ],\n  },\n'''
+          fee_line = '  { type: "function", name: "fee", stateMutability: "view", inputs: [], outputs: [{ type: "uint24" }] },\n] as const;'
+          if 'name: "slot0"' not in s:
+              if fee_line not in s:
+                  raise SystemExit("V3_POOL_ABI insertion point not found")
+              s = s.replace(fee_line, fee_line.replace('] as const;', slot0 + '] as const;'), 1)
+
+          helper = r'''\n\nfunction finiteNumber(value: unknown): number | null {\n  const numberValue = typeof value === "number" ? value : Number(value);\n  return Number.isFinite(numberValue) ? numberValue : null;\n}\n\nfunction trimDecimal(value: number, digits = 12) {\n  if (!Number.isFinite(value)) return null;\n  return value.toFixed(digits).replace(/\\.?0+$/, "");\n}\n\nasync function accountingWithLiveMark(market: any) {\n  const base = accountingFromMarket(market);\n  if (!base || !market?.pool || !market?.token_in || !market?.token_out) return base;\n  if (!market?.token_in_amount_raw || !market?.token_out_amount_raw) return base;\n\n  try {\n    const pool = market.pool as Address;\n    const tokenIn = market.token_in as Address;\n    const tokenOut = market.token_out as Address;\n    const [meta, slot0Result, inputMeta, outputMeta] = await Promise.all([\n      poolMeta(pool),\n      publicClient.readContract({ address: pool, abi: V3_POOL_ABI, functionName: "slot0" }),\n      tokenMeta(tokenIn),\n      tokenMeta(tokenOut),\n    ]);\n\n    if (!meta.token0 || !meta.token1 || !Array.isArray(slot0Result)) return base;\n    const sqrtPriceX96 = finiteNumber(slot0Result[0]);\n    if (sqrtPriceX96 === null || sqrtPriceX96 <= 0) return base;\n\n    const ratioRaw = (sqrtPriceX96 * sqrtPriceX96) / Math.pow(2, 192);\n    if (!Number.isFinite(ratioRaw) || ratioRaw <= 0) return base;\n\n    const token0IsInput = tokenIn.toLowerCase() === meta.token0.toLowerCase();\n    const token1IsInput = tokenIn.toLowerCase() === meta.token1.toLowerCase();\n    const token0IsOutput = tokenOut.toLowerCase() === meta.token0.toLowerCase();\n    const token1IsOutput = tokenOut.toLowerCase() === meta.token1.toLowerCase();\n    if ((!token0IsInput && !token1IsInput) || (!token0IsOutput && !token1IsOutput)) return base;\n\n    const priceToken1PerToken0 = ratioRaw * Math.pow(10, inputMeta.decimals === meta.token0.toLowerCase() ? 0 : 0);\n    const humanPriceToken1PerToken0 = ratioRaw * Math.pow(10, Number((await tokenMeta(meta.token0)).decimals)) / Math.pow(10, Number((await tokenMeta(meta.token1)).decimals));\n    const priceTokenOutPerTokenIn = token0IsInput && token1IsOutput\n      ? humanPriceToken1PerToken0\n      : token1IsInput && token0IsOutput\n        ? 1 / humanPriceToken1PerToken0\n        : null;\n    void priceToken1PerToken0;\n    if (priceTokenOutPerTokenIn === null || !Number.isFinite(priceTokenOutPerTokenIn) || priceTokenOutPerTokenIn <= 0) return base;\n\n    const amountIn = Number(formatUnits(BigInt(market.token_in_amount_raw), inputMeta.decimals));\n    const amountOut = Number(formatUnits(BigInt(market.token_out_amount_raw), outputMeta.decimals));\n    if (!Number.isFinite(amountIn) || amountIn <= 0 || !Number.isFinite(amountOut)) return base;\n\n    const markedValueInInput = amountOut / priceTokenOutPerTokenIn;\n    const unrealizedPnl = markedValueInInput - amountIn;\n    const pnlPercentage = (unrealizedPnl / amountIn) * 100;\n\n    return {\n      ...base,\n      pnl_status: "live_mark_to_market",\n      realized_pnl: null,\n      realized_pnl_token: null,\n      unrealized_pnl: trimDecimal(unrealizedPnl),\n      unrealized_pnl_token: market.token_in_symbol || market.token_in,\n      total_pnl: trimDecimal(unrealizedPnl),\n      total_pnl_token: market.token_in_symbol || market.token_in,\n      pnl_percentage: trimDecimal(pnlPercentage, 6),\n      pnl_basis: "Independent onchain accounting · current pool spot mark",\n      mark_source: "bsc_testnet_pool_slot0",\n      mark_pool: pool,\n      mark_price_token_out_per_token_in: trimDecimal(priceTokenOutPerTokenIn, 18),\n      marked_value_in_token_in: trimDecimal(markedValueInInput, 18),\n    };\n  } catch {\n    return base;\n  }\n}\n'''
+          # Clean up the intentionally generic helper before inserting it: the final implementation below avoids
+          # any dependence on a specific token or agent and fetches decimals from the verified pool pair.
+          helper = helper.replace('    const priceToken1PerToken0 = ratioRaw * Math.pow(10, inputMeta.decimals === meta.token0.toLowerCase() ? 0 : 0);\n', '')
+          helper = helper.replace('    const humanPriceToken1PerToken0 = ratioRaw * Math.pow(10, Number((await tokenMeta(meta.token0)).decimals)) / Math.pow(10, Number((await tokenMeta(meta.token1)).decimals));\n', '    const [token0Meta, token1Meta] = await Promise.all([tokenMeta(meta.token0), tokenMeta(meta.token1)]);\n    const humanPriceToken1PerToken0 = ratioRaw * Math.pow(10, token0Meta.decimals) / Math.pow(10, token1Meta.decimals);\n')
+          helper = helper.replace('    void priceToken1PerToken0;\n', '')
+
+          marker = '\nasync function deliverableHash(rawText: string, expectedHash: string | null) {'
+          if 'async function accountingWithLiveMark(' not in s:
+              if marker not in s:
+                  raise SystemExit("accounting insertion point not found")
+              s = s.replace(marker, helper + marker, 1)
+
+          old = '    const accounting = accountingFromMarket(market);'
+          new = '    const accounting = await accountingWithLiveMark(market);'
+          if old not in s:
+              raise SystemExit("accounting call site not found")
+          s = s.replace(old, new, 1)
+
+          p.write_text(s)
+          PY
+
+      - name: Commit runtime patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server/_testnet/execution-evidence-runtime.ts
+          git diff --cached --quiet && exit 0
+          git commit -m "Calculate verified live-mark P&L from pool state"
+          git push
