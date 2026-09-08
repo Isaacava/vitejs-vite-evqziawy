@@ -1,10 +1,14 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { privateKeyToAccount } from "viem/accounts";
-import { createPublicClient, createWalletClient, formatUnits, http, parseEther, parseUnits, type Address, type Hex } from "viem";
+import { createPublicClient, createWalletClient, fallback, formatUnits, http, parseEther, parseUnits, type Address, type Hex } from "viem";
 import { bscTestnet } from "viem/chains";
 import { getAuthenticatedUser, serverClient } from "../_auth.js";
 
-const RPC_URL = "https://bsc-testnet-rpc.publicnode.com";
+const RPC_URLS = [
+  "https://bsc-testnet-dataseed.bnbchain.org",
+  "https://bsc-testnet.bnbchain.org",
+  "https://bsc-testnet-rpc.publicnode.com",
+] as const;
 const U_TOKEN: Address = "0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565";
 const CAKE2_TOKEN: Address = "0x8d008B313C1d6C7fE2982F62d32Da7507cF43551";
 const REQUIRED_TBNB = parseEther("0.02");
@@ -12,7 +16,8 @@ const REQUIRED_U = parseUnits("2", 18);
 const REQUIRED_CAKE2 = parseUnits("5", 18);
 const GAS_BUFFER = parseEther("0.0005");
 const CLAIM_COOLDOWN_MS = 24 * 60 * 60 * 1000;
-const rpcTransport = http(RPC_URL, { timeout: 10_000, retryCount: 1 });
+const rpcTransports = RPC_URLS.map((url) => http(url, { timeout: 7_000, retryCount: 1 }));
+const rpcTransport = fallback(rpcTransports);
 const publicClient = createPublicClient({ chain: bscTestnet, transport: rpcTransport });
 const ERC20_ABI = [
   { type: "function", name: "balanceOf", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ name: "balance", type: "uint256" }] },
