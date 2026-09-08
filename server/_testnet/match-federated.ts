@@ -30,6 +30,40 @@ function captureResponse(): Capture {
   return capture;
 }
 
+function requestedAgentId(req: VercelRequest) {
+  const direct = typeof req.query?.agent_id === "string" ? req.query.agent_id.trim() : "";
+  if (direct) return direct;
+
+  const referer = String(req.headers.referer || req.headers.referrer || "").trim();
+  if (!referer) return "";
+  try {
+    const url = new URL(referer);
+    return (url.searchParams.get("agent") || url.searchParams.get("agent_id") || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function pinRequestedAgent(body: any, agentId: string) {
+  if (!agentId || !body) return body;
+  const pool = [body.bestMatch, body.bestHireableMatch, ...(body.alternatives ?? [])].filter(Boolean);
+  const target = pool.find((match: any) => String(match?.agent?.agent_id ?? "") === agentId);
+  if (!target) return body;
+
+  const alternatives = pool.filter((match: any) => String(match?.agent?.agent_id ?? "") !== agentId);
+  return {
+    ...body,
+    bestMatch: target,
+    bestHireableMatch: target,
+    alternatives,
+    discovery: {
+      ...(body.discovery ?? {}),
+      requestedAgentId: agentId,
+      requestedAgentPinned: true,
+    },
+  };
+}
+
 function supports(agent: ExternalAgent, matcher: RegExp) {
   return agent.services.some((service) => matcher.test(service.name) || matcher.test(service.endpoint));
 }
@@ -97,6 +131,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(capture.statusCode).json(capture.body ?? { error: "Testnet matching failed" });
   }
 
+  const requested = requestedAgentId(req);
+  const pinnedBody = pinRequestedAgent(capture.body, requested);
+  if (pinnedBody !== capture.body) capture.body = pinnedBody;
+
   const goal = req.body.goal.trim();
   try {
     const external = await search8004scan(goal, 6);
@@ -111,7 +149,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .map(toMarketplaceMatch)
       .slice(0, 6);
 
-    return res.status(200).json({
+    const body = {
       ...capture.body,
       federatedMatches,
       discovery: {
@@ -120,7 +158,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         externalAgentsAreDiscoverableOnly: true,
         externalHireabilityPolicy: "An external ERC-8004 agent is never automatically hireable from 8004scan alone; AgentMarket requires independent execution-protocol and endpoint verification first.",
       },
-    });
+    };
+
+    return res.status(200).json(body);
   } catch (error) {
     return res.status(200).json({
       ...capture.body,
