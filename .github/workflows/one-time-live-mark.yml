@@ -1,0 +1,143 @@
+name: One-time verified live-mark accounting
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/one-time-live-mark.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add onchain live mark to execution accounting
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("server/_testnet/execution-evidence-runtime.ts")
+          s = p.read_text()
+
+          slot0 = '''  {
+    type: "function",
+    name: "slot0",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [
+      { name: "sqrtPriceX96", type: "uint160" },
+      { name: "tick", type: "int24" },
+      { name: "observationIndex", type: "uint16" },
+      { name: "observationCardinality", type: "uint16" },
+      { name: "observationCardinalityNext", type: "uint16" },
+      { name: "feeProtocol", type: "uint8" },
+      { name: "unlocked", type: "bool" },
+    ],
+  },
+'''
+          fee_line = '  { type: "function", name: "fee", stateMutability: "view", inputs: [], outputs: [{ type: "uint24" }] },\n] as const;'
+          if 'name: "slot0"' not in s:
+              if fee_line not in s:
+                  raise SystemExit("V3_POOL_ABI insertion point not found")
+              s = s.replace(fee_line, fee_line.replace('] as const;', slot0 + '] as const;'), 1)
+
+          helper = '''
+
+function trimDecimal(value: number, digits = 12) {
+  if (!Number.isFinite(value)) return null;
+  return value.toFixed(digits).replace(/\\.?0+$/, "");
+}
+
+async function accountingWithLiveMark(market: any) {
+  const base = accountingFromMarket(market);
+  if (!base || !market?.pool || !market?.token_in || !market?.token_out) return base;
+  if (!market?.token_in_amount_raw || !market?.token_out_amount_raw) return base;
+
+  try {
+    const pool = market.pool as Address;
+    const tokenIn = market.token_in as Address;
+    const tokenOut = market.token_out as Address;
+    const [meta, slot0Result, inputMeta, outputMeta] = await Promise.all([
+      poolMeta(pool),
+      publicClient.readContract({ address: pool, abi: V3_POOL_ABI, functionName: "slot0" }),
+      tokenMeta(tokenIn),
+      tokenMeta(tokenOut),
+    ]);
+
+    if (!meta.token0 || !meta.token1 || !Array.isArray(slot0Result)) return base;
+    const sqrtPriceX96 = typeof slot0Result[0] === "bigint" ? slot0Result[0] : BigInt(slot0Result[0]);
+    if (sqrtPriceX96 <= 0n) return base;
+
+    const ratioRaw = Number(formatUnits(sqrtPriceX96 * sqrtPriceX96, 192));
+    if (!Number.isFinite(ratioRaw) || ratioRaw <= 0) return base;
+
+    const [token0Meta, token1Meta] = await Promise.all([tokenMeta(meta.token0), tokenMeta(meta.token1)]);
+    const humanPriceToken1PerToken0 = ratioRaw * Math.pow(10, token0Meta.decimals) / Math.pow(10, token1Meta.decimals);
+    const token0IsInput = tokenIn.toLowerCase() === meta.token0.toLowerCase();
+    const token1IsInput = tokenIn.toLowerCase() === meta.token1.toLowerCase();
+    const token0IsOutput = tokenOut.toLowerCase() === meta.token0.toLowerCase();
+    const token1IsOutput = tokenOut.toLowerCase() === meta.token1.toLowerCase();
+    if ((!token0IsInput && !token1IsInput) || (!token0IsOutput && !token1IsOutput)) return base;
+
+    const priceTokenOutPerTokenIn = token0IsInput && token1IsOutput
+      ? humanPriceToken1PerToken0
+      : token1IsInput && token0IsOutput
+        ? 1 / humanPriceToken1PerToken0
+        : null;
+    if (priceTokenOutPerTokenIn === null || !Number.isFinite(priceTokenOutPerTokenIn) || priceTokenOutPerTokenIn <= 0) return base;
+
+    const amountIn = Number(formatUnits(BigInt(market.token_in_amount_raw), inputMeta.decimals));
+    const amountOut = Number(formatUnits(BigInt(market.token_out_amount_raw), outputMeta.decimals));
+    if (!Number.isFinite(amountIn) || amountIn <= 0 || !Number.isFinite(amountOut)) return base;
+
+    const markedValueInInput = amountOut / priceTokenOutPerTokenIn;
+    const unrealizedPnl = markedValueInInput - amountIn;
+    const pnlPercentage = (unrealizedPnl / amountIn) * 100;
+
+    return {
+      ...base,
+      pnl_status: "live_mark_to_market",
+      realized_pnl: null,
+      realized_pnl_token: null,
+      unrealized_pnl: trimDecimal(unrealizedPnl),
+      unrealized_pnl_token: market.token_in_symbol || market.token_in,
+      total_pnl: trimDecimal(unrealizedPnl),
+      total_pnl_token: market.token_in_symbol || market.token_in,
+      pnl_percentage: trimDecimal(pnlPercentage, 6),
+      pnl_basis: "Independent onchain accounting · current pool spot mark",
+      mark_source: "bsc_testnet_pool_slot0",
+      mark_pool: pool,
+      mark_price_token_out_per_token_in: trimDecimal(priceTokenOutPerTokenIn, 18),
+      marked_value_in_token_in: trimDecimal(markedValueInInput, 18),
+    };
+  } catch {
+    return base;
+  }
+}
+'''
+          marker = '\nasync function deliverableHash(rawText: string, expectedHash: string | null) {'
+          if 'async function accountingWithLiveMark(' not in s:
+              if marker not in s:
+                  raise SystemExit("accounting insertion point not found")
+              s = s.replace(marker, helper + marker, 1)
+
+          old = '    const accounting = accountingFromMarket(market);'
+          new = '    const accounting = await accountingWithLiveMark(market);'
+          if old not in s:
+              raise SystemExit("accounting call site not found")
+          s = s.replace(old, new, 1)
+
+          p.write_text(s)
+          PY
+
+      - name: Commit runtime patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server/_testnet/execution-evidence-runtime.ts
+          git diff --cached --quiet && exit 0
+          git commit -m "Calculate verified live-mark P&L from pool state"
+          git push
