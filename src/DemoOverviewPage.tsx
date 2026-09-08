@@ -7,7 +7,8 @@ type Mission = { id: string; title: string; goal: string; category: string; stat
 type Activity = { id: string; title: string; description: string | null; created_at: string };
 type Payment = { id: string; amount: number; token_symbol: string | null; status: string; tx_hash: string | null; updated_at: string };
 type DashboardData = { user: AuthUser; missions: Mission[]; activity: Activity[]; payments: Payment[] };
-type ChainJob = { id: string | null; chain_job_id: number; chain_status: string; description: string; budget_raw: string; mission_id: string | null; mission_title: string | null; task_title: string; updated_at: string | null; agent?: { name: string | null } | null };
+type JobAgent = { id?: string | null; agent_id?: string | null; name: string | null; category?: string | null; verification_status?: string | null; image?: string | null };
+type ChainJob = { id: string | null; chain_job_id: number; chain_status: string; description: string; budget_raw: string; mission_id: string | null; mission_title: string | null; task_title: string; updated_at: string | null; agent?: JobAgent | null };
 
 const terminal = ["completed", "rejected", "cancelled", "expired", "terminal"];
 const activeStates = ["open", "funded", "accepted", "in_progress"];
@@ -44,6 +45,36 @@ function Status({ value }: { value: string }) {
   const state = value.toLowerCase();
   const tone = ["rejected", "cancelled", "expired", "disputed"].includes(state) ? "status-rust" : terminal.includes(state) ? "status-green" : "status-brass";
   return <span className={`font-mono text-[9.5px] px-2.5 py-1 rounded-lg ${tone}`}>{stateLabel(state)}</span>;
+}
+
+// Some jobs don't have a distinct task/category — when that text would just repeat
+// the mission title, fall back to a generic label instead of showing the same
+// sentence twice.
+const dedupe = (candidate: string | null | undefined, title: string, fallback: string) => {
+  const text = (candidate || "").trim();
+  if (!text || text.toLowerCase() === title.trim().toLowerCase()) return fallback;
+  return text;
+};
+
+const AVATAR_STYLE = "bottts";
+const avatarUrl = (seed: string) => `https://api.dicebear.com/9.x/${AVATAR_STYLE}/svg?seed=${encodeURIComponent(seed)}`;
+const CATEGORY_AVATAR_SEED: Record<string, string> = { grid_trading: "Clockchain initiator NS-1847", rebalancing: "Agent #10150" };
+const VERIFIED_AVATAR_SEED = "Agent #9199";
+function avatarSrcFor(agent: JobAgent) {
+  if (agent.image) return agent.image;
+  const category = agent.category?.trim().toLowerCase();
+  if (category && CATEGORY_AVATAR_SEED[category]) return avatarUrl(CATEGORY_AVATAR_SEED[category]);
+  if (agent.verification_status === "verified") return avatarUrl(VERIFIED_AVATAR_SEED);
+  return avatarUrl(agent.name?.trim() || agent.agent_id || agent.id || "unassigned-agent");
+}
+
+function AgentAvatar({ agent }: { agent?: JobAgent | null }) {
+  if (!agent) return <span className="block text-[11px] text-inksoft">Assigned provider</span>;
+  const name = agent.name?.trim() || "Assigned provider";
+  return <div className="my-1.5 flex items-center gap-2 sm:justify-end">
+    <img src={avatarSrcFor(agent)} alt="" className="h-6 w-6 shrink-0 bg-transparent" loading="lazy" />
+    <span className="truncate text-[11px] text-inksoft">{name}{agent.verification_status === "verified" && <span className="ml-1 text-green">✓</span>}</span>
+  </div>;
 }
 
 function Metric({ label, value, note, brass = false }: { label: string; value: string | number; note: string; brass?: boolean }) {
@@ -145,10 +176,13 @@ export default function DemoOverviewPage() {
             <div className="mb-1 flex items-center justify-between border-b border-dashed border-[#c8c0af] pb-3"><span className="font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477]">02 / Current work</span><a href="/missions" className="text-[11px] font-extrabold text-brass no-underline">View all →</a></div>
             {currentWork.length ? currentWork.map((job) => {
               const state = chainState(job);
+              const title = job.mission_title || "Mission";
+              const category = dedupe(job.task_title, title, "Mission");
+              const description = dedupe(job.description, title, "Your selected agent is handling this mission.");
               return <article key={job.chain_job_id} className="border-b border-linesoft py-4 last:border-b-0">
                 <div className="flex flex-col gap-3.5 sm:flex-row sm:justify-between">
-                  <div className="min-w-0"><div className="font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477]">{job.task_title || "Grid trading"}</div><h2 className="mt-1 text-[14.5px] font-bold">{job.mission_title || "Mission"}</h2><p className="max-w-[380px] text-[11.5px] leading-relaxed text-inksoft">{job.description || "Your selected agent is handling this mission."}</p></div>
-                  <div className="shrink-0 sm:min-w-[160px] sm:text-right"><Status value={state}/><span className="my-1.5 block text-[11px] text-inksoft">{job.agent?.name || "Assigned provider"}</span><a href={`/mission?job=${encodeURIComponent(String(job.id || ""))}`} className="text-[11px] font-extrabold text-brass no-underline">Open →</a></div>
+                  <div className="min-w-0"><div className="font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477]">{category}</div><h2 className="mt-1 text-[14.5px] font-bold">{title}</h2><p className="max-w-[380px] text-[11.5px] leading-relaxed text-inksoft">{description}</p></div>
+                  <div className="shrink-0 sm:min-w-[160px] sm:text-right"><Status value={state}/><AgentAvatar agent={job.agent} /><a href={`/mission?job=${encodeURIComponent(String(job.id || ""))}`} className="text-[11px] font-extrabold text-brass no-underline">Open →</a></div>
                 </div>
                 <div className="mt-3"><Lifecycle state={state}/></div>
                 <div className="mt-3 flex flex-wrap items-center gap-2 font-mono text-[9px] text-[#8a8477]"><span>Chain: {state}</span><span>·</span><span>{job.mission_id ? "active" : "chain job"}</span><span>·</span><span>synced {ago(job.updated_at)}</span></div>
@@ -165,7 +199,15 @@ export default function DemoOverviewPage() {
 
         <section className="relative z-10 card-asym border border-line bg-paperhi p-[18px]">
           <div className="mb-1 flex items-center justify-between border-b border-dashed border-[#c8c0af] pb-3"><span className="font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477]">04 / Recent missions</span><a href="/missions" className="text-[11px] font-extrabold text-brass no-underline">Mission history →</a></div>
-          {jobs.slice(0, 8).map((job) => <div key={job.chain_job_id} className="flex flex-col gap-2 border-b border-linesoft py-3.5 last:border-b-0 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><strong className="block text-[13px] font-bold">{job.mission_title || "Your mission"}</strong><span className="text-[11px] text-inksoft">{stateLabel(chainState(job))}</span></div><Status value={chainState(job)}/><small className="font-mono text-[10px] text-[#9aa3b1] sm:min-w-[130px] sm:text-right">{ago(job.updated_at)}</small></div>)}
+          {jobs.slice(0, 8).map((job) => {
+            const title = job.mission_title || "Your mission";
+            const category = dedupe(job.task_title, title, "Mission");
+            return <div key={job.chain_job_id} className="flex flex-col gap-2 border-b border-linesoft py-3.5 last:border-b-0 sm:flex-row sm:items-center">
+              <div className="min-w-0 flex-1"><strong className="block text-[13px] font-bold">{title}</strong><span className="text-[11px] text-inksoft">{category}</span></div>
+              <Status value={chainState(job)}/>
+              <small className="font-mono text-[10px] text-[#9aa3b1] sm:min-w-[130px] sm:text-right">{ago(job.updated_at)}</small>
+            </div>;
+          })}
           {!jobs.length && <div className="py-8 text-[12px] text-inksoft">No missions yet. Your first one can start from a simple goal.</div>}
         </section>
       </>}
