@@ -1,0 +1,105 @@
+name: One-time execution evidence enrichment
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/one-time-execution-evidence-enrichment.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch receipt-first execution evidence
+        env:
+          FILE: server/_testnet/execution-evidence-runtime.ts
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("server/_testnet/execution-evidence-runtime.ts")
+          s = p.read_text()
+
+          s = s.replace(
+              'type TransferRecord = {\n  token: Address;\n  from: Address;\n  to: Address;\n  value: bigint;\n};',
+              'type TransferRecord = {\n  token: Address;\n  from: Address;\n  to: Address;\n  value: bigint;\n  logIndex: number;\n};\n\ntype SwapEvidence = {\n  pool: Address;\n  fee: bigint | null;\n  token0: Address;\n  token1: Address;\n  tokenIn: Address | null;\n  tokenOut: Address | null;\n  amountIn: bigint | null;\n  amountOut: bigint | null;\n  logIndex: number;\n};'
+          )
+
+          s = s.replace(
+              'const TRANSFER_ABI = [{',
+              'const V3_SWAP_ABI = [{\n  type: "function",\n  name: "token0",\n  stateMutability: "view",\n  inputs: [],\n  outputs: [{ name: "", type: "address" }],\n}, {\n  type: "function",\n  name: "token1",\n  stateMutability: "view",\n  inputs: [],\n  outputs: [{ name: "", type: "address" }],\n}, {\n  type: "function",\n  name: "fee",\n  stateMutability: "view",\n  inputs: [],\n  outputs: [{ name: "", type: "uint24" }],\n}, {\n  type: "event",\n  name: "Swap",\n  anonymous: false,\n  inputs: [\n    { name: "sender", type: "address", indexed: true },\n    { name: "recipient", type: "address", indexed: true },\n    { name: "amount0", type: "int256", indexed: false },\n    { name: "amount1", type: "int256", indexed: false },\n    { name: "sqrtPriceX96", type: "uint160", indexed: false },\n    { name: "liquidity", type: "uint128", indexed: false },\n    { name: "tick", type: "int24", indexed: false },\n    { name: "protocolFeesToken0", type: "uint128", indexed: false },\n    { name: "protocolFeesToken1", type: "uint128", indexed: false },\n  ],\n}] as const;\n\nconst TRANSFER_ABI = [{'
+          )
+
+          s = s.replace(
+              'transfers.push({ token: log.address, from: args.from, to: args.to, value: args.value });',
+              'transfers.push({ token: log.address, from: args.from, to: args.to, value: args.value, logIndex: Number(log.logIndex ?? transfers.length) });'
+          )
+
+          needle = '''function extractCapability(request: any) {'''
+          helper = '''async function findV3SwapEvidence(\n  receipt: any,\n  declaredTokenIn: Address | null,\n  declaredTokenOut: Address | null,\n): Promise<SwapEvidence | null> {\n  for (const log of receipt.logs || []) {\n    try {\n      const decoded = decodeEventLog({\n        abi: V3_SWAP_ABI,\n        data: log.data,\n        topics: log.topics,\n        strict: false,\n      });\n      if (decoded.eventName !== "Swap" || !isAddress(log.address)) continue;\n      const args = object(decoded.args);\n      if (typeof args.amount0 !== "bigint" || typeof args.amount1 !== "bigint") continue;\n\n      const [token0, token1, fee] = await Promise.all([\n        publicClient.readContract({ address: log.address, abi: V3_SWAP_ABI, functionName: "token0" }),\n        publicClient.readContract({ address: log.address, abi: V3_SWAP_ABI, functionName: "token1" }),\n        publicClient.readContract({ address: log.address, abi: V3_SWAP_ABI, functionName: "fee" }),\n      ]);\n      if (!isAddress(token0) || !isAddress(token1)) continue;\n\n      const normalized0 = token0.toLowerCase();\n      const normalized1 = token1.toLowerCase();\n      const matchesDeclaredPair =\n        !!declaredTokenIn && !!declaredTokenOut &&\n        ((declaredTokenIn.toLowerCase() === normalized0 && declaredTokenOut.toLowerCase() === normalized1) ||\n         (declaredTokenIn.toLowerCase() === normalized1 && declaredTokenOut.toLowerCase() === normalized0));\n      if (!matchesDeclaredPair) continue;\n\n      const tokenIn = declaredTokenIn;\n      const tokenOut = declaredTokenOut;\n      const inDelta = tokenIn.toLowerCase() === normalized0 ? args.amount0 : args.amount1;\n      const outDelta = tokenOut.toLowerCase() === normalized0 ? args.amount0 : args.amount1;\n      const amountIn = inDelta > 0n ? inDelta : null;\n      const amountOut = outDelta < 0n ? -outDelta : null;\n      if (amountIn === null || amountOut === null) continue;\n\n      return {\n        pool: log.address,\n        fee: typeof fee === "bigint" ? fee : BigInt(fee),\n        token0,\n        token1,\n        tokenIn,\n        tokenOut,\n        amountIn,\n        amountOut,\n        logIndex: Number(log.logIndex ?? 0),\n      };\n    } catch {\n      // Ignore non-V3 swap logs or pools whose metadata cannot be read.\n    }\n  }\n  return null;\n}\n\nfunction tokenAddress(value: unknown): Address | null {\n  return isAddress(value) ? value : null;\n}\n\n'''
+          if needle not in s:
+              raise SystemExit("extractCapability insertion point not found")
+          s = s.replace(needle, helper + needle, 1)
+
+          s = s.replace(
+              '''    const transfers = decodeTransfers(receipt);\n    const executionWallet = selectExecutionWallet(preferredWallets, tx?.from || null, transfers);\n    const receiptVerified = receipt?.status === "success";\n    const executorStatus = receiptVerified ? "verified_onchain" : "failed";''',
+              '''    const transfers = decodeTransfers(receipt);\n    const executionWallet = selectExecutionWallet(preferredWallets, tx?.from || null, transfers);\n    const receiptVerified = receipt?.status === "success";\n    const executorStatus = receiptVerified ? "verified_onchain" : "failed";\n    const declaredTokenIn = tokenAddress(capability.capabilityMarket.token_in);\n    const declaredTokenOut = tokenAddress(capability.capabilityMarket.token_out);\n    const swapEvidence = receiptVerified\n      ? await findV3SwapEvidence(receipt, declaredTokenIn, declaredTokenOut)\n      : null;'''
+          )
+
+          s = s.replace(
+              '''        token_in_amount: null,\n        token_out_amount: null,\n        fee: null,\n        pool: null,''',
+              '''        token_in_amount: swapEvidence?.amountIn?.toString() || null,\n        token_out_amount: swapEvidence?.amountOut?.toString() || null,\n        fee: swapEvidence?.fee?.toString() || null,\n        pool: swapEvidence?.pool || null,'''
+          )
+
+          s = s.replace(
+              '''        execution_effects_verified: effectVerified,\n        assets_involved: assetAddresses,''',
+              '''        execution_effects_verified: effectVerified,\n        swap_event_verified: !!swapEvidence,\n        swap_log_index: swapEvidence?.logIndex ?? null,\n        pool_token0: swapEvidence?.token0 || null,\n        pool_token1: swapEvidence?.token1 || null,\n        assets_involved: assetAddresses,'''
+          )
+
+          s = s.replace(
+              '''        transaction_hash: transactionHash,\n        execution_wallet: executionWallet,\n        tx_from: tx?.from || null,\n        tx_to: tx?.to || null,''',
+              '''        transaction_hash: transactionHash,\n        execution_wallet: executionWallet,\n        tx_from: tx?.from || null,\n        tx_to: tx?.to || null,\n        calldata_selector: typeof tx?.input === "string" && /^0x[a-fA-F0-9]{8}/.test(tx.input) ? tx.input.slice(0, 10) : null,'''
+          )
+
+          p.write_text(s)
+          PY
+
+      - name: Restore accidentally removed faucet route
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("api/testnet.ts")
+          s = p.read_text()
+          if 'case "faucet":' not in s:
+              marker = '    case "execution-wallet": return (await import("../server/_testnet/execution-wallet.js")).default as Handler;\n'
+              replacement = '    case "faucet": return (await import("../server/_testnet/faucet.js")).default as Handler;\n' + marker
+              if marker in s:
+                  s = s.replace(marker, replacement, 1)
+              else:
+                  raise SystemExit("faucet insertion marker not found")
+              p.write_text(s)
+          PY
+
+      - name: Add reproducible Supabase migration
+        run: |
+          mkdir -p supabase/migrations
+          cat > supabase/migrations/20260908170000_execution_evidence_recorded_at_compat.sql <<'SQL'
+          alter table public.execution_capital_execution_evidence
+            add column if not exists recorded_at timestamptz not null default now();
+
+          comment on column public.execution_capital_execution_evidence.recorded_at is
+            'Compatibility timestamp for receipt-first execution evidence. created_at remains the canonical row creation timestamp.';
+          SQL
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server/_testnet/execution-evidence-runtime.ts api/testnet.ts supabase/migrations/20260908170000_execution_evidence_recorded_at_compat.sql .github/one-time-execution-evidence-enrichment.yml
+          git diff --cached --quiet && exit 0
+          git commit -m "Enrich receipt-first execution evidence on-chain"
+          git push
