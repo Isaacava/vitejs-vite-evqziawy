@@ -4,8 +4,9 @@ WORKDIR /execution
 COPY agents/grid/execution/package.json ./package.json
 COPY agents/grid/execution/tsconfig.json ./tsconfig.json
 COPY agents/grid/execution/src ./src
-RUN npm install --omit=dev --no-audit --no-fund \
-    && npm run build
+RUN npm install --no-audit --no-fund \
+    && npm run build \
+    && npm prune --omit=dev --no-audit --no-fund
 
 FROM python:3.11-slim
 
@@ -19,8 +20,8 @@ COPY agents/erc8004_register.py ./erc8004_register.py
 COPY agents/start_agent_v2.sh ./start_agent.sh
 RUN chmod +x /app/start_agent.sh
 
-# Reuse the exact Node 20 runtime from the builder without installing the full
-# Debian node/npm dependency tree in the 512 MiB Render runtime.
+# Reuse the exact Node 20 runtime and pruned production dependencies from the
+# builder without installing the full Debian node/npm dependency tree here.
 COPY --from=execution-build /usr/local/bin/node /usr/local/bin/node
 COPY --from=execution-build /execution/package.json /execution/package.json
 COPY --from=execution-build /execution/package-lock.json /execution/package-lock.json
