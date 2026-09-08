@@ -6,6 +6,8 @@ export default function MarketplaceWorkspaceAutoHire() {
     const requestedAgent = new URLSearchParams(window.location.search).get("agent");
     if (!requestedAgent) return;
 
+    document.cookie = `agentmarket_selected_agent=${encodeURIComponent(requestedAgent)}; Path=/; Max-Age=600; SameSite=Lax`;
+
     let attempts = 0;
     const timer = window.setInterval(() => {
       attempts += 1;
