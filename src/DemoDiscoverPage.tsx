@@ -53,23 +53,6 @@ function scoreTone(score: number) {
   return "rust";
 }
 
-function AdapterBadges({ match }: { match: Match }) {
-  const commerce = match.commerce;
-  const communication = match.communication;
-  const execution = match.execution;
-  const badges = [
-    commerce?.erc8183 ? "ERC8183" : null,
-    communication?.http ? "HTTP" : communication?.a2a ? "A2A" : communication?.mcp ? "MCP" : null,
-    commerce?.x402 ? "x402" : null,
-  ].filter((value): value is string => Boolean(value));
-  const confidence = match.scoreConfidence === "high" ? "high confidence" : match.scoreConfidence === "medium" ? "medium confidence" : null;
-  return <>
-    <div className="mb-2 flex items-center justify-between gap-3"><span className="text-[10.5px] text-inksoft">Protocol adapter</span><span className="font-mono text-[10px] text-ink">{badges[0] || "not discovered"}</span></div>
-    {badges.length ? <div className="flex flex-wrap gap-1.5">{badges.map((badge) => <span key={badge} className="rounded-full bg-brasssoft px-2 py-1 font-mono text-[9px] text-brass">{badge}</span>)}{confidence && <span className="rounded-full bg-greensoft px-2 py-1 font-mono text-[9px] text-green">{confidence}</span>}</div> : <p className="m-0 text-[9.5px] leading-4 text-[#8a8477]">No compatible execution protocol discovered yet for this agent.</p>}
-    {execution && <p className="mt-2 mb-0 text-[9.5px] leading-4 text-[#8a8477]">Execution: {human(execution.wallet_provider)} wallet · {execution.transaction_authority.replace(/_/g, " ")}</p>}
-  </>;
-}
-
 function AgentCard({ match, index }: { match: Match; index: number }) {
   const score = Math.round(match.score);
   const success = match.onchain?.successRate ?? null;
@@ -91,10 +74,22 @@ function AgentCard({ match, index }: { match: Match; index: number }) {
 
     <div className="border-b border-linesoft py-2"><div className="mb-2 flex items-center justify-between gap-3"><span className="text-[10.5px] text-inksoft">On-chain record</span><span className="font-mono text-[9px] text-[#8a8477]">ERC-8004</span></div><div className="grid grid-cols-2 gap-2 text-[10px]"><span className="text-inksoft">Completed <b className="ml-1 font-mono text-ink">{completed}</b></span><span className="text-right text-inksoft">Total <b className="ml-1 font-mono text-ink">{jobs}</b></span><span className="text-inksoft">Feedback <b className="ml-1 font-mono text-ink">{match.onchain?.feedbackCount ?? 0}</b></span><span className="text-right text-inksoft">Reputation <b className="ml-1 font-mono text-ink">{match.onchain?.reputationScore == null ? "—" : Math.round(match.onchain.reputationScore)}</b></span></div></div>
 
-    <div className="py-2"><AdapterBadges match={match}/></div>
+    <div className="py-2">
+      <div className="mb-2 flex items-center justify-between gap-3"><span className="text-[10.5px] text-inksoft">Protocol adapter</span><span className="font-mono text-[10px] text-ink">{match.commerce?.erc8183 ? "ERC8183" : "not discovered"}</span></div>
+      <div className="flex flex-wrap gap-1.5">{[match.commerce?.erc8183 ? "ERC8183" : null, match.communication?.http ? "HTTP" : match.communication?.a2a ? "A2A" : match.communication?.mcp ? "MCP" : null, match.commerce?.x402 ? "x402" : null].filter((value): value is string => Boolean(value)).map((badge) => <span key={badge} className="rounded-full bg-brasssoft px-2 py-1 font-mono text-[9px] text-brass">{badge}</span>)}</div>
+    </div>
     {match.reasons?.length ? <div className="mt-2 rounded-[12px_7px_13px_8px] border border-line bg-paper p-3 text-[9.5px] leading-4 text-inksoft">{match.reasons[0]}</div> : null}
-    <div className="mt-3 flex items-center justify-between gap-3 border-t border-dashed border-line pt-3"><span className="font-mono text-[10px] text-brass">Testnet · ERC-8004</span><a href={`/app?agent=${encodeURIComponent(match.agent.agent_id)}`} className="text-[11px] font-extrabold text-brass no-underline">Hire / inspect →</a></div>
+    <div className="mt-3 flex items-center justify-between gap-3 border-t border-dashed border-line pt-3"><span className="font-mono text-[10px] text-brass">Testnet · ERC-8004</span><a href={`/app?agent=${encodeURIComponent(match.agent.agent_id)}&goal=${encodeURIComponent(goalForCategory(match.agent.category))}`} className="text-[11px] font-extrabold text-brass no-underline">Hire / inspect →</a></div>
   </article>;
+}
+
+function goalForCategory(category: string) {
+  const normalized = category.toLowerCase();
+  if (normalized === "grid_trading" || normalized === "grid trading") return goals[3];
+  if (normalized === "rebalancing") return goals[0];
+  if (normalized === "yield") return goals[1];
+  if (normalized === "health_factor" || normalized === "health factor") return goals[2];
+  return `Hire an agent for ${human(category)}`;
 }
 
 export default function DemoDiscoverPage() {
