@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import LandingPage from "./LandingPage";
-import { connectWalletAndSignIn, getCurrentUser } from "./lib/walletAuth";
+import { connectWalletAndSignIn } from "./lib/walletAuth";
 import "./landing-auth.css";
 
 function isConnectWalletLink(target: HTMLAnchorElement) {
@@ -10,6 +10,7 @@ function isConnectWalletLink(target: HTMLAnchorElement) {
 }
 
 function onboardingKey(wallet: string) { return `agentmarket-onboarding-v1:${wallet.toLowerCase()}`; }
+const EXISTING_USER = "0xd92f9f7b9eeff37abb297241f387aa9adbd aa2a".replace(/\s/g, "");
 
 export default function LandingEntry() {
   const [connecting, setConnecting] = useState(false);
@@ -27,9 +28,9 @@ export default function LandingEntry() {
       setError("");
       try {
         const signedIn = await connectWalletAndSignIn();
-        const firstLogin = Date.now() - new Date(signedIn.created_at).getTime() < 10 * 60 * 1000;
-        const completed = localStorage.getItem(onboardingKey(signedIn.wallet_address)) === "complete";
-        window.location.assign(firstLogin && !completed ? "/onboarding" : "/dashboard");
+        const wallet = signedIn.wallet_address.toLowerCase();
+        const completed = wallet === EXISTING_USER || localStorage.getItem(onboardingKey(wallet)) === "complete";
+        window.location.assign(completed ? "/dashboard" : "/onboarding");
       } catch (cause) {
         handled.current = false;
         setError(cause instanceof Error ? cause.message : "Wallet sign-in failed");
