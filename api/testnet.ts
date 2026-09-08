@@ -7,18 +7,10 @@ async function normalizeExecutionEvidenceJob(req: VercelRequest, route: string) 
   if (route !== "execution-evidence") return;
   const rawJob = typeof req.query?.job === "string" ? req.query.job.trim() : "";
   if (!rawJob || /^\d+$/.test(rawJob)) return;
-
   const supabase = serverClient();
-  const { data, error } = await supabase
-    .from("jobs")
-    .select("id,chain_job_id")
-    .eq("id", rawJob)
-    .maybeSingle();
+  const { data, error } = await supabase.from("jobs").select("id,chain_job_id").eq("id", rawJob).maybeSingle();
   if (error) throw new Error(error.message);
-  if (data?.chain_job_id === null || data?.chain_job_id === undefined) {
-    throw new Error("Marketplace job has no ERC-8183 chain job ID yet");
-  }
-
+  if (data?.chain_job_id === null || data?.chain_job_id === undefined) throw new Error("Marketplace job has no ERC-8183 chain job ID yet");
   req.query = { ...req.query, job: String(data.chain_job_id) };
 }
 
@@ -26,16 +18,10 @@ async function normalizeExecutionCapitalJob(req: VercelRequest, route: string) {
   if (!new Set(["execution-capital-requirement", "execution-authorization-status"]).has(route)) return;
   const rawJob = typeof req.query?.job === "string" ? req.query.job.trim() : "";
   if (!rawJob || !/^\d+$/.test(rawJob)) return;
-
   const supabase = serverClient();
-  const { data, error } = await supabase
-    .from("jobs")
-    .select("id,chain_job_id")
-    .eq("chain_job_id", Number(rawJob))
-    .maybeSingle();
+  const { data, error } = await supabase.from("jobs").select("id,chain_job_id").eq("chain_job_id", Number(rawJob)).maybeSingle();
   if (error) throw new Error(error.message);
   if (!data?.id) throw new Error("Marketplace job could not be resolved from the ERC-8183 chain job ID");
-
   req.query = { ...req.query, job: String(data.id) };
 }
 
@@ -46,8 +32,7 @@ async function loadHandler(route: string): Promise<Handler | null> {
     case "erc8183-indexer": return (await import("../server/_testnet/erc8183-indexer.js")).default as Handler;
     case "erc8183-settlement": return (await import("../server/_testnet/erc8183-settlement.js")).default as Handler;
     case "erc8183": return (await import("../server/_testnet/erc8183.js")).default as Handler;
-    case "execution-capital":
-      return (await import("../server/_testnet/execution-capital.js")).default as Handler;
+    case "execution-capital": return (await import("../server/_testnet/execution-capital.js")).default as Handler;
     case "execution-capital-verify": return (await import("../server/_testnet/execution-capital.js")).default as Handler;
     case "execution-capital-verify-passkey": return (await import("../server/_testnet/execution-capital-verify-passkey.js")).default as Handler;
     case "execution-capital-preflight": return (await import("../server/_testnet/execution-capital-preflight.js")).default as Handler;
@@ -57,6 +42,7 @@ async function loadHandler(route: string): Promise<Handler | null> {
     case "execution-authorization-prepare": return (await import("../server/_testnet/execution-authorization-prepare.js")).default as Handler;
     case "execution-authorization-status": return (await import("../server/_testnet/execution-authorization-status.js")).default as Handler;
     case "execution-wallet": return (await import("../server/_testnet/execution-wallet.js")).default as Handler;
+    case "faucet": return (await import("../server/_testnet/faucet.js")).default as Handler;
     case "provider-operations": return (await import("../server/_testnet/provider-operations.js")).default as Handler;
     case "job-result": return (await import("../server/_testnet/job-result.js")).default as Handler;
     case "job-status": return (await import("../server/_testnet/job-status.js")).default as Handler;
