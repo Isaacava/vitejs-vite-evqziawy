@@ -12,7 +12,8 @@ const REQUIRED_U = parseUnits("2", 18);
 const REQUIRED_CAKE2 = parseUnits("5", 18);
 const GAS_BUFFER = parseEther("0.0005");
 const CLAIM_COOLDOWN_MS = 24 * 60 * 60 * 1000;
-const publicClient = createPublicClient({ chain: bscTestnet, transport: http(RPC_URL) });
+const rpcTransport = http(RPC_URL, { timeout: 10_000, retryCount: 1 });
+const publicClient = createPublicClient({ chain: bscTestnet, transport: rpcTransport });
 const ERC20_ABI = [
   { type: "function", name: "balanceOf", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ name: "balance", type: "uint256" }] },
   { type: "function", name: "transfer", stateMutability: "nonpayable", inputs: [{ name: "to", type: "address" }, { name: "value", type: "uint256" }], outputs: [{ name: "success", type: "bool" }] },
@@ -72,7 +73,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (recent) return res.status(429).json({ ok: false, error: "This wallet has already claimed test funds recently. Try again after the cooldown.", retryAfter: new Date(new Date(recent.claimed_at).getTime() + CLAIM_COOLDOWN_MS).toISOString(), ...status });
 
     const account = privateKeyToAccount(faucetKey());
-    const walletClient = createWalletClient({ account, chain: bscTestnet, transport: http(RPC_URL) });
+    const walletClient = createWalletClient({ account, chain: bscTestnet, transport: rpcTransport });
     const current = await balances(wallet);
     const needTBNB = current.tBNB < REQUIRED_TBNB ? REQUIRED_TBNB - current.tBNB : 0n;
     const needU = current.U < REQUIRED_U ? REQUIRED_U - current.U : 0n;
