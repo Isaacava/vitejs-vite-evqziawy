@@ -200,7 +200,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { data: providerAgents } = providerAgentIds.length
       ? await supabase
           .from("agents")
-          .select("id,agent_id,name,owner")
+          .select("id,agent_id,name,owner,category,verification_status")
           .in("id", providerAgentIds)
       : { data: [] };
 
@@ -230,7 +230,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           task_title: taskTitle,
           job_status: chain.chain_status.toLowerCase(),
           budget: db?.budget ?? null,
-          agent: providerAgent ? { id: providerAgent.id, agent_id: providerAgent.agent_id, name: providerAgent.name } : null,
+          agent: providerAgent ? { id: providerAgent.id, agent_id: providerAgent.agent_id, name: providerAgent.name, category: providerAgent.category ?? null, verification_status: providerAgent.verification_status ?? null } : null,
           submitted_at: submitted && chainJob.submittedAt > 0n ? new Date(Number(chainJob.submittedAt) * 1000).toISOString() : null,
           created_at: db?.created_at ?? null,
           funded_at: db?.funded_at ?? null,
@@ -267,3 +267,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 }
+
