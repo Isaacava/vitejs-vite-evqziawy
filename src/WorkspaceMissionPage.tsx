@@ -15,7 +15,48 @@ type MissionJob = {
   submitted_at: string | null;
   terminal_at: string | null;
   updated_at: string | null;
+  agent?: { id?: string | null; agent_id?: string | null; name: string | null; category?: string | null; verification_status?: string | null } | null;
 };
+
+const AVATAR_STYLE = "bottts";
+const avatarUrl = (seed: string) => `https://api.dicebear.com/9.x/${AVATAR_STYLE}/svg?seed=${encodeURIComponent(seed)}`;
+
+// Fixed avatar seeds for known agent roles, matching the reference design.
+// Category-specific seeds take priority; any other verified agent falls back to the shared "verified" seed.
+const CATEGORY_AVATAR_SEED: Record<string, string> = {
+  grid_trading: "Clockchain initiator NS-1847",
+  rebalancing: "Agent #10150",
+};
+const VERIFIED_AVATAR_SEED = "Agent #9199";
+
+function avatarSeedFor(agent: NonNullable<MissionJob["agent"]>) {
+  const category = agent.category?.trim().toLowerCase();
+  if (category && CATEGORY_AVATAR_SEED[category]) return CATEGORY_AVATAR_SEED[category];
+  if (agent.verification_status === "verified") return VERIFIED_AVATAR_SEED;
+  return agent.name?.trim() || agent.agent_id || agent.id || "unassigned-agent";
+}
+
+function AgentBadge({ agent }: { agent?: MissionJob["agent"] }) {
+  if (!agent) {
+    return (
+      <div className="flex shrink-0 flex-col items-center gap-1.5 sm:items-end">
+        <div className="flex h-14 w-14 items-center justify-center rounded-[16px_8px_18px_9px] border border-dashed border-line bg-transparent text-[9px] font-mono uppercase text-[#9aa3b1]">TBD</div>
+        <span className="text-[10.5px] text-inksoft">Not yet assigned</span>
+      </div>
+    );
+  }
+  const name = agent.name?.trim() || (agent.agent_id ? `Agent #${agent.agent_id}` : "Provider agent");
+  const verified = agent.verification_status === "verified";
+  return (
+    <div className="flex shrink-0 flex-col items-center gap-1.5 sm:items-end">
+      <img src={avatarUrl(avatarSeedFor(agent))} alt="" className="h-14 w-14 bg-transparent" loading="lazy" />
+      <span className="flex max-w-[130px] items-center gap-1 truncate text-[11px] font-semibold text-ink" title={name}>
+        {name}
+        {verified && <span className="text-[11px] text-green" title="Verified agent">✓</span>}
+      </span>
+    </div>
+  );
+}
 
 const human = (value: string) => value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 const terminalStates = new Set(["completed", "rejected", "cancelled", "expired", "terminal"]);
@@ -155,8 +196,12 @@ export default function WorkspaceMissionPage() {
             const state = String(job.chain_status || job.job_status || "open");
             const fallbackTitle = cleanDisplay(job.task_title || job.mission_title, "Your mission");
             const title = cleanDisplay(job.mission_title, fallbackTitle);
-            const category = cleanDisplay(job.task_title, "Mission");
-            const description = cleanDisplay(job.task_title, title);
+            const rawCategory = cleanDisplay(job.task_title, "Mission");
+            // task_title falls back to mission_title server-side when there's no distinct task —
+            // when that happens, don't show the same sentence twice as a category label.
+            const category = rawCategory.trim().toLowerCase() === title.trim().toLowerCase() ? "Mission" : rawCategory;
+            const rawDescription = cleanDisplay(job.task_title, title);
+            const description = rawDescription.trim().toLowerCase() === title.trim().toLowerCase() ? null : rawDescription;
             const consoleTarget = job.id || (job.chain_job_id != null ? String(job.chain_job_id) : "");
             const rowKey = job.id || `mission-${job.chain_job_id ?? index}`;
             const last = index === filtered.length - 1;
@@ -166,13 +211,16 @@ export default function WorkspaceMissionPage() {
                 <div className="min-w-0 flex-1">
                   <div className="font-mono text-[9.5px] uppercase tracking-wide text-[#8a8477]">{category}</div>
                   <h2 className="my-1.5 text-[16px] font-bold">{title}</h2>
-                  <p className="max-w-[470px] text-[12px] leading-relaxed text-inksoft">{description}</p>
+                  {description && <p className="max-w-[470px] text-[12px] leading-relaxed text-inksoft">{description}</p>}
                   {job.chain_job_id != null && <span className="mt-2 inline-block font-mono text-[9px] text-inksoft">Tracked securely in the BNB Testnet</span>}
                 </div>
-                <div className="min-w-0 shrink-0 text-left sm:min-w-[170px] sm:text-right">
-                  <Status value={state} />
-                  <small className="my-2 block text-[11px] text-inksoft">{state.toLowerCase() === "in_progress" ? "Agent is working on it" : state.toLowerCase() === "submitted" ? "Ready for your review" : "Marketplace mission"}</small>
-                  {consoleTarget && <a href={`/mission?job=${encodeURIComponent(consoleTarget)}`} className="text-[11.5px] font-extrabold text-brass no-underline">Review mission →</a>}
+                <div className="flex shrink-0 flex-col items-start gap-3 sm:min-w-[170px] sm:items-end sm:text-right">
+                  <AgentBadge agent={job.agent} />
+                  <div>
+                    <Status value={state} />
+                    <small className="my-2 block text-[11px] text-inksoft">{state.toLowerCase() === "in_progress" ? "Agent is working on it" : state.toLowerCase() === "submitted" ? "Ready for your review" : "Marketplace mission"}</small>
+                    {consoleTarget && <a href={`/mission?job=${encodeURIComponent(consoleTarget)}`} className="text-[11.5px] font-extrabold text-brass no-underline">Review mission →</a>}
+                  </div>
                 </div>
               </article>
             );
