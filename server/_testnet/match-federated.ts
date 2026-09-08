@@ -30,7 +30,20 @@ function captureResponse(): Capture {
   return capture;
 }
 
+function cookieValue(req: VercelRequest, name: string) {
+  const cookieHeader = String(req.headers.cookie || "");
+  for (const part of cookieHeader.split(";")) {
+    const [key, ...rest] = part.trim().split("=");
+    if (key !== name) continue;
+    try { return decodeURIComponent(rest.join("=")); } catch { return rest.join("="); }
+  }
+  return "";
+}
+
 function requestedAgentId(req: VercelRequest) {
+  const cookie = cookieValue(req, "agentmarket_selected_agent").trim();
+  if (cookie) return cookie;
+
   const direct = typeof req.query?.agent_id === "string" ? req.query.agent_id.trim() : "";
   if (direct) return direct;
 
@@ -160,8 +173,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
     };
 
+    if (requested) res.setHeader("Set-Cookie", "agentmarket_selected_agent=; Path=/; Max-Age=0; SameSite=Lax");
     return res.status(200).json(body);
   } catch (error) {
+    if (requested) res.setHeader("Set-Cookie", "agentmarket_selected_agent=; Path=/; Max-Age=0; SameSite=Lax");
     return res.status(200).json({
       ...capture.body,
       federatedMatches: [],
