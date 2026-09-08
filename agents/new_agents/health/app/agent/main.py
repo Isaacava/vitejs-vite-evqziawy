@@ -10,6 +10,42 @@ WARNING = float(os.getenv("HEALTH_WARNING_THRESHOLD", "1.50"))
 CRITICAL = float(os.getenv("HEALTH_CRITICAL_THRESHOLD", "1.20"))
 w3 = Web3(Web3.HTTPProvider(RPC, request_kwargs={"timeout": 15}))
 
+CAPABILITY_SCHEMA = {
+    "version": 1,
+    "inputs": [
+        {
+            "name": "wallet_address",
+            "label": "Wallet to monitor",
+            "type": "string",
+            "required": True,
+            "help": "BSC Testnet wallet address whose live Venus/Compound-compatible account health should be inspected."
+        },
+        {
+            "name": "warning_threshold",
+            "label": "Warning health threshold",
+            "type": "number",
+            "required": False,
+            "default": WARNING,
+            "help": "Health factor at or below this value is classified as a warning."
+        },
+        {
+            "name": "critical_threshold",
+            "label": "Critical health threshold",
+            "type": "number",
+            "required": False,
+            "default": CRITICAL,
+            "help": "Health factor at or below this value is classified as critical. It must be lower than the warning threshold."
+        },
+        {
+            "name": "venus_comptroller",
+            "label": "BSC Testnet Comptroller",
+            "type": "string",
+            "required": False,
+            "help": "Optional Venus/Compound-compatible Comptroller address. Leave blank to use the provider's configured BSC Testnet Comptroller."
+        }
+    ]
+}
+
 COMP_ABI = [
     {"name":"getAccountLiquidity","type":"function","stateMutability":"view","inputs":[{"name":"account","type":"address"}],"outputs":[{"type":"uint256"},{"type":"uint256"},{"type":"uint256"}]},
     {"name":"getAllMarkets","type":"function","stateMutability":"view","inputs":[],"outputs":[{"type":"address[]"}]},
