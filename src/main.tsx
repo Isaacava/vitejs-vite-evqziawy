@@ -16,6 +16,7 @@ import DemoActivityPage from "./DemoActivityPage";
 import DemoPaymentsPage from "./DemoPaymentsPage";
 import { DisputePage, EvaluationPage, ProviderOverviewPage, ProviderQueuePage, RefundPage, SettlementPage, SettingsPage } from "./DemoParityPages";
 import ExecutionWalletPage from "./ExecutionWalletPage";
+import OnboardingPage from "./OnboardingPage";
 import TestnetConsole from "./TestnetConsole";
 import TestnetSwap from "./TestnetSwap";
 import TestnetQuoteExecutionWalletConnect from "./TestnetQuoteExecutionWalletConnect";
@@ -43,6 +44,7 @@ function renderWorkspace(element: React.ReactNode) { return <WorkspaceShell>{ele
 function renderApp() {
   if ((path === "/" || path === "/mission") && jobId) return renderWorkspace(<WorkspaceMissionConsole />);
   if (path === "/") return <LandingEntry />;
+  if (path === "/onboarding") return <OnboardingPage />;
   if (path === "/dashboard") return renderWorkspace(<DemoOverviewPage />);
   if (path === "/dashboard/legacy") return renderWorkspace(<UserDashboard />);
   if (path === "/discover") return renderWorkspace(<DemoDiscoverPage />);
