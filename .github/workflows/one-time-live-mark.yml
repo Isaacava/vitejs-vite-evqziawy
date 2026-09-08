@@ -141,3 +141,5 @@ async function accountingWithLiveMark(market: any) {
           git diff --cached --quiet && exit 0
           git commit -m "Calculate verified live-mark P&L from pool state"
           git push
+
+# second trigger after moving the workflow into .github/workflows
