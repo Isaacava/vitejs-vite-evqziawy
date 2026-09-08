@@ -7,7 +7,7 @@
       ]
     },
     {
-      "source": "/(app|dashboard|discover|missions|mission|activity|payments|execution-wallet|permissions|agent/evidence|prepare|prepare/execute|evaluator|provider/submit|lifecycle|agents/register|agent/inbox|testnet)(/.*)?",
+      "source": "/(app|dashboard|discover|missions|mission|activity|payments|execution-wallet|permissions|onboarding|agent/evidence|prepare|prepare/execute|evaluator|provider/submit|lifecycle|agents/register|agent/inbox|testnet)(/.*)?",
       "headers": [
         { "key": "Cache-Control", "value": "no-store, no-cache, must-revalidate, proxy-revalidate" }
       ]
@@ -43,6 +43,7 @@
     { "source": "/payments", "destination": "/index.html" },
     { "source": "/execution-wallet", "destination": "/index.html" },
     { "source": "/permissions", "destination": "/index.html" },
+    { "source": "/onboarding", "destination": "/index.html" },
     { "source": "/agent/evidence", "destination": "/index.html" },
     { "source": "/prepare", "destination": "/index.html" },
     { "source": "/prepare/execute", "destination": "/index.html" },
