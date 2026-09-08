@@ -7,7 +7,7 @@ import DemoOverviewPage from "./DemoOverviewPage";
 import WorkspaceShell from "./WorkspaceShell";
 import DiscoverPage from "./DiscoverPage";
 import DemoDiscoverPage from "./DemoDiscoverPage";
-import MarketplaceWorkspace from "./MarketplaceWorkspace";
+import MarketplaceWorkspaceAutoHire from "./MarketplaceWorkspaceAutoHire";
 import WorkspaceMissionConsole from "./WorkspaceMissionConsole";
 import WorkspaceMissionPage from "./WorkspaceMissionPage";
 import DemoManagePage from "./DemoManagePage";
@@ -51,7 +51,7 @@ function renderApp() {
   if (path === "/mission") return renderWorkspace(<WorkspaceMissionConsole />);
   if (path === "/activity") return renderWorkspace(<DemoActivityPage />);
   if (path === "/payments") return renderWorkspace(<DemoPaymentsPage />);
-  if (path === "/app") return renderWorkspace(<MarketplaceWorkspace />);
+  if (path === "/app") return renderWorkspace(<MarketplaceWorkspaceAutoHire />);
   if (path === "/execution-wallet") return renderWorkspace(<ExecutionWalletPage />);
   if (path === "/testnet") return renderWorkspace(<TestnetConsole />);
   if (path === "/testnet/manage") return renderWorkspace(<TestnetConsole />);
