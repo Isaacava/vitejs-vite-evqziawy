@@ -7,7 +7,7 @@ import { getAuthenticatedUser, serverClient } from "../_auth.js";
 const RPC_URL = "https://bsc-testnet-rpc.publicnode.com";
 const U_TOKEN: Address = "0xc70B8741B8B07A6d61E54fd4B20f22Fa648E5565";
 const CAKE2_TOKEN: Address = "0x8d008B313C1d6C7fE2982F62d32Da7507cF43551";
-const REQUIRED_TBNB = parseEther("0.002");
+const REQUIRED_TBNB = parseEther("0.02");
 const REQUIRED_U = parseUnits("2", 18);
 const REQUIRED_CAKE2 = parseUnits("5", 18);
 const GAS_BUFFER = parseEther("0.0005");
@@ -45,7 +45,7 @@ async function getStatus(wallet: Address) {
   return {
     userWallet: wallet,
     user: { tBNB: fmt(user.tBNB), U: fmt(user.U), CAKE2: fmt(user.CAKE2) },
-    required: { tBNB: "0.002", U: "2", CAKE2: "5" },
+    required: { tBNB: "0.02", U: "2", CAKE2: "5" },
     missing: { tBNB: fmt(missing.tBNB), U: fmt(missing.U), CAKE2: fmt(missing.CAKE2) },
     ready: Object.values(missing).every((value) => value === 0n),
     faucet: {
