@@ -1,7 +1,9 @@
 """Idempotent ERC-8004 registration for first-party AgentMarket providers.
 
-Startup behavior is deliberately testnet-only. The process never stores a private
-key in source control; Railway injects it as an environment secret.
+Startup behavior is deliberately testnet-only. The on-chain agent URI is kept
+compact and points to the live HTTPS agent manifest; the full capability data
+remains off-chain at that URL so registration transactions stay within BSC
+Testnet transaction-size limits.
 """
 from __future__ import annotations
 
@@ -9,7 +11,7 @@ import logging
 import os
 import time
 
-from bnbagent import AgentEndpoint, ERC8004Agent, EVMWalletProvider
+from bnbagent import ERC8004Agent, EVMWalletProvider
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("agentmarket_erc8004")
@@ -27,72 +29,58 @@ REGISTRATION_DELAY = max(0, int(os.getenv("ERC8004_REGISTRATION_DELAY_SECONDS", 
 
 
 def _provider_endpoint() -> str:
-    """Return the provider root, not an operation-specific status URL.
-
-    AgentMarket can discover a legacy ERC-8183 provider from its root response and
-    can also resolve a future agent-provider/v1 manifest from this same base URL.
-    """
     return f"{ENDPOINT}/erc8183"
 
 
-def _endpoint() -> AgentEndpoint:
-    return AgentEndpoint(
-        name="Agent Provider",
-        endpoint=_provider_endpoint(),
-        version="1.0.0",
-    )
-
-
-def _metadata() -> list[dict[str, str]]:
-    return [
-        {"key": "protocol", "value": "ERC-8183"},
-        {"key": "network", "value": "bsc-testnet"},
-        {"key": "provider", "value": "AgentMarket"},
-        {"key": "discovery", "value": "agent-provider/v1|legacy-erc8183-root"},
-    ]
-
-
-def _generated_uri(sdk: ERC8004Agent, agent_id: int | None = None) -> str:
-    return sdk.generate_agent_uri(
-        name=NAME,
-        description=DESCRIPTION,
-        endpoints=[_endpoint()],
-        agent_id=agent_id,
-        supported_trust=["reputation"],
-    )
+def _agent_uri() -> str:
+    # Keep the on-chain payload tiny. The live agent manifest is still fully
+    # discoverable off-chain from this stable HTTPS URL.
+    return f"{ENDPOINT}/agent.json"
 
 
 def _repair_existing_registration(sdk: ERC8004Agent, existing: dict) -> dict:
     agent_id = int(existing["agent_id"])
     current_uri = str(existing.get("agent_uri") or "")
-    parsed = sdk.parse_agent_uri(current_uri) if current_uri else None
-    registrations = parsed.get("registrations") if isinstance(parsed, dict) else None
-    expected_endpoint = _provider_endpoint()
+    expected_uri = _agent_uri()
 
-    if registrations and expected_endpoint in current_uri:
+    if current_uri == expected_uri:
         logger.info(
-            "ERC-8004 identity already complete name=%s agent_id=%s owner=%s endpoint=%s",
+            "ERC-8004 identity already complete name=%s agent_id=%s owner=%s uri=%s",
             NAME,
             agent_id,
             existing.get("owner_address"),
-            expected_endpoint,
+            expected_uri,
         )
         return existing
 
     if REGISTRATION_DELAY:
-        logger.info("ERC-8004 incomplete identity detected name=%s agent_id=%s; waiting %ss before repair", NAME, agent_id, REGISTRATION_DELAY)
+        logger.info(
+            "ERC-8004 URI repair name=%s agent_id=%s; waiting %ss before update",
+            NAME,
+            agent_id,
+            REGISTRATION_DELAY,
+        )
         time.sleep(REGISTRATION_DELAY)
 
-    final_uri = _generated_uri(sdk, agent_id=agent_id)
     last_error: Exception | None = None
     for attempt in range(1, 5):
         try:
-            sdk.contract.set_agent_uri(agent_id, final_uri)
-            logger.info("ERC-8004 repaired agent URI name=%s agent_id=%s endpoint=%s", NAME, agent_id, expected_endpoint)
-            return {**existing, "agent_uri": final_uri}
+            sdk.contract.set_agent_uri(agent_id, expected_uri)
+            logger.info(
+                "ERC-8004 repaired agent URI name=%s agent_id=%s uri=%s",
+                NAME,
+                agent_id,
+                expected_uri,
+            )
+            return {**existing, "agent_uri": expected_uri}
         except Exception as exc:
             last_error = exc
-            logger.warning("ERC-8004 URI repair attempt %s/4 failed agent_id=%s: %s", attempt, agent_id, exc)
+            logger.warning(
+                "ERC-8004 URI repair attempt %s/4 failed agent_id=%s: %s",
+                attempt,
+                agent_id,
+                exc,
+            )
             time.sleep(3 * attempt)
     raise RuntimeError(f"Unable to complete ERC-8004 URI for agent_id={agent_id}") from last_error
 
@@ -104,7 +92,13 @@ def ensure_registration() -> dict:
         raise RuntimeError("ERC8004_AGENT_ENDPOINT or ERC8183_AGENT_URL is required")
 
     wallet = EVMWalletProvider(password=PASSWORD, private_key=PRIVATE_KEY)
-    logger.info("ERC-8004 registration check name=%s wallet=%s network=%s endpoint=%s", NAME, wallet.address, NETWORK, _provider_endpoint())
+    logger.info(
+        "ERC-8004 registration check name=%s wallet=%s network=%s endpoint=%s",
+        NAME,
+        wallet.address,
+        NETWORK,
+        _provider_endpoint(),
+    )
 
     sdk = ERC8004Agent(wallet_provider=wallet, network=NETWORK, debug=False)
     existing = sdk.get_local_agent_info(NAME)
@@ -112,24 +106,28 @@ def ensure_registration() -> dict:
         return _repair_existing_registration(sdk, existing)
 
     if REGISTRATION_DELAY:
-        logger.info("ERC-8004 new identity registration name=%s; waiting %ss before mint", NAME, REGISTRATION_DELAY)
+        logger.info(
+            "ERC-8004 new identity registration name=%s; waiting %ss before mint",
+            NAME,
+            REGISTRATION_DELAY,
+        )
         time.sleep(REGISTRATION_DELAY)
 
-    uri = _generated_uri(sdk)
-    result = sdk.register_agent(agent_uri=uri, metadata=_metadata())
+    uri = _agent_uri()
+    result = sdk.register_agent(agent_uri=uri)
     logger.info(
-        "ERC-8004 identity registered name=%s agent_id=%s tx=%s owner=%s endpoint=%s",
+        "ERC-8004 identity registered name=%s agent_id=%s tx=%s owner=%s uri=%s",
         NAME,
         result.get("agentId"),
         result.get("transactionHash"),
         wallet.address,
-        _provider_endpoint(),
+        uri,
     )
     return {
         "name": NAME,
         "agent_id": result.get("agentId"),
         "owner_address": wallet.address,
-        "agent_uri": result.get("agentURI"),
+        "agent_uri": result.get("agentURI") or uri,
         "transaction_hash": result.get("transactionHash"),
     }
 
