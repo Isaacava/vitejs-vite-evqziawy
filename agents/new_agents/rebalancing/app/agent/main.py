@@ -11,25 +11,25 @@ EDGE_THRESHOLD = float(os.getenv("LP_EDGE_THRESHOLD", "0.10"))
 WIDEN_FACTOR = float(os.getenv("LP_WIDEN_FACTOR", "1.50"))
 
 # Published provider contract for AgentMarket discovery/hiring.
-# Keep this schema aligned with the values actually consumed by decide_job().
+# AgentMarket's capability UI consumes an inputs[] schema, not JSON Schema properties.
 CAPABILITY_SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        "wallet_address": {
+    "version": 1,
+    "inputs": [
+        {
+            "name": "wallet_address",
+            "label": "Execution wallet",
             "type": "string",
-            "title": "Execution wallet",
-            "description": "BSC Testnet wallet address containing the Pancake V3 position. This is the user/job wallet, not the provider wallet.",
-            "pattern": "^0x[a-fA-F0-9]{40}$",
+            "required": True,
+            "help": "BSC Testnet wallet address containing the Pancake V3 position. This is the user/job wallet, not the provider wallet.",
         },
-        "position_token_id": {
+        {
+            "name": "position_token_id",
+            "label": "Pancake V3 position token ID",
             "type": "integer",
-            "title": "Pancake V3 position token ID",
-            "description": "The Pancake V3 NonfungiblePositionManager NFT token ID for the LP position to inspect and, when authorized, rebalance.",
-            "minimum": 1,
+            "required": True,
+            "help": "Pancake V3 NonfungiblePositionManager NFT token ID for the LP position to inspect and, when authorized, rebalance.",
         },
-    },
-    "required": ["wallet_address", "position_token_id"],
+    ],
 }
 
 w3 = Web3(Web3.HTTPProvider(RPC, request_kwargs={"timeout": 15}))
