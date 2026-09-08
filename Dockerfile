@@ -4,16 +4,12 @@ WORKDIR /execution
 COPY agents/grid/execution/package.json ./package.json
 COPY agents/grid/execution/tsconfig.json ./tsconfig.json
 COPY agents/grid/execution/src ./src
-RUN npm install --no-audit --no-fund \
+RUN npm install --omit=dev --no-audit --no-fund \
     && npm run build
 
 FROM python:3.11-slim
 
 WORKDIR /app
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends nodejs npm \
-    && rm -rf /var/lib/apt/lists/*
 
 COPY agents/grid/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
@@ -23,15 +19,17 @@ COPY agents/erc8004_register.py ./erc8004_register.py
 COPY agents/start_agent_v2.sh ./start_agent.sh
 RUN chmod +x /app/start_agent.sh
 
+# Reuse the exact Node 20 runtime from the builder without installing the full
+# Debian node/npm dependency tree in the 512 MiB Render runtime.
+COPY --from=execution-build /usr/local/bin/node /usr/local/bin/node
 COPY --from=execution-build /execution/package.json /execution/package.json
 COPY --from=execution-build /execution/package-lock.json /execution/package-lock.json
+COPY --from=execution-build /execution/node_modules /execution/node_modules
 COPY --from=execution-build /execution/dist /execution/dist
-RUN mkdir -p /execution/node_modules \
-    && cd /execution \
-    && npm install --omit=dev --no-audit --no-fund
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
+ENV NODE_OPTIONS=--max-old-space-size=192
 ENV PORT=8000
 ENV EXECUTION_AGENT_KIND=grid
 ENV AGENT_DISPLAY_NAME="Grid Strategy Agent"
