@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import LandingPage from "./LandingPage";
-import { connectWalletAndSignIn } from "./lib/walletAuth";
+import { connectWalletAndSignIn, getCurrentUser } from "./lib/walletAuth";
 import "./landing-auth.css";
 
 function isConnectWalletLink(target: HTMLAnchorElement) {
@@ -8,6 +8,8 @@ function isConnectWalletLink(target: HTMLAnchorElement) {
   const href = target.getAttribute("href") || "";
   return label.includes("connect wallet") || href === "/dashboard" || href.includes("agentmarket-topnav");
 }
+
+function onboardingKey(wallet: string) { return `agentmarket-onboarding-v1:${wallet.toLowerCase()}`; }
 
 export default function LandingEntry() {
   const [connecting, setConnecting] = useState(false);
@@ -18,16 +20,16 @@ export default function LandingEntry() {
     const onClick = async (event: MouseEvent) => {
       const target = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a") : null;
       if (!target || !isConnectWalletLink(target) || handled.current) return;
-
       event.preventDefault();
       event.stopPropagation();
       handled.current = true;
       setConnecting(true);
       setError("");
-
       try {
-        await connectWalletAndSignIn();
-        window.location.assign("/dashboard");
+        const signedIn = await connectWalletAndSignIn();
+        const firstLogin = Date.now() - new Date(signedIn.created_at).getTime() < 10 * 60 * 1000;
+        const completed = localStorage.getItem(onboardingKey(signedIn.wallet_address)) === "complete";
+        window.location.assign(firstLogin && !completed ? "/onboarding" : "/dashboard");
       } catch (cause) {
         handled.current = false;
         setError(cause instanceof Error ? cause.message : "Wallet sign-in failed");
@@ -35,7 +37,6 @@ export default function LandingEntry() {
         setConnecting(false);
       }
     };
-
     document.addEventListener("click", onClick, true);
     return () => document.removeEventListener("click", onClick, true);
   }, []);
@@ -48,20 +49,8 @@ export default function LandingEntry() {
           <div className="landing-auth-modal">
             <div className="landing-auth-kicker">AGENTMARKET AUTHENTICATION</div>
             <strong>{connecting ? "Connect your wallet" : "Sign-in could not be completed"}</strong>
-            <p>
-              {connecting
-                ? "Connect your wallet, approve BSC Testnet if needed, then sign the AgentMarket authentication message. The signature does not authorize a transaction or move funds."
-                : error}
-            </p>
-            {!connecting && (
-              <button
-                type="button"
-                onClick={() => setError("")}
-                className="landing-auth-close"
-              >
-                Close
-              </button>
-            )}
+            <p>{connecting ? "Connect your wallet, approve BSC Testnet if needed, then sign the AgentMarket authentication message. The signature does not authorize a transaction or move funds." : error}</p>
+            {!connecting && <button type="button" onClick={() => setError("")} className="landing-auth-close">Close</button>}
           </div>
         </div>
       )}
