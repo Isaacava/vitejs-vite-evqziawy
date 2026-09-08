@@ -1,788 +1,1330 @@
-# AgentMarket — BSC Agent Commerce Marketplace
+# AgentMarket — The Commerce Layer for Autonomous Agents
 
-AgentMarket is a BNB Smart Chain–focused agent marketplace that turns a user's natural-language objective into a verifiable on-chain commerce job.
+**AgentMarket turns an agent's capability into a hireable, verifiable on-chain service.**
 
-The product is designed around **ERC-8004 agent identity/discoverability** and **ERC-8183 Agentic Commerce**. The marketplace layer handles discovery, matching, negotiation, mission/workflow state, notifications and evidence; BSC Testnet is the source of truth for identity, job lifecycle, escrow, submission and terminal settlement state.
+Instead of building a marketplace around one specific agent, AgentMarket is designed as an **agent-agnostic interoperability and commerce layer**: discover an agent, understand what it can do, ask it for a quote, create a real ERC-8183 job, fund it, let the provider execute independently, verify the submitted result, and settle the job from protocol state.
 
-The current branch is `marketplace-testnet` and is intentionally Testnet-first. Chain ID is **97 (BSC Testnet)**.
+The current production demonstration is **BNB Smart Chain Testnet (chain ID 97)** and is intentionally testnet-first.
 
-## What AgentMarket is
+---
 
-AgentMarket is not simply a directory of agents and it is not a marketplace database pretending that a job happened.
+## Why AgentMarket exists
 
-The intended product loop is:
+AI agents are becoming capable of doing real work, but hiring an agent is still fragmented.
+
+A user may have to discover an agent manually, learn a custom API, understand its inputs, negotiate a price outside the protocol, send funds separately, trust an application's database about whether work happened, and have no clean way to verify the final result.
+
+That creates four core problems:
+
+### 1. Agent discovery is disconnected from agent capability
+
+An agent registry can tell you that an agent exists, but existence is not enough. A marketplace needs to know:
+
+- What the agent can actually do
+- What inputs it requires
+- Where its service lives
+- Whether its endpoint is alive
+- Whether it is currently hireable
+- What evidence exists for its previous work
+
+### 2. Marketplaces become hardcoded around individual agents
+
+A common architecture is:
 
 ```text
-User states a goal
-       ↓
-Intent parser
-       ↓
-Discover ERC-8004 agents
-       ↓
-Explainable matching
-       ↓
-Provider endpoint health / hireability check
-       ↓
-Provider negotiation / quote
-       ↓
-Mission created in AgentMarket
-       ↓
-ERC-8183 create/register/setBudget/approve/fund
-       ↓
-Receipt verification + real on-chain jobId
-       ↓
-FUNDED job
-       ↓
-Provider receives / accepts / executes work
-       ↓
-Provider submit(jobId, deliverableHash)
-       ↓
-SUBMITTED
-       ↓
-Optimistic evaluator / dispute policy
-       ├── approve → settle(jobId) → COMPLETED
-       ├── dispute → voter quorum → settle(jobId) → REJECTED
-       └── expiry → claimRefund(jobId) → EXPIRED
-       ↓
-Terminal chain state
-       ↓
-AgentMarket synchronizes evidence / activity / payments
-       ↓
-Verified history feeds future matching
+Marketplace
+   ↓
+Hardcoded integration
+   ↓
+Specific agent
 ```
 
-The important boundary is that **Supabase records do not replace the blockchain**. Supabase is the application/workflow layer; the BSC Testnet contracts are authoritative for on-chain state.
+That makes every new agent a custom engineering project.
 
-## Current protocol model
+AgentMarket flips this relationship:
 
-AgentMarket follows the current ERC-8183 model for the commerce kernel:
+```text
+Agent
+   ↓
+Publishes capabilities + endpoints + execution requirements
+   ↓
+AgentMarket interprets them
+   ↓
+AgentMarket can hire the agent
+```
+
+The marketplace is therefore built around **protocols, capabilities and contracts**, not around the internal implementation of a particular provider.
+
+### 3. Off-chain systems can falsely become the source of truth
+
+A normal web application can say "job completed" because its database says so.
+
+AgentMarket deliberately avoids that architecture.
+
+```text
+Supabase
+   = application/workflow state
+
+BSC Testnet
+   = authoritative on-chain commerce state
+```
+
+The marketplace database can cache and organize information, but it does not replace the blockchain's job lifecycle, escrow, submission or settlement state.
+
+### 4. Autonomous execution needs bounded authority
+
+An agent should not need a user's private key.
+
+AgentMarket integrates a scoped execution model around **Altana**, allowing an execution identity to operate under explicit permissions, target allowlists, selector allowlists, spend limits and expiry instead of receiving unrestricted wallet control.
+
+---
+
+# What AgentMarket is
+
+AgentMarket is a **full agent-commerce pipeline** connecting human intent, independent AI providers and on-chain settlement.
+
+At a high level:
+
+```text
+                    AGENTMARKET
+
+User goal
+   │
+   ▼
+Intent understanding
+   │
+   ▼
+Agent discovery
+   │
+   ▼
+Capability handshake
+   │
+   ▼
+Explainable matching
+   │
+   ▼
+Live provider / hireability checks
+   │
+   ▼
+Quote + negotiation
+   │
+   ▼
+Mission creation
+   │
+   ▼
+ERC-8183 job creation + funding
+   │
+   ▼
+Provider executes independently
+   │
+   ▼
+Provider submits deliverable commitment
+   │
+   ▼
+Evidence + transaction verification
+   │
+   ▼
+Evaluator / dispute policy
+   │
+   ├───────────────┐
+   ▼               ▼
+COMPLETED       REJECTED
+   │
+   └───────┬───────┘
+           ▼
+      Verified history
+           │
+           ▼
+   Future matching / reputation
+```
+
+The result is not simply "an AI agent answered a request."
+
+It is:
+
+> **A discoverable provider performed a hired task under a real commerce lifecycle with protocol-backed evidence.**
+
+---
+
+# Architecture
+
+AgentMarket separates the system into five major layers.
+
+```text
+┌──────────────────────────────────────────────────────────┐
+│  1. USER / EXPERIENCE                                    │
+│  Natural-language goals · Wallet · Missions · Console   │
+└───────────────────────────┬──────────────────────────────┘
+                            │
+┌───────────────────────────▼──────────────────────────────┐
+│  2. MARKETPLACE INTELLIGENCE                             │
+│  Intent parsing · Matching · Capability discovery        │
+│  Quotes · Hireability · Provider health                  │
+└───────────────────────────┬──────────────────────────────┘
+                            │
+┌───────────────────────────▼──────────────────────────────┐
+│  3. AGENT INTEROPERABILITY                               │
+│  agent-provider/v1 manifest                              │
+│  Capability schemas · Agent endpoints · Protocols       │
+│  A2A / generic / MCP-compatible discovery paths         │
+└───────────────────────────┬──────────────────────────────┘
+                            │
+┌───────────────────────────▼──────────────────────────────┐
+│  4. COMMERCE + AUTHORIZATION                             │
+│  ERC-8004 identity · ERC-8183 jobs · Escrow             │
+│  Altana scoped execution · Permission boundaries        │
+└───────────────────────────┬──────────────────────────────┘
+                            │
+┌───────────────────────────▼──────────────────────────────┐
+│  5. VERIFICATION + SETTLEMENT                            │
+│  Receipt verification · Evidence · Evaluation           │
+│  Disputes · Settlement · Refund / expiry                 │
+└──────────────────────────────────────────────────────────┘
+```
+
+This separation is one of the project's most important architectural decisions.
+
+An agent is responsible for **being good at its task**.
+
+AgentMarket is responsible for **making that agent discoverable, understandable, hireable, payable and verifiable**.
+
+---
+
+# How AgentMarket works with agents independently
+
+The marketplace does not need to know the agent's internal Python, TypeScript, model, framework or reasoning process.
+
+Instead, it interacts with a provider through a published contract of capabilities and endpoints.
+
+A provider can expose a canonical manifest describing:
+
+```text
+agent-provider/v1
+        │
+        ├── Identity
+        ├── Name / description / version
+        ├── Capabilities
+        ├── Input schema
+        ├── Protocols
+        ├── Networks
+        ├── Health endpoint
+        ├── Quote endpoint
+        ├── Decision endpoint
+        ├── Authorization endpoint
+        ├── Execution-capabilities endpoint
+        └── Result endpoint
+```
+
+The important idea is that **the agent describes itself**.
+
+AgentMarket reads that description and adapts the hiring flow accordingly.
+
+For example, one agent may publish:
+
+```text
+wallet_address
+position_token_id
+```
+
+while another may publish:
+
+```text
+wallet_address
+warning_threshold
+critical_threshold
+```
+
+and another may publish:
+
+```text
+protocols
+prefer_stablecoin
+```
+
+The hiring UI does not need separate hardcoded forms for each provider. The task inputs come from the provider's published capability schema.
+
+---
+
+# Capability discovery and the agent handshake
+
+The capability flow is designed as a handshake rather than a hardcoded integration.
+
+```text
+AgentMarket
+    │
+    │ discover provider
+    ▼
+ERC-8004 identity / indexed provider
+    │
+    │ resolve endpoint + metadata
+    ▼
+Provider manifest
+    │
+    ├── capability schema
+    ├── protocols
+    ├── network
+    └── endpoint map
+    │
+    ▼
+Live capability checks
+    │
+    ▼
+AgentMarket builds the hiring flow
+```
+
+The marketplace can also fall back to compatible provider descriptions such as agent cards, generic endpoints or MCP-style capability information where a canonical provider manifest is not available.
+
+This is what makes AgentMarket **agent-agnostic by design** instead of merely claiming to be agent-agnostic.
+
+---
+
+# Agent communication
+
+AgentMarket communicates with providers through a small set of protocol roles rather than one giant marketplace-specific API.
+
+A typical provider exposes:
+
+```text
+GET  /health
+GET  /agent.json
+GET  /quote
+POST /decision
+POST /authorization
+GET  /execution-capabilities
+GET  /result
+```
+
+The exact implementation can differ by provider, but the marketplace knows what each endpoint means from the capability/manifest contract.
+
+This gives us an important property:
+
+```text
+New Agent
+   ↓
+Publish capabilities
+   ↓
+Publish endpoints
+   ↓
+Declare network + execution model
+   ↓
+AgentMarket discovers it
+   ↓
+AgentMarket generates the hiring interaction
+```
+
+No marketplace-wide rewrite is required simply because the new agent uses a different strategy.
+
+---
+
+# ERC-8004: identity and discovery
+
+AgentMarket uses **ERC-8004** as the identity/discovery layer for agents.
+
+The marketplace can associate an agent with:
+
+- ERC-8004 agent ID
+- Owner / provider identity
+- Registration URI
+- Capability metadata
+- Network / environment
+- Endpoint information
+- Verification/indexing state
+- Reputation information where available
+
+This creates an important separation:
+
+```text
+ERC-8004
+   = Who is the agent?
+
+Agent capability manifest
+   = What can it do?
+
+Agent endpoints
+   = How do I communicate with it?
+```
+
+The marketplace can therefore reason about providers without embedding their business logic into the application's UI.
+
+---
+
+# ERC-8183: the commerce kernel
+
+AgentMarket uses **ERC-8183 Agentic Commerce** as the job lifecycle and escrow boundary.
+
+The simplified lifecycle is:
 
 ```text
 OPEN
-  ↓ set budget + fund
+  ↓
+BUDGET + FUND
+  ↓
 FUNDED
-  ↓ provider submit
+  ↓
+PROVIDER SUBMIT
+  ↓
 SUBMITTED
-  ↓ evaluator decision / optimistic policy
-COMPLETED / REJECTED
-  or
-EXPIRED after expiry
+  ↓
+EVALUATION
+  ├── COMPLETED
+  ├── REJECTED
+  └── EXPIRED → REFUND
 ```
 
-ERC-8183 itself defines Open, Funded, Submitted, Completed, Rejected and Expired states. The evaluator is the party allowed to complete or reject a submitted job, while expired jobs have a refund path. citeturn567839view0
+The marketplace does not fabricate this lifecycle in its database.
 
-For the BNB Agent SDK style used by AgentMarket, ERC-8183 is combined with an **EvaluatorRouter + OptimisticPolicy** layer. The Router binds a job to a policy, `settle(jobId)` is permissionless, silence through the dispute window is an approval signal, and a client dispute can enter a whitelisted-voter rejection flow. BNB's documentation also treats settlement as a separate operator action rather than requiring the SDK's provider server to settle its own jobs. citeturn567839view1turn567839view2
+When a job is created, AgentMarket verifies the actual transaction receipt and reads the **real on-chain job ID** from the emitted event.
 
-This distinction is important: the marketplace UI can expose a Settle action, but the protocol does not require the client's wallet to be the only actor capable of settlement.
-
-## Core stack
-
-- React 19 + TypeScript + Vite
-- Vercel frontend + serverless API routes
-- Supabase PostgreSQL for users, missions, marketplace workflow, tasks, jobs, quotes, activity, payments, evaluations, permissions and cached chain evidence
-- viem for BSC reads and transaction preparation
-- WalletConnect / Reown Ethereum Provider for the persistent wallet connection used by the application
-- ERC-8004 Identity Registry for agent registration and identity resolution
-- ERC-8004 Reputation Registry reads where reputation data exists
-- ERC-8183 Agentic Commerce kernel for escrowed jobs
-- EvaluatorRouter + OptimisticPolicy for the BNB optimistic evaluator flow
-- Supabase cron + Vercel cron endpoints for indexing, endpoint health and agent-statistics synchronization
-- Provider-side Testnet runtime / job APIs for agent execution
-- BSC Testnet as the current execution network
-
-BNB currently documents BSC Testnet as chain 97 and BSC Mainnet as chain 56 for the Agent SDK. citeturn666593search5
-
-## Main product surfaces
-
-### 1. Landing / marketplace entry
-
-The application has a shared AgentMarket visual language and responsive shell for the main application surfaces.
-
-### 2. Wallet authentication
-
-Users authenticate with a wallet signature rather than handing the marketplace a private key.
-
-The current session pattern is:
+That means:
 
 ```text
-WalletConnect session
-       ↓
-Wallet address
-       ↓
-AgentMarket nonce challenge
-       ↓
-User signs authentication message
-       ↓
-Server verifies signature
-       ↓
-HttpOnly AgentMarket session cookie
-       ↓
-Authenticated API requests
+UI job ID
+     │
+     └── linked to ──► real ERC-8183 chain job ID
+                              │
+                              ▼
+                       protocol state
 ```
 
-The authenticated session is reused for the application instead of repeatedly asking the user to reconnect for every transaction flow. Transaction signatures still occur through the connected wallet when an on-chain action genuinely requires authorization.
+This prevents local state from becoming a fake representation of the actual commerce job.
 
-### 3. Discover
+---
 
-The Discover surface uses indexed ERC-8004 agents and combines:
+# The complete task flow
+
+## 1. User states a goal
+
+The user starts with an objective instead of needing to know which agent they should hire.
+
+Example:
+
+> "Run a controlled grid strategy."
+
+AgentMarket turns the natural-language goal into a structured intent.
+
+---
+
+## 2. Agent discovery
+
+The marketplace looks for agents whose published capabilities fit the intent.
+
+Discovery considers:
 
 - Capability/category
-- Verification status
-- Endpoint liveness
-- ERC-8183 Testnet history
-- Terminal outcomes
-- Job volume
-- ERC-8004 reputation where available
-- First-party/testnet metadata
+- Verification
+- Endpoint availability
+- Network
+- Execution support
+- Historical evidence
+- Reputation where available
 
-The marketplace deliberately avoids inventing reputation or completion history for agents with insufficient evidence.
+---
 
-### 4. Natural-language matching
+## 3. Explainable matching
 
-The intent parser converts a goal into a deterministic structured intent.
+AgentMarket scores candidates using multiple signals instead of blindly selecting a provider.
 
-Current matching inputs include:
-
-- Capability fit — 35
-- ERC-8004 verification — 20
-- Endpoint liveness — 15
-- Completion history — 10
-- Job volume — 5
-- Reputation — 15
-
-The matcher exposes:
-
-- Overall score
-- Score confidence
-- Score breakdown
-- Evidence availability
-- On-chain job counts
-- On-chain success rate
-- Reputation availability
-- Hireability state
-- Reasons explaining the match
-
-A provider is not treated as hireable solely because it exists in the registry. The current policy requires a healthy Testnet provider endpoint.
-
-### 5. Provider quotes / negotiation
-
-The hiring flow includes a provider quote step. The provider endpoint is the source of the quoted price for the exact goal.
-
-Quotes are stored in `marketplace_quotes` and carry wallet, environment, chain, status, expiry and quote-hash information.
-
-The UI intentionally keeps the accepted quote as the budget source rather than allowing the user to invent a different budget after accepting the provider's terms.
-
-### 6. Mission creation
-
-A mission records the marketplace-side workflow around an intended ERC-8183 job.
-
-The mission layer connects:
+The matcher can evaluate:
 
 ```text
-mission
-  ↓
-mission task
-  ↓
-marketplace job
-  ↓
-quote
-  ↓
-chain job ID
-  ↓
-provider execution
-  ↓
-terminal outcome
+Capability fit
+Verification
+Endpoint liveness
+Completion history
+Job volume
+Reputation
+Evidence availability
+Hireability
 ```
 
-A mission can therefore show human-readable context even when the actual job state is read from BSC Testnet.
+The UI exposes the reasoning behind the match instead of hiding it behind a single unexplained number.
 
-### 7. ERC-8183 transaction preparation
+---
 
-The Testnet preparation flow validates the real environment before the wallet transaction sequence.
+## 4. Provider capability handshake
 
-The preparation layer checks, among other things:
+Before hiring, AgentMarket reads the provider's live capability information.
 
-- BSC Testnet contracts exist
-- Mission ownership
-- Accepted and unexpired quote
+That includes required and optional task inputs.
+
+For example:
+
+```text
+LP Rebalancer
+    ├── wallet address
+    └── position token ID
+
+Health Guardian
+    ├── wallet address
+    ├── warning threshold
+    ├── critical threshold
+    └── optional Comptroller
+
+Yield Optimizer
+    ├── preferred protocols
+    └── prefer stablecoin
+```
+
+The marketplace does not need a hardcoded Step 3 for each agent.
+
+---
+
+## 5. Provider quote
+
+AgentMarket asks the selected provider for a quote for the actual task.
+
+The quote becomes part of the mission context and is used as the accepted budget source.
+
+A quote carries information such as:
+
+- Price
+- Provider wallet
+- Chain
+- Environment
+- Status
+- Expiry
+- Quote hash
+
+---
+
+## 6. Mission creation
+
+The human-readable mission layer connects the marketplace workflow to the protocol job:
+
+```text
+Mission
+  ↓
+Task
+  ↓
+Provider
+  ↓
+Quote
+  ↓
+ERC-8183 job
+  ↓
+Provider execution
+  ↓
+Evidence
+  ↓
+Settlement
+```
+
+This lets the user see understandable progress while keeping the blockchain as the source of truth for protocol state.
+
+---
+
+## 7. Funding
+
+AgentMarket prepares the ERC-8183 transaction sequence and validates critical preconditions such as:
+
+- Correct network
+- Correct commerce contracts
+- Valid mission/quote relationship
 - Provider readiness
-- Payment token
-- Token decimals / symbol
-- Wallet balance
+- Token information
+- Balance
 - Allowance
-- Current Commerce job counter
-- Router / policy relationship
+- Current chain job counter
+- Evaluator/policy configuration
 
-The client-side transaction sequence is based on the actual confirmed chain job rather than assuming a local counter.
+The user's wallet signs the transaction that genuinely requires user authorization.
 
-### 8. Real job creation and receipt verification
+AgentMarket never needs the user's private key.
 
-The marketplace verifies receipts and parses the real `JobCreated` event to obtain the on-chain `jobId`.
+---
 
-This prevents the UI from fabricating job identifiers.
+## 8. Provider executes independently
 
-After the receipt is verified, the AgentMarket job is linked to the real ERC-8183 chain job and later lifecycle reads use that chain job as the authoritative state source.
+Once funded, the provider can operate independently of the marketplace UI.
 
-### 9. Provider job execution
-
-The provider side supports a Testnet execution flow around:
+This is a major architectural property.
 
 ```text
-FUNDED
-  ↓
-Provider receives job
-  ↓
-Provider validates assignment
-  ↓
-Accept / start / progress
-  ↓
-Execute task
-  ↓
-Submit deliverable
+AgentMarket
+    │
+    │ job assignment + authorization context
+    ▼
+Independent provider
+    │
+    ├── reads its own environment
+    ├── performs its task
+    ├── follows its own strategy
+    └── produces its own result
 ```
 
-The provider submits the ERC-8183 deliverable hash from the provider wallet. The chain therefore records that the provider submitted work without requiring the marketplace database to claim that submission happened.
+The provider does not need AgentMarket's internal database schema in order to function.
 
-### 10. Deliverable / evidence handling
+---
 
-The chain stores the deliverable commitment/hash required by ERC-8183. The actual provider response/evidence can live off-chain while its cryptographic commitment remains associated with the on-chain job.
+## 9. Agent submission
 
-AgentMarket can surface provider evidence when a response is available and otherwise preserves the on-chain deliverable hash as the verified minimum evidence.
+When work is complete, the provider submits its deliverable commitment through the ERC-8183 lifecycle.
 
-### 11. Mission console
+The blockchain records the commitment associated with the job.
 
-The Mission Console is a live job view rather than a simulated lifecycle demo.
+The actual deliverable can remain off-chain while the commitment provides a cryptographic anchor.
 
-It reads the selected Testnet job and exposes:
+---
 
-- Mission title
+# Evidence and verification
+
+One of AgentMarket's strongest design goals is to avoid the statement:
+
+> "The database says the agent completed it, therefore it happened."
+
+Instead:
+
+```text
+Provider result
+      ↓
+Structured submission proof
+      ↓
+Deliverable hash / commitment
+      ↓
+ERC-8183 submission
+      ↓
+On-chain job state
+      ↓
+Independent receipt verification
+```
+
+AgentMarket can verify:
+
+- The referenced transaction exists
+- The receipt succeeded
+- The transaction sender matches the authorized execution identity when applicable
+- The referenced evidence is consistent with the provider submission
+- The deliverable commitment matches the submitted payload when the provider proof is available
+
+Asset-specific checks can then be performed separately rather than treating any successful transaction as proof of every claimed action.
+
+This distinction is important for preventing false-positive verification.
+
+---
+
+# Altana wallet integration
+
+AgentMarket integrates **Altana scoped execution** for delegated testnet execution.
+
+The model is intentionally different from giving a marketplace or agent unrestricted access to a user's wallet.
+
+```text
+User main wallet
+       │
+       │ creates / authorizes job
+       ▼
+AgentMarket
+       │
+       │ scoped execution authorization
+       ▼
+Altana execution identity
+       │
+       ├── allowed targets
+       ├── allowed function selectors
+       ├── token / spend limits
+       ├── native spend limits
+       └── expiry
+       │
+       ▼
+Authorized agent execution
+       │
+       ▼
+BSC Testnet
+```
+
+The execution identity can therefore be different from the user's main wallet and different from the provider's registered identity.
+
+That separation is important:
+
+```text
+User wallet
+  = user identity / job origin
+
+Altana wallet
+  = delegated execution identity
+
+Provider wallet
+  = agent/provider identity
+```
+
+The execution layer also advertises whether private keys are exposed. The intended production boundary is **never expose a user's raw private key to the marketplace or agent**.
+
+---
+
+# Agent-agnostic execution capital
+
+AgentMarket's execution-capital layer is deliberately not built only around Grid or PancakeSwap.
+
+Common safety checks remain universal:
+
+- Testnet network validation
+- Chain ID validation
+- Capital limits
+- Authorized recipient
+- Target allowlist
+- Function selector allowlist
+- Execution identity validation
+
+Protocol-specific checks are only applied when the agent explicitly declares the corresponding execution protocol.
+
+For example:
+
+```text
+protocol = pancake-v3-swap
+        ↓
+Pancake-specific checks
+
+protocol = health-monitor
+        ↓
+No fake swap requirements
+
+protocol = another provider-defined protocol
+        ↓
+Generic execution boundary
+```
+
+This prevents one agent's assumptions from leaking into every other agent.
+
+---
+
+# Different agents, same marketplace
+
+AgentMarket is deliberately capable of hosting agents with very different jobs.
+
+Examples used in the project include:
+
+### Grid strategy agent
+
+A controlled BSC Testnet strategy with explicit execution scope.
+
+### LP Range Rebalancer
+
+Reads Pancake V3 position state, evaluates the current range and can perform an authorized range-management workflow.
+
+### Yield Optimizer
+
+Queries current BSC yield data, ranks opportunities and returns a structured selection without requiring the marketplace to know the agent's internal ranking algorithm.
+
+### Health Guardian
+
+Inspects a user's configured lending/borrowing state on BSC Testnet and classifies risk based on live protocol data.
+
+These agents have different capabilities, inputs and execution characteristics, but they can all participate through the same marketplace architecture.
+
+That is the key point:
+
+> **AgentMarket is not a Grid marketplace, a rebalancing marketplace, or a yield marketplace. It is an agent marketplace.**
+
+---
+
+# Discover → Hire → Execute → Verify
+
+The product can be understood as four simple phases.
+
+```text
+┌────────────┐
+│  DISCOVER  │
+└─────┬──────┘
+      │
+      ▼
+What agents exist?
+What can they do?
+Are they live?
+Are they hireable?
+
+      ▼
+┌────────────┐
+│    HIRE    │
+└─────┬──────┘
+      │
+      ▼
+Match capability
+Collect task inputs
+Get quote
+Create mission
+Fund ERC-8183 job
+
+      ▼
+┌────────────┐
+│  EXECUTE   │
+└─────┬──────┘
+      │
+      ▼
+Agent receives job
+Agent acts independently
+Scoped authorization controls execution
+
+      ▼
+┌────────────┐
+│   VERIFY   │
+└─────┬──────┘
+      │
+      ▼
+Submission
+Evidence
+Receipts
+Evaluation
+Dispute handling
+Settlement
+```
+
+---
+
+# Mission Console
+
+The Mission Console is designed as a live protocol-aware workspace rather than a simulated status page.
+
+A mission can surface:
+
+- Goal
 - Provider
 - Chain job ID
 - Budget
 - Network
-- Current lifecycle status
+- Lifecycle state
 - Provider wallet
-- Submission timestamp
-- Deliverable hash
-- Provider response / evidence state
-- Evaluator state
-- Dispute-window state
+- Submission information
+- Deliverable commitment
+- Provider response/evidence
+- Evaluation state
+- Dispute state
 - Settlement state
-- Terminal state
-- Relevant transaction activity
+- Transaction activity
 
-The console is intended to make a real on-chain job understandable without pretending the UI itself controls the chain lifecycle.
+The user gets a readable experience without losing the connection to the underlying protocol state.
 
-### 12. Disputes
+---
 
-For the BNB OptimisticPolicy flow, the client can raise a dispute during the policy window.
+# Disputes and optimistic evaluation
 
-The conceptual flow is:
+The commerce flow can be combined with an evaluator/router policy.
+
+Conceptually:
 
 ```text
 SUBMITTED
-   ↓
+    │
+    ▼
 Dispute window
-   ├── no dispute → approve after window
-   └── client dispute
-          ↓
-       whitelisted voters
-          ↓
-       quorum / verdict
+    │
+    ├── no dispute
+    │      ↓
+    │   approval path
+    │
+    └── client dispute
+           ↓
+       policy / voters
+           ↓
+       verdict
+           ↓
+       settlement
 ```
 
-A dispute is a client action and therefore uses the already authenticated/connected wallet session.
-
-### 13. Settlement
-
-AgentMarket supports permissionless-style settlement semantics through the EvaluatorRouter.
-
-The current server-side code includes an automatic settlement worker which:
-
-1. Finds AgentMarket jobs currently marked `submitted`.
-2. Reads the live ERC-8183 job from BSC Testnet.
-3. Resolves the job policy through the Router.
-4. Reads the policy verdict.
-5. Waits when the verdict is still pending.
-6. Calls `router.settle(jobId, "0x")` when the verdict is actionable.
-7. Waits for the transaction receipt.
-8. Re-reads the job and verifies a terminal state.
-9. Synchronizes transactions, evaluations, payments, jobs and user activity into Supabase.
-
-The current branch also allows the user-facing console to expose settlement because `settle(jobId)` is permissionless in the BNB Router model. BNB's documentation says any party can call it once settlement conditions are met. citeturn666593search1turn666593search3
-
-### 14. Expiry / refund recovery
-
-If a submitted or funded job reaches its expiry without a valid terminal settlement path, ERC-8183 provides `claimRefund(jobId)` as the recovery mechanism. The standard recommends that the expiry refund be permissionless or otherwise broadly triggerable so a stuck job cannot trap escrow indefinitely. citeturn567839view0
-
-### 15. Activity and payments
-
-The dashboard and activity surfaces synchronize chain-backed events into readable workflow records.
-
-Examples include:
-
-- Job creation
-- Registration
-- Budget set
-- Approval
-- Funding
-- Provider submission
-- Evaluation
-- Dispute
-- Settlement
-- Refund
-
-Payments expose the marketplace-side record together with verified chain transaction state where available.
-
-### 16. Agent evidence
-
-Agent Evidence is designed around protocol-backed history rather than hand-written statistics.
-
-For each registered agent, the system can derive:
-
-- Total ERC-8183 jobs
-- Completed jobs
-- Submitted jobs
-- Funded jobs
-- Open jobs
-- Rejected jobs
-- Expired jobs
-- Terminal jobs
-- Success rate
-- Provider/owner addresses
-- ERC-8004 reputation summary where available
-- Job-level evidence records
-
-### 17. Full on-chain job scan + cached statistics
-
-The current Testnet chain reader uses the ERC-8183 Commerce `jobCounter` and scans the job space represented by the Commerce contract.
-
-The important architecture is:
+This separates three concerns:
 
 ```text
-Registered agent
-      ↓
-ERC-8004 identity owner / configured wallet
-      ↓
-ERC-8183 Commerce jobCounter
-      ↓
-Read all job records
-      ↓
-Select jobs whose provider matches the agent wallet/owner
-      ↓
-Classify terminal and non-terminal outcomes
-      ↓
-Calculate marketplace statistics
-      ↓
-Cache statistics in Supabase agents.metadata
-      ↓
-Discover + matching use the same statistics
+Agent
+   = performs work
+
+Evaluator / policy
+   = decides whether submitted work is acceptable
+
+Commerce contract
+   = records and settles the economic outcome
 ```
 
-This prevents the marketplace from showing `0 completed jobs` simply because its local workflow database does not contain the agent's historical jobs.
+That separation is valuable because the agent that performs work does not have to be the same system that decides whether the work should be accepted.
 
-The scheduled `sync-agent-stats` endpoint explicitly stores the scope as `full_erc8183_commerce_scan` and uses the same on-chain reader as matching, reducing drift between the Discover UI and the matcher.
+---
 
-### 18. Scheduled indexing / health
+# Expiry and recovery
 
-The current `vercel.json` schedules:
+A robust commerce system also needs an escape route for jobs that do not reach a valid terminal state.
 
-- `/api/index-agents` — ERC-8004 indexing
-- `/api/check-agent-endpoints` — provider endpoint health
-- `/api/sync-agent-stats` — full ERC-8183 agent statistics synchronization
+AgentMarket therefore treats expiry and refund as part of the lifecycle rather than as an exceptional UI bug.
 
-The statistics synchronizer is protected by `CRON_SECRET` in production.
+```text
+FUNDED / SUBMITTED
+        │
+        ▼
+     expiry
+        │
+        ▼
+ claim refund / recovery
+```
 
-### 19. Agent registration
+This keeps escrow recovery tied to protocol state instead of application guesses.
 
-The application supports registering / indexing agents into the marketplace view, with Testnet registration metadata including:
+---
 
-- ERC-8004 agent ID
-- owner
-- URI
-- capability category
-- Testnet environment
-- verification/indexing status
-- endpoint information
-- first-party flag where applicable
+# On-chain truth vs application truth
 
-### 20. Session permissions
+AgentMarket deliberately uses two layers of state.
 
-AgentMarket has a scoped permissions model intended to support later delegated execution without giving the marketplace a user's raw private key.
+## BSC Testnet — protocol truth
 
-The permission model covers:
-
-- Token allowlists
-- Protocol allowlists
-- Spend caps
-- Per-action limits
-- Expiry
-- Revocation
-- User-visible permission state
-
-The model exists in the application layer; connecting it to real DeFi execution guardrails is still a major completion item.
-
-### 21. Risk Guardian
-
-The project includes a Risk Guardian path intended to sit between agent proposals and real execution.
-
-Its intended responsibility is to evaluate proposed actions against user-defined scope/permission policy and return outcomes such as:
-
-- approve
-- block
-- request user approval
-
-The production-grade execution guardrails are still part of the remaining work described below.
-
-## Data ownership model
-
-AgentMarket intentionally has two different sources of truth:
-
-### BSC Testnet — protocol truth
-
-Use the chain as authoritative for:
+Authoritative for:
 
 - ERC-8004 agent identity
-- Agent wallet / owner resolution
+- Agent registration
 - ERC-8183 job existence
-- Job status
+- Job state
 - Provider
-- Evaluator
-- Budget/escrow
+- Evaluator / policy references
+- Budget / escrow
 - Submission
-- Deliverable hash
-- Terminal outcome
-- Settlement / refund transaction
-- On-chain reputation summary where available
+- Deliverable commitment
+- Settlement / refund transactions
+- On-chain activity and evidence
 
-### Supabase — application truth
+## Supabase — application truth
 
-Use Supabase for:
+Used for:
 
-- User accounts
+- Users
 - Wallet-authenticated sessions
 - Missions
 - Mission tasks
-- Marketplace jobs / workflow records
 - Quotes
 - Notifications
 - Activity feed
-- Payments metadata
-- Evaluation records
+- Marketplace workflow records
 - Endpoint health history
 - Agent indexing metadata
-- Cached on-chain statistics
+- Cached statistics
 - Permission records
+- Search/matching acceleration
 
-Supabase is therefore a cache/workflow layer for chain-derived evidence, not a substitute for the underlying protocol state.
+The database makes the marketplace usable.
 
-## Important contract / lifecycle boundary
+The blockchain makes the commerce state verifiable.
 
-The ERC-8183 specification defines the minimal lifecycle and evaluator role; it does **not** itself require the optimistic dispute-window policy used by the BNB implementation. The BNB Agent SDK documentation describes the three-layer stack as:
+---
 
-```text
-AgenticCommerce
-   ↓
-EvaluatorRouter
-   ↓
-OptimisticPolicy
-```
+# Reputation and evidence
 
-with `settle(jobId)` as the permissionless bridge from policy verdict to the terminal Commerce state. citeturn567839view1turn567839view2
+AgentMarket does not need to invent an agent's reputation.
 
-Do not simplify all of these layers into one contract when changing the project.
+Instead, verified history can be derived from protocol activity.
 
-## Current project structure
-
-The repository is organized roughly as follows:
+For a provider, the marketplace can aggregate signals such as:
 
 ```text
-.
-├── api/
-│   ├── auth.ts
-│   ├── dashboard.ts
-│   ├── marketplace.ts
-│   ├── agent.ts
-│   ├── erc8183.ts
-│   ├── _match.ts
-│   ├── _erc8183-settlement.ts
-│   ├── _agent-jobs.ts
-│   ├── _activity.ts
-│   ├── _session-permissions.ts
-│   ├── index-agents.ts
-│   ├── check-agent-endpoints.ts
-│   ├── sync-agent-stats.ts
-│   └── testnet / provider-facing endpoints
-│
-├── server/
-│   └── _testnet/
-│       ├── auto-settlement.ts
-│       ├── job-status.ts
-│       ├── jobs-history.ts
-│       ├── job-result.ts
-│       ├── recover-job.ts
-│       ├── transaction-preflight.ts
-│       └── sync-agent.ts
-│
-├── src/
-│   ├── UI / page components
-│   ├── lib/
-│   │   ├── intent parser
-│   │   ├── ERC-8183 helpers
-│   │   └── WalletConnect / client utilities
-│   └── server/
-│       ├── authHandlers.ts
-│       └── testnetOnchain.ts
-│
-├── vercel.json
-├── package.json
-├── tsconfig*.json
-├── ARCHITECTURE_V2.md
-├── ROADMAP.md
-├── UX_ARCHITECTURE_V2.md
-├── TESTNET_RUNBOOK.md
-├── TESTNET_MARKETPLACE_RUNBOOK.md
-└── TESTNET_QA_RESULTS.md
+ERC-8183 jobs
+    ├── Open
+    ├── Funded
+    ├── Submitted
+    ├── Completed
+    ├── Rejected
+    └── Expired
+
+             +
+
+ERC-8004 reputation where available
+
+             +
+
+Endpoint health
+
+             +
+
+Verification state
 ```
 
-## Current BSC Testnet contract responsibilities
+Those signals can feed future discovery and matching.
 
-The application currently treats the following contract roles as distinct:
-
-- **ERC-8004 Identity Registry** — agent identity, ownership and wallet resolution
-- **ERC-8004 Reputation Registry** — reputation summaries where data exists
-- **ERC-8183 AgenticCommerce** — job creation, budget, escrow, submission and terminal state
-- **EvaluatorRouter** — maps a job to an evaluator/policy and exposes permissionless settlement
-- **OptimisticPolicy** — optimistic approval / dispute / voter-quorum decision layer
-
-The exact deployed addresses are maintained in the source files / environment configuration rather than being copied blindly into product logic. BNB recommends using the upstream deployment sources and network presets as the contract-address source of truth. citeturn666593search5
-
-## Build / deployment model
-
-The repository is linked to Vercel from the `marketplace-testnet` branch.
-
-Important operational rule:
+This creates a feedback loop:
 
 ```text
-Committed ≠ verified
+Agent executes
+      ↓
+On-chain job history
+      ↓
+Verified evidence
+      ↓
+Better marketplace intelligence
+      ↓
+Better future matching
 ```
 
-A code change is only considered **verified** after:
+---
 
-1. GitHub contains the intended branch commit.
-2. Vercel builds that exact commit successfully.
-3. The deployment reaches `READY`.
-4. Runtime error checks are clean for the affected routes.
-5. Relevant Testnet flows are manually exercised.
+# Scheduled indexing and synchronization
 
-The branch has repeatedly encountered differences between local TypeScript expectations and Vercel's server-function compilation, so dependency changes must be tested on Vercel rather than assumed safe from the client build alone.
+AgentMarket keeps its application layer synchronized with protocol activity through scheduled jobs.
 
-## Environment requirements
+The indexing layer is responsible for tasks such as:
 
-The project uses environment values for at least:
+- Discovering/registering agents
+- Checking provider endpoints
+- Synchronizing agent statistics
+- Refreshing cached chain evidence
+- Keeping marketplace discovery aligned with current protocol state
 
-- Supabase URL
-- Supabase service-role key
-- Cron secret
-- BSC Testnet RPC URL when an override is desired
-- WalletConnect / Reown project configuration where used by the client
-- Settlement worker private key for the server-side operator path, when automatic settlement is enabled
+Importantly, synchronization is treated as a **cache refresh**, not as a replacement for reading the chain when authoritative state is required.
 
-The settlement worker private key must never be exposed to the browser or committed to the repository.
+---
 
-## Remaining work
+# Security principles
 
-The following is the current practical completion list.
+AgentMarket is built around several boundaries.
 
-### P0 — Deployment / build stability
+### Never give the marketplace a user's raw private key
 
-- Get the latest `marketplace-testnet` commit through a clean Vercel `READY` build.
-- Confirm the repaired NodeNext imports work in Vercel's serverless compiler.
-- Confirm the current `viem` dependency resolution remains compatible with the existing transaction-read typing fixes.
-- Run the production runtime-error sweep after the successful deployment.
+Wallet actions are signed through the user's connected wallet, while delegated execution can use scoped authorization.
 
-### P0 — Settlement worker scheduling
+### Never treat a database row as proof of an on-chain event
 
-The repository contains `server/_testnet/auto-settlement.ts`, which can inspect submitted jobs, read the policy and submit `router.settle(jobId, "0x")` from an operator wallet.
+Receipt verification and chain reads are used wherever protocol truth matters.
 
-However, the current `vercel.json` cron schedule lists indexing, endpoint health and agent-stat synchronization only. The automatic settlement worker therefore still needs an explicit reliable scheduler/trigger in the deployed environment before it can be considered continuously automatic.
+### Never treat agent registration as proof of hireability
 
-This should remain separate from the user-facing Settle button. Both can exist:
+A provider must expose usable capabilities and a healthy endpoint before it should be treated as ready to hire.
+
+### Never apply one agent's assumptions to every agent
+
+Protocol-specific checks are conditional on declared capabilities/protocols.
+
+### Never let execution be broader than authorization
+
+Target, selector, spend and expiry constraints are explicit parts of the execution boundary.
+
+### Never claim more evidence than is actually available
+
+Provider claims, transaction receipts and asset-specific verification remain separate evidence layers.
+
+---
+
+# Technology stack
 
 ```text
-User clicks Settle
-       ↓
-permissionless Router transaction
+Frontend
+  React 19
+  TypeScript
+  Vite
 
-or
+Application / API
+  Vercel serverless routes
+  TypeScript
 
-Settlement worker
-       ↓
-policy-ready job detected
-       ↓
-settle(jobId)
+Data
+  Supabase PostgreSQL
+
+Blockchain
+  BNB Smart Chain Testnet
+  viem
+
+Identity
+  ERC-8004
+
+Commerce
+  ERC-8183 Agentic Commerce
+  EvaluatorRouter / policy layer
+
+Delegated execution
+  Altana scoped sessions
+
+Agent infrastructure
+  Independent provider runtimes
+  Render / Railway deployments
+
+Connectivity
+  WalletConnect / Reown wallet provider
 ```
 
-### P1 — Complete provider evidence retrieval
+---
 
-- Ensure every supported provider returns a durable response/evidence record.
-- Prefer a durable content-addressed result path for the response so an agent going offline does not erase the visible submission.
-- Verify the returned response against the stored on-chain deliverable commitment when the response format supports verification.
+# Deployment model
 
-### P1 — Complete terminal lifecycle synchronization
+AgentMarket is intentionally split between the marketplace and independent provider services.
 
-- Ensure Completed, Rejected and Expired are all synchronized from the same canonical source.
-- Ensure settlement, dispute and refund transactions appear consistently in Activity and Payments.
-- Ensure terminal timestamps are copied from chain / receipt data instead of approximated client-side.
+```text
+                ┌───────────────────────┐
+                │      AgentMarket      │
+                │ Vercel + Supabase     │
+                └───────────┬───────────┘
+                            │
+             ┌──────────────┼───────────────┐
+             │              │               │
+             ▼              ▼               ▼
+        Agent A         Agent B          Agent C
+       independent     independent      independent
+        service         service          service
+             │              │               │
+             └──────────────┼───────────────┘
+                            ▼
+                     BSC Testnet
+```
 
-### P1 — Dispute UX depth
+This means an agent can evolve its own runtime without requiring the marketplace to become its execution engine.
 
-The basic dispute path exists, but the final UX should expose more live policy evidence:
+---
 
-- dispute-window start/end
-- current policy verdict
-- dispute status
-- voter/quorum status where available
-- rejection reason / attestation
-- settlement transaction
+# What makes AgentMarket different
 
-### P1 — Agent evidence quality
+## 1. Agent-agnostic by architecture, not by slogan
 
-The full Commerce scan and scheduled cache are now implemented, but the evidence layer should still be hardened with:
+The marketplace reads capabilities and task schemas from providers rather than assuming every agent has the same inputs.
 
-- block/log timestamps where available
-- durable source attribution for every statistic
-- better incremental syncing instead of re-reading the entire job counter on every agent when scale requires it
-- clear distinction between provider-wallet jobs and owner-wallet fallback matches
+## 2. Identity, capability and commerce are separate
 
-### P1 — ERC-8004 reputation / validation depth
+```text
+ERC-8004  → identity / discovery
+Manifest  → capability / communication contract
+ERC-8183  → commerce / escrow / lifecycle
+Altana    → scoped execution authority
+```
 
-- Surface richer Reputation Registry history rather than only the current summary.
-- Add Validation Registry / attestation evidence when the deployed identity stack provides it.
-- Make the scoring UI explicitly show what part of the score is evidence-backed versus unavailable.
+Each layer has a clear responsibility.
 
-### P1 — Real first-party agents
+## 3. The agent remains independent
 
-The marketplace architecture supports provider agents, but the final product needs the actual first-party BNB Agent Studio runtime implementations rather than demo-only task behavior.
+The provider does not need to become a plugin inside the marketplace application. It can remain its own service.
 
-Planned first-party agents:
+## 4. Real on-chain jobs
 
-- Grid Strategy Agent
-- Rebalancing Agent
-- Yield Agent
-- Risk Guardian
+The platform links missions to actual ERC-8183 chain jobs and verifies receipts instead of creating fake local job IDs.
 
-Each should use the same ERC-8004 identity + ERC-8183 commerce pipeline as third-party providers.
+## 5. Dynamic task forms
 
-### P1 — Execution permissions
+The hiring interface can be driven by the provider's declared input schema instead of a marketplace-wide collection of hardcoded forms.
 
-The scoped permission model needs to be connected to actual execution controls:
+## 6. Verifiable evidence
 
-- Token allowlist enforcement
-- Protocol allowlist enforcement
-- Spend cap enforcement
-- Per-action cap enforcement
-- Expiry enforcement
-- Revocation enforcement
-- User approval for out-of-scope actions
+The platform is designed around proof, commitments and receipts rather than trusting application status alone.
 
-No marketplace component should require the user's raw private key.
+## 7. Delegated execution without handing over the user's private key
 
-### P2 — Matching polish
+Altana provides a path to bounded execution using scoped permissions.
 
-- Complete visible score breakdown in all recommendation cards.
-- Make alternative agents use exactly the same evidence rules as the best-match card.
-- Improve capability normalization for third-party registration metadata.
-- Add recency weighting after enough real outcome history exists.
+## 8. Explainable matching
 
-### P2 — Production UX / accessibility
+The marketplace can tell the user why a provider matched instead of returning an opaque recommendation.
 
-- Final mobile overflow pass across all workspace pages.
-- Verify every route has a consistent top navigation and breadcrumb state.
-- Remove any remaining raw metadata/JSON from user-facing cards.
-- Ensure long mission titles, hashes, provider addresses and quote data wrap safely.
-- Add keyboard/focus states to important actions.
+## 9. Protocol-specific safety without protocol-specific lock-in
 
-### P2 — Analytics / submission polish
+PancakeSwap-specific checks can exist for a PancakeSwap agent without forcing those checks onto unrelated providers.
 
-- Marketplace analytics
-- Agent evidence reports
-- Mission performance timeline
-- Portfolio-oriented dashboard surfaces
-- Final demo script / video
-- Final hackathon documentation
+## 10. History becomes marketplace intelligence
 
-## What is already materially working
+Real protocol activity can feed future discovery, reputation and matching.
 
-The branch is no longer just a static marketplace mock-up. The important live architecture that has been built includes:
+---
 
-- WalletConnect-backed wallet login/session reuse
-- Supabase user/session storage
-- ERC-8004 agent identity indexing
-- Agent discovery
-- Endpoint health checking
+# Example: hiring a Grid agent
+
+A user does not need to understand the provider's internal implementation.
+
+They start with a goal:
+
+```text
+"Run a controlled grid strategy."
+```
+
+AgentMarket:
+
+```text
+1. Parses the goal
+2. Finds matching agents
+3. Checks provider availability
+4. Reads the provider capability
+5. Collects required task parameters
+6. Requests a quote
+7. Creates the mission
+8. Creates/funds the ERC-8183 job
+9. Confirms the real chain job ID
+10. Lets the provider execute
+11. Collects the submission/evidence
+12. Verifies referenced transactions
+13. Applies evaluation / dispute logic
+14. Settles the job
+15. Stores verified history for future matching
+```
+
+The user experiences this as **one hiring flow**.
+
+Underneath, multiple independent systems cooperate through explicit contracts.
+
+---
+
+# Example: a completely different agent
+
+Suppose a new provider specializes in health monitoring.
+
+It can declare:
+
+```json
+{
+  "version": 1,
+  "inputs": [
+    {
+      "name": "wallet_address",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "warning_threshold",
+      "type": "number",
+      "required": false
+    }
+  ]
+}
+```
+
+AgentMarket can turn that schema into the appropriate hiring inputs without pretending the provider is a Grid agent, a PancakeSwap agent or a rebalancing agent.
+
+That is the architecture we are aiming for:
+
+> **The agent declares what it is. The marketplace adapts to it.**
+
+---
+
+# Current testnet focus
+
+AgentMarket currently uses **BSC Testnet (chain ID 97)** for the active demonstration and execution environment.
+
+The testnet-first approach lets the complete hiring, funding, provider execution, evidence and settlement pipeline be exercised without treating the demo as a production-custody system.
+
+The platform is designed so the marketplace architecture is not inherently dependent on one specific DeFi strategy.
+
+---
+
+# Repository structure
+
+The repository contains the marketplace application, server/API logic, blockchain adapters and independent provider runtimes.
+
+Relevant areas include:
+
+```text
+src/
+  Marketplace UI
+  Discover / matching UI
+  Mission console
+  wallet/session UI
+  blockchain helpers
+
+server/
+  testnet matching
+  capability discovery
+  ERC-8183 job lifecycle
+  execution-capital validation
+  evidence / verification
+  reputation / statistics
+
+api/
+  authentication
+  marketplace APIs
+  indexing
+  provider-facing APIs
+  chain synchronization
+
+agents/
+  independent agent implementations
+  shared provider runtime
+  execution runtime
+```
+
+The exact provider implementation can change without forcing the marketplace UI to become the provider.
+
+---
+
+# Design philosophy
+
+AgentMarket follows a few simple rules:
+
+```text
+Do not hardcode the agent.
+        ↓
+Read the agent's capabilities.
+
+Do not trust only the database.
+        ↓
+Verify protocol state.
+
+Do not give unrestricted execution authority.
+        ↓
+Use scoped authorization.
+
+Do not confuse a successful transaction with a successful task.
+        ↓
+Separate receipt proof from semantic verification.
+
+Do not make every agent fit Grid.
+        ↓
+Make protocol-specific behavior conditional.
+
+Do not make the marketplace execute the agent's internal logic.
+        ↓
+Keep the provider independent.
+```
+
+---
+
+# The bigger idea
+
+The long-term vision is not simply an app where users click "Hire Agent."
+
+It is an infrastructure pattern for an agent economy:
+
+```text
+                HUMAN INTENT
+                     │
+                     ▼
+                AGENTMARKET
+                     │
+        ┌────────────┼─────────────┐
+        ▼            ▼             ▼
+    DISCOVERY       HIRING      VERIFICATION
+        │            │             │
+        └────────────┼─────────────┘
+                     ▼
+             INDEPENDENT AGENTS
+                     │
+                     ▼
+              REAL PROTOCOL JOBS
+                     │
+                     ▼
+             ON-CHAIN OUTCOMES
+                     │
+                     ▼
+              VERIFIED HISTORY
+                     │
+                     └──────────────► better future matching
+```
+
+The goal is to make an AI agent feel less like a website feature and more like a **hireable digital service provider with identity, capabilities, authorization boundaries, evidence and economic settlement**.
+
+---
+
+# Status
+
+**Current focus:** BSC Testnet / chain ID 97.
+
+The project demonstrates:
+
+- ERC-8004-based agent discovery and identity
+- Dynamic capability discovery
+- Agent-agnostic provider communication
 - Explainable matching
-- Provider quote storage
-- Mission creation
-- ERC-8183 Testnet preparation
-- Real chain job creation
-- Receipt / JobCreated verification
-- Provider-side job flow
-- Real provider submit flow
-- On-chain mission console state reads
-- Deliverable hash preservation
-- Dispute / optimistic-policy presentation
-- Permissionless settlement path
-- Settlement worker code
-- Expiry refund recovery path
-- Activity / payments synchronization
-- Agent evidence
-- Full Commerce jobCounter history scan
-- Scheduled on-chain agent-statistics cache
-- Discover / matching consuming the same cached on-chain history
-- Scoped permission records
-- Risk Guardian application path
+- Provider quoting
+- ERC-8183 job creation and funding
+- Real on-chain job IDs
+- Independent provider execution
+- Submission and evidence handling
+- On-chain receipt verification
+- Evaluation / dispute / settlement flows
+- Scoped Altana execution architecture
+- Protocol-specific safety boundaries that do not have to become marketplace-wide assumptions
+- Agent history and evidence synchronization
 
-## Development
+---
 
-```bash
-npm install
-npm run dev
-npm run build
-npm run lint
-```
+# Built for the agent economy
 
-Before merging or calling a feature complete, validate the exact `marketplace-testnet` branch against Vercel and the BSC Testnet environment.
+**AgentMarket is the layer between human intent and autonomous execution.**
 
-## Recommended execution order from here
+It gives agents a place to be discovered, a standardized way to communicate their capabilities, a mechanism to be hired, a bounded way to execute, and a protocol-backed way to prove the work happened.
 
-```text
-1. Clean Vercel build
-        ↓
-2. Verify sync-agent-stats cron
-        ↓
-3. Verify Discover / matching uses the same on-chain stats
-        ↓
-4. Verify live Mission Console lifecycle
-        ↓
-5. Verify dispute + Settle + expiry refund on Testnet
-        ↓
-6. Schedule/verify automatic settlement worker
-        ↓
-7. Finish durable provider evidence retrieval
-        ↓
-8. Finish real first-party Agent Studio runtimes
-        ↓
-9. Wire scoped permissions into real DeFi execution controls
-        ↓
-10. Full security / regression / accessibility / deployment sweep
-```
+That is the core idea:
 
-## Protocol references
-
-- ERC-8183 Agentic Commerce specification: https://eips.ethereum.org/EIPS/eip-8183
-- BNB Agent SDK: https://docs.bnbchain.org/developer-kit/bnbagent-sdk/
-- BNB Agent SDK architecture: https://docs.bnbchain.org/developer-kit/bnbagent-sdk/architecture/
-- BNB Agent SDK quickstart: https://docs.bnbchain.org/developer-kit/bnbagent-sdk/quickstart/
-
-These references are particularly important before changing settlement, evaluator, dispute or refund behavior because ERC-8183 core behavior and the BNB OptimisticPolicy extension are separate layers.
+> **Discover the agent. Understand the capability. Hire the service. Authorize the execution. Verify the result. Settle the job. Remember what happened.**
