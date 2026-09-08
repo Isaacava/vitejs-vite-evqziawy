@@ -10,6 +10,28 @@ POSITION_MANAGER = Web3.to_checksum_address(os.getenv("PANCAKE_V3_POSITION_MANAG
 EDGE_THRESHOLD = float(os.getenv("LP_EDGE_THRESHOLD", "0.10"))
 WIDEN_FACTOR = float(os.getenv("LP_WIDEN_FACTOR", "1.50"))
 
+# Published provider contract for AgentMarket discovery/hiring.
+# Keep this schema aligned with the values actually consumed by decide_job().
+CAPABILITY_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "wallet_address": {
+            "type": "string",
+            "title": "Execution wallet",
+            "description": "BSC Testnet wallet address containing the Pancake V3 position. This is the user/job wallet, not the provider wallet.",
+            "pattern": "^0x[a-fA-F0-9]{40}$",
+        },
+        "position_token_id": {
+            "type": "integer",
+            "title": "Pancake V3 position token ID",
+            "description": "The Pancake V3 NonfungiblePositionManager NFT token ID for the LP position to inspect and, when authorized, rebalance.",
+            "minimum": 1,
+        },
+    },
+    "required": ["wallet_address", "position_token_id"],
+}
+
 w3 = Web3(Web3.HTTPProvider(RPC, request_kwargs={"timeout": 15}))
 PM_ABI = [
     {"name":"positions","type":"function","stateMutability":"view","inputs":[{"name":"tokenId","type":"uint256"}],"outputs":[{"type":"uint96"},{"type":"address"},{"type":"address"},{"type":"address"},{"type":"uint24"},{"type":"int24"},{"type":"int24"},{"type":"uint128"},{"type":"uint256"},{"type":"uint256"},{"type":"uint128"},{"type":"uint128"}]},
