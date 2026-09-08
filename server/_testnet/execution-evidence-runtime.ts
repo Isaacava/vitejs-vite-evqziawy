@@ -1,4 +1,4 @@
-import { createPublicClient, decodeEventLog, http, type Address, type Hex } from "viem";
+import { createPublicClient, decodeEventLog, formatUnits, http, type Address, type Hex } from "viem";
 import { bscTestnet } from "viem/chains";
 import { getAuthenticatedUser, serverClient } from "../_auth.js";
 import { invokeProviderOperation, resolveProviderOperation } from "./provider-operation.js";
@@ -40,6 +40,56 @@ const TRANSFER_ABI = [{
   ],
 }] as const;
 
+// Uniswap/Pancake V3-style pool event. Pancake V3 includes the protocol-fee fields.
+const V3_SWAP_ABI = [{
+  type: "event",
+  name: "Swap",
+  anonymous: false,
+  inputs: [
+    { name: "sender", type: "address", indexed: true },
+    { name: "recipient", type: "address", indexed: true },
+    { name: "amount0", type: "int256", indexed: false },
+    { name: "amount1", type: "int256", indexed: false },
+    { name: "sqrtPriceX96", type: "uint160", indexed: false },
+    { name: "liquidity", type: "uint128", indexed: false },
+    { name: "tick", type: "int24", indexed: false },
+    { name: "protocolFeesToken0", type: "uint128", indexed: false },
+    { name: "protocolFeesToken1", type: "uint128", indexed: false },
+  ],
+}] as const;
+
+const V2_SWAP_ABI = [{
+  type: "event",
+  name: "Swap",
+  anonymous: false,
+  inputs: [
+    { name: "sender", type: "address", indexed: true },
+    { name: "amount0In", type: "uint256", indexed: false },
+    { name: "amount1In", type: "uint256", indexed: false },
+    { name: "amount0Out", type: "uint256", indexed: false },
+    { name: "amount1Out", type: "uint256", indexed: false },
+    { name: "to", type: "address", indexed: true },
+  ],
+}] as const;
+
+const ERC20_ABI = [
+  { type: "function", name: "symbol", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
+  { type: "function", name: "decimals", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] },
+] as const;
+
+const V3_POOL_ABI = [
+  { type: "function", name: "token0", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "token1", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "fee", stateMutability: "view", inputs: [], outputs: [{ type: "uint24" }] },
+] as const;
+
+const OPTIONAL_FEE_ABI = [
+  { type: "function", name: "fee", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "swapFee", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+] as const;
+
+const ZERO = "0x0000000000000000000000000000000000000000" as Address;
+
 type EndpointRecord = {
   endpoint_url: string;
   protocol: string;
@@ -53,6 +103,25 @@ type TransferRecord = {
   from: Address;
   to: Address;
   value: bigint;
+  logIndex: number | null;
+};
+
+type TokenMeta = {
+  symbol: string | null;
+  decimals: number;
+};
+
+type SwapEvidence = {
+  kind: "v3" | "v2" | "wallet-net";
+  pool: Address | null;
+  fee: string | null;
+  fee_raw: string | null;
+  tokenIn: Address;
+  tokenOut: Address;
+  amountInRaw: bigint;
+  amountOutRaw: bigint;
+  logIndex: number | null;
+  verified: boolean;
 };
 
 function object(value: unknown): Record<string, any> {
@@ -120,10 +189,16 @@ function decodeTransfers(receipt: any): TransferRecord[] {
         isAddress(args.to) &&
         typeof args.value === "bigint"
       ) {
-        transfers.push({ token: log.address, from: args.from, to: args.to, value: args.value });
+        transfers.push({
+          token: log.address,
+          from: args.from,
+          to: args.to,
+          value: args.value,
+          logIndex: typeof log.logIndex === "number" ? log.logIndex : null,
+        });
       }
     } catch {
-      // Ignore logs that are not standard ERC-20 Transfer events.
+      // Ignore non-ERC20 Transfer logs.
     }
   }
   return transfers;
@@ -143,7 +218,11 @@ function extractCapability(request: any) {
     capabilityMarket,
     sessionKey,
     allowedTargets,
-    executionMode: typeof capability.execution === "string" ? capability.execution : typeof execution.mode === "string" ? execution.mode : null,
+    executionMode: typeof capability.execution === "string"
+      ? capability.execution
+      : typeof execution.mode === "string"
+        ? execution.mode
+        : null,
   };
 }
 
@@ -190,10 +269,234 @@ async function loadProviderResult(
         operation,
       };
     } catch {
-      // Try the next discovered result operation.
+      // Try another discovered result operation.
     }
   }
   return null;
+}
+
+async function tokenMeta(token: Address): Promise<TokenMeta> {
+  const [symbolResult, decimalsResult] = await Promise.allSettled([
+    publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol" }),
+    publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" }),
+  ]);
+  const symbol = symbolResult.status === "fulfilled" && typeof symbolResult.value === "string"
+    ? symbolResult.value
+    : null;
+  const decimals = decimalsResult.status === "fulfilled"
+    ? Number(decimalsResult.value)
+    : 18;
+  return { symbol, decimals: Number.isFinite(decimals) ? decimals : 18 };
+}
+
+async function poolMeta(pool: Address) {
+  let token0: Address | null = null;
+  let token1: Address | null = null;
+  let feeRaw: bigint | null = null;
+
+  const [token0Result, token1Result, feeResult] = await Promise.allSettled([
+    publicClient.readContract({ address: pool, abi: V3_POOL_ABI, functionName: "token0" }),
+    publicClient.readContract({ address: pool, abi: V3_POOL_ABI, functionName: "token1" }),
+    publicClient.readContract({ address: pool, abi: V3_POOL_ABI, functionName: "fee" }),
+  ]);
+  if (token0Result.status === "fulfilled" && isAddress(token0Result.value)) token0 = token0Result.value;
+  if (token1Result.status === "fulfilled" && isAddress(token1Result.value)) token1 = token1Result.value;
+  if (feeResult.status === "fulfilled") feeRaw = BigInt(feeResult.value as any);
+
+  if (feeRaw === null) {
+    for (const functionName of ["fee", "swapFee"] as const) {
+      try {
+        const result = await publicClient.readContract({ address: pool, abi: OPTIONAL_FEE_ABI, functionName });
+        feeRaw = BigInt(result as any);
+        break;
+      } catch {
+        // Not every pool exposes a fee getter.
+      }
+    }
+  }
+
+  return { token0, token1, feeRaw };
+}
+
+function walletNetDeltas(wallet: string, transfers: TransferRecord[]) {
+  const normalized = wallet.toLowerCase();
+  const deltas = new Map<string, { token: Address; net: bigint; outbound: bigint; inbound: bigint }>();
+  for (const transfer of transfers) {
+    const key = transfer.token.toLowerCase();
+    if (!deltas.has(key)) deltas.set(key, { token: transfer.token, net: 0n, outbound: 0n, inbound: 0n });
+    const current = deltas.get(key)!;
+    if (transfer.from.toLowerCase() === normalized) {
+      current.outbound += transfer.value;
+      current.net -= transfer.value;
+    }
+    if (transfer.to.toLowerCase() === normalized) {
+      current.inbound += transfer.value;
+      current.net += transfer.value;
+    }
+  }
+  return [...deltas.values()].filter((entry) => entry.net !== 0n);
+}
+
+function walletTransferScore(wallet: string, transfers: TransferRecord[]) {
+  const normalized = wallet.toLowerCase();
+  const related = transfers.filter((transfer) => transfer.from.toLowerCase() === normalized || transfer.to.toLowerCase() === normalized);
+  const contractsTouched = new Set<string>();
+  for (const transfer of related) {
+    const other = transfer.from.toLowerCase() === normalized ? transfer.to : transfer.from;
+    if (other !== normalized) contractsTouched.add(other.toLowerCase());
+  }
+  return {
+    count: related.length,
+    totalValue: related.reduce((sum, transfer) => sum + transfer.value, 0n),
+    counterparties: contractsTouched.size,
+  };
+}
+
+function selectExecutionWallet(
+  preferredWallets: string[],
+  txFrom: string | null,
+  transfers: TransferRecord[],
+): string | null {
+  const candidates = [...new Set([...preferredWallets, txFrom || ""].filter(isAddress).map((value) => value.toLowerCase()))];
+  if (candidates.length === 0) return isAddress(txFrom) ? txFrom : null;
+  let best: { wallet: string; count: number; totalValue: bigint; counterparties: number } | null = null;
+  for (const wallet of candidates) {
+    const score = walletTransferScore(wallet, transfers);
+    if (
+      !best ||
+      score.count > best.count ||
+      (score.count === best.count && score.counterparties > best.counterparties) ||
+      (score.count === best.count && score.counterparties === best.counterparties && score.totalValue > best.totalValue)
+    ) {
+      best = { wallet, ...score };
+    }
+  }
+  return best?.wallet || null;
+}
+
+async function findSwapEvidence(receipt: any, executionWallet: string | null, transfers: TransferRecord[]): Promise<SwapEvidence | null> {
+  const net = executionWallet ? walletNetDeltas(executionWallet, transfers) : [];
+  const netMap = new Map(net.map((entry) => [entry.token.toLowerCase(), entry.net]));
+
+  for (const log of receipt.logs || []) {
+    if (!isAddress(log.address)) continue;
+    try {
+      const decoded = decodeEventLog({ abi: V3_SWAP_ABI, data: log.data, topics: log.topics, strict: false });
+      const args = object(decoded.args);
+      if (decoded.eventName !== "Swap") continue;
+      const meta = await poolMeta(log.address);
+      if (!meta.token0 || !meta.token1 || typeof args.amount0 !== "bigint" || typeof args.amount1 !== "bigint") continue;
+
+      let tokenIn: Address;
+      let tokenOut: Address;
+      let amountInRaw: bigint;
+      let amountOutRaw: bigint;
+      if (args.amount0 > 0n && args.amount1 < 0n) {
+        tokenIn = meta.token0;
+        tokenOut = meta.token1;
+        amountInRaw = args.amount0;
+        amountOutRaw = -args.amount1;
+      } else if (args.amount1 > 0n && args.amount0 < 0n) {
+        tokenIn = meta.token1;
+        tokenOut = meta.token0;
+        amountInRaw = args.amount1;
+        amountOutRaw = -args.amount0;
+      } else {
+        continue;
+      }
+
+      const matchesWallet = executionWallet
+        ? (netMap.get(tokenIn.toLowerCase()) || 0n) < 0n && (netMap.get(tokenOut.toLowerCase()) || 0n) > 0n
+        : true;
+      if (!matchesWallet) continue;
+
+      return {
+        kind: "v3",
+        pool: log.address,
+        fee: meta.feeRaw === null ? null : String(Number(meta.feeRaw) / 1_000_000),
+        fee_raw: meta.feeRaw?.toString() || null,
+        tokenIn,
+        tokenOut,
+        amountInRaw,
+        amountOutRaw,
+        logIndex: typeof log.logIndex === "number" ? log.logIndex : null,
+        verified: true,
+      };
+    } catch {
+      // Try another log/event family.
+    }
+  }
+
+  for (const log of receipt.logs || []) {
+    if (!isAddress(log.address)) continue;
+    try {
+      const decoded = decodeEventLog({ abi: V2_SWAP_ABI, data: log.data, topics: log.topics, strict: false });
+      const args = object(decoded.args);
+      if (decoded.eventName !== "Swap") continue;
+      const pairMeta = await poolMeta(log.address);
+      if (!pairMeta.token0 || !pairMeta.token1) continue;
+      const amount0In = typeof args.amount0In === "bigint" ? args.amount0In : 0n;
+      const amount1In = typeof args.amount1In === "bigint" ? args.amount1In : 0n;
+      const amount0Out = typeof args.amount0Out === "bigint" ? args.amount0Out : 0n;
+      const amount1Out = typeof args.amount1Out === "bigint" ? args.amount1Out : 0n;
+      let tokenIn: Address;
+      let tokenOut: Address;
+      let amountInRaw: bigint;
+      let amountOutRaw: bigint;
+      if (amount0In > 0n && amount1Out > 0n) {
+        tokenIn = pairMeta.token0;
+        tokenOut = pairMeta.token1;
+        amountInRaw = amount0In;
+        amountOutRaw = amount1Out;
+      } else if (amount1In > 0n && amount0Out > 0n) {
+        tokenIn = pairMeta.token1;
+        tokenOut = pairMeta.token0;
+        amountInRaw = amount1In;
+        amountOutRaw = amount0Out;
+      } else {
+        continue;
+      }
+      const matchesWallet = executionWallet
+        ? (netMap.get(tokenIn.toLowerCase()) || 0n) < 0n && (netMap.get(tokenOut.toLowerCase()) || 0n) > 0n
+        : true;
+      if (!matchesWallet) continue;
+      return {
+        kind: "v2",
+        pool: log.address,
+        fee: pairMeta.feeRaw === null ? null : String(Number(pairMeta.feeRaw) / 1_000_000),
+        fee_raw: pairMeta.feeRaw?.toString() || null,
+        tokenIn,
+        tokenOut,
+        amountInRaw,
+        amountOutRaw,
+        logIndex: typeof log.logIndex === "number" ? log.logIndex : null,
+        verified: true,
+      };
+    } catch {
+      // Continue to generic wallet-delta fallback.
+    }
+  }
+
+  if (!executionWallet || net.length < 2) return null;
+  const outgoing = net.filter((entry) => entry.net < 0n);
+  const incoming = net.filter((entry) => entry.net > 0n);
+  if (!outgoing.length || !incoming.length) return null;
+  outgoing.sort((a, b) => (a.net < b.net ? -1 : 1));
+  incoming.sort((a, b) => (a.net > b.net ? -1 : 1));
+  const tokenIn = outgoing[0];
+  const tokenOut = incoming[0];
+  return {
+    kind: "wallet-net",
+    pool: null,
+    fee: null,
+    fee_raw: null,
+    tokenIn: tokenIn.token,
+    tokenOut: tokenOut.token,
+    amountInRaw: -tokenIn.net,
+    amountOutRaw: tokenOut.net,
+    logIndex: null,
+    verified: true,
+  };
 }
 
 async function upsertEvidence(
@@ -226,6 +529,7 @@ async function upsertEvidence(
     from: transfer.from,
     to: transfer.to,
     value: transfer.value.toString(),
+    log_index: transfer.logIndex,
   }));
 
   const { error } = await supabase
@@ -248,38 +552,61 @@ async function upsertEvidence(
   if (error) throw new Error(error.message);
 }
 
-function walletTransferScore(wallet: string, transfers: TransferRecord[]) {
-  const normalized = wallet.toLowerCase();
-  const related = transfers.filter((transfer) => transfer.from.toLowerCase() === normalized || transfer.to.toLowerCase() === normalized);
-  const totalValue = related.reduce((sum, transfer) => sum + transfer.value, 0n);
-  return { count: related.length, totalValue };
+function formatAmount(value: bigint, decimals: number) {
+  return formatUnits(value, decimals);
 }
 
-function selectExecutionWallet(
-  preferredWallets: string[],
-  txFrom: string | null,
-  transfers: TransferRecord[],
-): string | null {
-  const candidates = [...new Set([...preferredWallets, txFrom || ""].filter(isAddress).map((value) => value.toLowerCase()))];
-  if (candidates.length === 0) return isAddress(txFrom) ? txFrom : null;
-
-  let best: { wallet: string; count: number; totalValue: bigint } | null = null;
-  for (const wallet of candidates) {
-    const score = walletTransferScore(wallet, transfers);
-    if (!best || score.count > best.count || (score.count === best.count && score.totalValue > best.totalValue)) {
-      best = { wallet, ...score };
-    }
-  }
-  return best?.wallet || null;
+async function marketEvidence(swap: SwapEvidence | null) {
+  if (!swap) return null;
+  const [inputMeta, outputMeta] = await Promise.all([tokenMeta(swap.tokenIn), tokenMeta(swap.tokenOut)]);
+  return {
+    token_in: swap.tokenIn,
+    token_out: swap.tokenOut,
+    token_in_symbol: inputMeta.symbol,
+    token_out_symbol: outputMeta.symbol,
+    token_in_amount: formatAmount(swap.amountInRaw, inputMeta.decimals),
+    token_out_amount: formatAmount(swap.amountOutRaw, outputMeta.decimals),
+    token_in_amount_raw: swap.amountInRaw.toString(),
+    token_out_amount_raw: swap.amountOutRaw.toString(),
+    token_in_decimals: inputMeta.decimals,
+    token_out_decimals: outputMeta.decimals,
+    fee: swap.fee,
+    fee_raw: swap.fee_raw,
+    pool: swap.pool,
+    swap_event_verified: swap.kind !== "wallet-net",
+    swap_event_kind: swap.kind,
+    swap_log_index: swap.logIndex,
+    execution_effects_verified: true,
+  };
 }
 
-function deliverableVerification(rawText: string, expectedHash: string | null) {
-  if (!rawText || !expectedHash || !/^0x[a-fA-F0-9]{64}$/.test(expectedHash)) {
-    return { checked: false, matches: null, computed_hash: null, expected_hash: expectedHash || null };
+function accountingFromMarket(market: any) {
+  if (!market) return null;
+  return {
+    capital_deployed: market.token_in_amount,
+    capital_deployed_token: market.token_in_symbol || market.token_in,
+    capital_deployed_raw: market.token_in_amount_raw,
+    capital_deployed_decimals: market.token_in_decimals,
+    pnl_status: "unpriced",
+    realized_pnl: null,
+    unrealized_pnl: null,
+    pnl_token: market.token_in_symbol || market.token_in,
+    source: "agentmarket_chain_verifier",
+  };
+}
+
+async function deliverableHash(rawText: string, expectedHash: string | null) {
+  if (!rawText || !expectedHash || !isHash(expectedHash)) {
+    return { checked: false, matches: null, computed_hash: null, expected_hash: expectedHash };
   }
-  const bytes = new TextEncoder().encode(rawText);
-  const computed = Array.from(new Uint8Array(bytes)).length >= 0 ? null : null;
-  return { checked: false, matches: null, computed_hash: computed, expected_hash: expectedHash };
+  const { keccak256 } = await import("viem");
+  const computed = keccak256(new TextEncoder().encode(rawText));
+  return {
+    checked: true,
+    matches: computed.toLowerCase() === expectedHash.toLowerCase(),
+    computed_hash: computed,
+    expected_hash: expectedHash,
+  };
 }
 
 export default async function handler(req: any, res: any) {
@@ -340,6 +667,7 @@ export default async function handler(req: any, res: any) {
       .maybeSingle();
     if (storedEvidenceError) throw new Error(storedEvidenceError.message);
 
+    // A transaction hash is only a locator. No execution facts are trusted from the agent response.
     let transactionHash: Hex | null = isHash(storedEvidence?.transaction_hash)
       ? storedEvidence.transaction_hash
       : isHash(lastExecution.transaction_hash)
@@ -348,7 +676,7 @@ export default async function handler(req: any, res: any) {
     let source = storedEvidence?.transaction_hash
       ? "execution_capital_execution_evidence"
       : lastExecution.transaction_hash
-        ? "execution_capital_request"
+        ? "execution_locator"
         : "";
     let providerRawText = "";
     let providerEndpoint: string | null = null;
@@ -369,14 +697,12 @@ export default async function handler(req: any, res: any) {
         providerRawText = providerResult.rawText;
         providerEndpoint = providerResult.endpoint;
         transactionHash = findTransactionHash(parseContent(providerResult.rawText));
-        if (transactionHash) source = "provider_result";
-
+        if (transactionHash) source = "provider_transaction_locator";
         if (providerResult.rawText && isHash(chainJob.deliverable)) {
-          const bytes = new TextEncoder().encode(providerResult.rawText);
-          const { keccak256 } = await import("viem");
-          deliverableComputedHash = keccak256(bytes);
-          deliverableMatches = deliverableComputedHash.toLowerCase() === String(chainJob.deliverable).toLowerCase();
-          deliverableChecked = true;
+          const verification = await deliverableHash(providerResult.rawText, chainJob.deliverable);
+          deliverableChecked = verification.checked;
+          deliverableMatches = verification.matches;
+          deliverableComputedHash = verification.computed_hash;
         }
       }
     }
@@ -400,13 +726,14 @@ export default async function handler(req: any, res: any) {
         const candidate = findTransactionHash(content);
         if (candidate) {
           transactionHash = candidate;
-          source = "deliverable_archive";
+          source = "deliverable_transaction_locator";
         }
-        if (isHash(chainJob.deliverable) && archived.onchain_deliverable_hash) {
-          const { keccak256 } = await import("viem");
-          deliverableComputedHash = keccak256(bytes);
-          deliverableMatches = deliverableComputedHash.toLowerCase() === String(chainJob.deliverable).toLowerCase();
-          deliverableChecked = true;
+        if (isHash(chainJob.deliverable)) {
+          const rawText = new TextDecoder().decode(bytes);
+          const verification = await deliverableHash(rawText, chainJob.deliverable);
+          deliverableChecked = verification.checked;
+          deliverableMatches = verification.matches;
+          deliverableComputedHash = verification.computed_hash;
         }
       }
     }
@@ -419,9 +746,14 @@ export default async function handler(req: any, res: any) {
         network: "bsc-testnet",
         chain_id: 97,
         source: "agentmarket_execution_evidence_runtime",
-        message: "No execution transaction hash is available yet.",
+        message: "No execution transaction locator is available yet.",
         observation_mode: "awaiting_transaction_hash",
-        deliverable_verification: { checked: deliverableChecked, matches: deliverableMatches, computed_hash: deliverableComputedHash, expected_hash: chainJob.deliverable },
+        deliverable_verification: {
+          checked: deliverableChecked,
+          matches: deliverableMatches,
+          computed_hash: deliverableComputedHash,
+          expected_hash: chainJob.deliverable,
+        },
       });
     }
 
@@ -449,7 +781,7 @@ export default async function handler(req: any, res: any) {
           [],
         );
       } catch {
-        // Preserve the provider result even if the evidence write cannot be completed.
+        // Do not hide the pending-chain state if persistence fails.
       }
       return res.status(200).json({
         ok: true,
@@ -460,11 +792,36 @@ export default async function handler(req: any, res: any) {
         transaction_hash: transactionHash,
         source: source || "execution_evidence",
         observation_mode: "receipt_pending",
-        execution: { status: null, receipt_verified: false, execution_wallet: preferredWallets[0] || null, tx_from: null, tx_to: null },
-        market: { verified_onchain: false, receipt_verified: false, transfer_count: 0, token_in: capability.capabilityMarket.token_in || null, token_out: capability.capabilityMarket.token_out || null, token_in_symbol: capability.capabilityMarket.token_in_symbol || null, token_out_symbol: capability.capabilityMarket.token_out_symbol || null },
+        execution: {
+          status: null,
+          receipt_verified: false,
+          execution_wallet: preferredWallets[0] || null,
+          tx_from: null,
+          tx_to: null,
+        },
+        market: {
+          verified_onchain: false,
+          receipt_verified: false,
+          transfer_count: 0,
+          token_in: null,
+          token_out: null,
+          token_in_symbol: null,
+          token_out_symbol: null,
+          token_in_amount: null,
+          token_out_amount: null,
+          fee: null,
+          pool: null,
+        },
         accounting: null,
-        deliverable_verification: { checked: deliverableChecked, matches: deliverableMatches, computed_hash: deliverableComputedHash, expected_hash: chainJob.deliverable },
-        message: error instanceof Error ? `Transaction identified; receipt is not observable yet: ${error.message}` : "Transaction identified; receipt is not observable yet.",
+        deliverable_verification: {
+          checked: deliverableChecked,
+          matches: deliverableMatches,
+          computed_hash: deliverableComputedHash,
+          expected_hash: chainJob.deliverable,
+        },
+        message: error instanceof Error
+          ? `Transaction identified; receipt is not observable yet: ${error.message}`
+          : "Transaction identified; receipt is not observable yet.",
       });
     }
 
@@ -472,6 +829,14 @@ export default async function handler(req: any, res: any) {
     const executionWallet = selectExecutionWallet(preferredWallets, tx?.from || null, transfers);
     const receiptVerified = receipt?.status === "success";
     const executorStatus = receiptVerified ? "verified_onchain" : "failed";
+    const swap = receiptVerified ? await findSwapEvidence(receipt, executionWallet, transfers) : null;
+    const market = await marketEvidence(swap);
+    const accounting = accountingFromMarket(market);
+    const walletTransfers = executionWallet
+      ? transfers.filter((entry) => entry.from.toLowerCase() === executionWallet!.toLowerCase() || entry.to.toLowerCase() === executionWallet!.toLowerCase())
+      : [];
+    const assetAddresses = [...new Set(walletTransfers.map((entry) => entry.token.toLowerCase()))];
+    const effectVerified = receiptVerified && Boolean(market?.execution_effects_verified);
 
     await upsertEvidence(
       supabase,
@@ -488,12 +853,6 @@ export default async function handler(req: any, res: any) {
       transfers,
     );
 
-    const walletTransfers = executionWallet
-      ? transfers.filter((entry) => entry.from.toLowerCase() === executionWallet!.toLowerCase() || entry.to.toLowerCase() === executionWallet!.toLowerCase())
-      : [];
-    const assetAddresses = [...new Set(walletTransfers.map((entry) => entry.token.toLowerCase()))];
-    const effectVerified = receiptVerified && walletTransfers.length > 0;
-
     return res.status(200).json({
       ok: true,
       observed: receiptVerified,
@@ -502,7 +861,13 @@ export default async function handler(req: any, res: any) {
       chain_id: 97,
       transaction_hash: transactionHash,
       source: source || "execution_evidence",
-      observation_mode: effectVerified ? "receipt_and_transfer_activity" : receiptVerified ? "receipt_only" : "transaction_failed",
+      observation_mode: swap?.kind === "wallet-net"
+        ? "receipt_and_wallet_balance_deltas"
+        : effectVerified
+          ? "receipt_and_swap_event"
+          : receiptVerified
+            ? "receipt_only"
+            : "transaction_failed",
       execution: {
         status: receipt?.status || null,
         block_number: receipt?.blockNumber?.toString?.() || null,
@@ -516,26 +881,44 @@ export default async function handler(req: any, res: any) {
       market: {
         verified_onchain: receiptVerified,
         receipt_verified: receiptVerified,
-        token_in: capability.capabilityMarket.token_in || null,
-        token_out: capability.capabilityMarket.token_out || null,
-        token_in_symbol: capability.capabilityMarket.token_in_symbol || null,
-        token_out_symbol: capability.capabilityMarket.token_out_symbol || null,
-        token_in_amount: null,
-        token_out_amount: null,
-        fee: null,
-        pool: null,
+        ...(market || {
+          token_in: null,
+          token_out: null,
+          token_in_symbol: null,
+          token_out_symbol: null,
+          token_in_amount: null,
+          token_out_amount: null,
+          token_in_amount_raw: null,
+          token_out_amount_raw: null,
+          token_in_decimals: null,
+          token_out_decimals: null,
+          fee: null,
+          fee_raw: null,
+          pool: null,
+          swap_event_verified: false,
+          swap_event_kind: null,
+          swap_log_index: null,
+          execution_effects_verified: false,
+        }),
         transfer_count: transfers.length,
-        execution_effects_verified: effectVerified,
         assets_involved: assetAddresses,
       },
       effects: {
         transfer_count: transfers.length,
         execution_wallet_transfer_count: walletTransfers.length,
         assets_involved: assetAddresses,
-        transfers: transfers.map((entry) => ({ token: entry.token, from: entry.from, to: entry.to, value: entry.value.toString() })),
+        transfers: transfers.map((entry) => ({
+          token: entry.token,
+          from: entry.from,
+          to: entry.to,
+          value: entry.value.toString(),
+          log_index: entry.logIndex,
+        })),
       },
-      accounting: null,
-      provider: providerResultUsed ? { endpoint: providerEndpoint, result_available: true } : { endpoint: archive?.provider_endpoint || null, result_available: false },
+      accounting,
+      provider: providerResultUsed
+        ? { endpoint: providerEndpoint, result_available: true, role: "locator_only" }
+        : { endpoint: archive?.provider_endpoint || null, result_available: false, role: "locator_only" },
       deliverable_verification: {
         checked: deliverableChecked,
         matches: deliverableMatches,
@@ -547,6 +930,11 @@ export default async function handler(req: any, res: any) {
         execution_mode: capability.executionMode,
         session_key: capability.sessionKey,
         allowed_target_count: capability.allowedTargets.length,
+      },
+      verifier: {
+        source_of_truth: "bsc_testnet_receipt_and_logs",
+        agent_response_used_for_execution_facts: false,
+        transaction_locator_only: true,
       },
     });
   } catch (error) {
