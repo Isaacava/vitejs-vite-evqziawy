@@ -3,7 +3,7 @@ import "./mission-console.css";
 
 type TestnetJob = {
   id: string;
-  role: "client" | "provider";
+  role: "client";
   mission_id: string | null;
   mission_title: string;
   mission_status: string;
@@ -37,7 +37,7 @@ export default function TestnetJobHistory() {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch("/api/testnet/jobs-history", { credentials: "include", cache: "no-store" });
+      const response = await fetch("/api/testnet/jobs-history", { credentials: "include" });
       const body = await response.json();
       if (!response.ok) throw new Error(body?.error || "Unable to load Testnet job history");
       if (body.network !== "bsc-testnet" || Number(body.chain_id) !== 97) throw new Error("History endpoint returned a non-Testnet environment.");
