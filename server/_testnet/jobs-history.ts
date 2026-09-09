@@ -73,7 +73,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const results = await Promise.all(batch.map(async (id) => { try { return await publicClient.readContract({ address: COMMERCE, abi: COMMERCE_ABI, functionName: "getJob", args: [id] }); } catch { return null; } }));
       for (const job of results) if (job && job.id > 0n) chainJobs.push(job as ChainJob);
     }
-    const userChainJobs = chainJobs.filter((job) => job.client.toLowerCase() === wallet || job.provider.toLowerCase() === wallet);
+
+    // Personal dashboard history is client-owned only. Provider-side jobs belong in the provider queue,
+    // otherwise a wallet that owns an agent can see another user's mission in its own personal workspace.
+    const userChainJobs = chainJobs.filter((job) => job.client.toLowerCase() === wallet);
+
     const supabase = serverClient();
     const chainIds = userChainJobs.map((job) => Number(job.id));
     const { data: dbJobs } = await supabase.from("jobs").select("id,mission_task_id,provider_agent_id,budget,status,created_at,funded_at,submitted_at,terminal_at,updated_at,chain_job_id").not("chain_job_id", "is", null).in("chain_job_id", chainIds);
