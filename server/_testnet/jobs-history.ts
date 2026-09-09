@@ -26,6 +26,8 @@ type ChainJob = {
   hook: Address; submittedAt: bigint; deliverable: `0x${string}`;
 };
 
+type ViewerJobRole = "client" | "provider";
+
 function cleanLabel(value: unknown, fallback: string) {
   if (typeof value !== "string") return fallback;
   let text = value.trim(); if (!text) return fallback;
@@ -45,10 +47,10 @@ function cleanLabel(value: unknown, fallback: string) {
   }
   return text;
 }
-function serializeChainJob(job: ChainJob) {
+function serializeChainJob(job: ChainJob, role: ViewerJobRole) {
   const chainStatus = STATUS[Number(job.status)] || "UNKNOWN";
   return {
-    chain_job_id: Number(job.id), chain_status: chainStatus, client_wallet: job.client, provider: job.provider, evaluator: job.evaluator,
+    chain_job_id: Number(job.id), role, chain_status: chainStatus, client_wallet: job.client, provider: job.provider, evaluator: job.evaluator,
     description: cleanLabel(job.description, `Testnet mission #${Number(job.id)}`), budget_raw: job.budget.toString(), expired_at: Number(job.expiredAt),
     submitted_at: job.submittedAt > 0n ? new Date(Number(job.submittedAt) * 1000).toISOString() : null, deliverable_hash: job.deliverable,
     recoverable: !TERMINAL.has(chainStatus), verified_testnet: true, source_of_truth: "erc8183_commerce",
@@ -64,7 +66,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const wallet = String(auth.user.wallet_address).toLowerCase();
     const jobCounter = await publicClient.readContract({ address: COMMERCE, abi: COMMERCE_ABI, functionName: "jobCounter" });
     const latest = Number(jobCounter);
-    if (!Number.isFinite(latest) || latest <= 0) return res.status(200).json({ ok: true, network: "bsc-testnet", chain_id: 97, source_of_truth: "erc8183_commerce", jobs: [] });
+    if (!Number.isFinite(latest) || latest <= 0) return res.status(200).json({ ok: true, network: "bsc-testnet", chain_id: 97, source_of_truth: "erc8183_commerce", viewer_role: "client", jobs: [] });
     const start = Math.max(1, latest - MAX_SCAN + 1);
     const ids = Array.from({ length: latest - start + 1 }, (_, index) => BigInt(start + index));
     const chainJobs: ChainJob[] = [];
@@ -74,8 +76,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       for (const job of results) if (job && job.id > 0n) chainJobs.push(job as ChainJob);
     }
 
-    // Personal dashboard history is client-owned only. Provider-side jobs belong in the provider queue,
-    // otherwise a wallet that owns an agent can see another user's mission in its own personal workspace.
+    // This endpoint is the authenticated user's personal mission history.
+    // A wallet may also own an agent, making it the provider of someone else's jobs.
+    // Provider-side jobs are deliberately excluded here so they cannot be rendered as the user's missions.
     const userChainJobs = chainJobs.filter((job) => job.client.toLowerCase() === wallet);
 
     const supabase = serverClient();
@@ -93,7 +96,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const agentById = new Map((providerAgents ?? []).map((agent) => [agent.id, agent]));
     const agentByOwner = new Map((providerAgents ?? []).filter((agent) => typeof agent.owner === "string").map((agent) => [String(agent.owner).toLowerCase(), agent]));
     const jobs = userChainJobs.sort((a, b) => Number(b.id - a.id)).map((chainJob) => {
-      const chain = serializeChainJob(chainJob); const db = jobByChainId.get(Number(chainJob.id)); const task = db ? taskById.get(db.mission_task_id) : undefined; const mission = task ? missionById.get(task.mission_id) : undefined;
+      const chain = serializeChainJob(chainJob, "client"); const db = jobByChainId.get(Number(chainJob.id)); const task = db ? taskById.get(db.mission_task_id) : undefined; const mission = task ? missionById.get(task.mission_id) : undefined;
       const providerAgent = db?.provider_agent_id ? agentById.get(db.provider_agent_id) : agentByOwner.get(chainJob.provider.toLowerCase());
       const submitted = ["SUBMITTED", "COMPLETED", "REJECTED"].includes(chain.chain_status);
       const missionTitle = cleanLabel(mission?.title, chain.description); const taskTitle = cleanLabel(task?.title, missionTitle);
@@ -105,7 +108,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       };
     });
     const counts = jobs.reduce((acc, job) => { if (job.chain_status === "COMPLETED" || job.chain_status === "REJECTED" || job.chain_status === "EXPIRED") acc.terminal += 1; else if (job.chain_status === "SUBMITTED") acc.submitted += 1; else acc.active += 1; return acc; }, { active: 0, submitted: 0, terminal: 0 });
-    return res.status(200).json({ ok: true, network: "bsc-testnet", chain_id: 97, source_of_truth: "erc8183_commerce", scanned_range: { from: start, to: latest }, counts, jobs });
+    return res.status(200).json({ ok: true, network: "bsc-testnet", chain_id: 97, source_of_truth: "erc8183_commerce", viewer_role: "client", scanned_range: { from: start, to: latest }, counts, jobs });
   } catch (error) {
     console.error("Testnet chain-first job history failed", error);
     return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to load Testnet chain job history", source_of_truth: "erc8183_commerce" });
