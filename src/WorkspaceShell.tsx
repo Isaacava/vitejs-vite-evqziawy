@@ -1,36 +1,23 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { getConnectedWalletAddress, getCurrentUser, signOut } from "./lib/walletAuth";
 
 type WorkspacePage = "Overview" | "Discover" | "Missions" | "Activity" | "Payments" | "Wallet" | "Create mission" | "Execution Wallet" | "Testnet" | "Register agent" | "Permissions";
 
 const primaryLinks: Array<{ label: Exclude<WorkspacePage, "Wallet" | "Create mission" | "Execution Wallet" | "Testnet" | "Register agent" | "Permissions">; href: string }> = [
-  { label: "Overview", href: "/dashboard" },
-  { label: "Discover", href: "/discover" },
-  { label: "Missions", href: "/missions" },
-  { label: "Activity", href: "/activity" },
-  { label: "Payments", href: "/payments" },
+  { label: "Overview", href: "/dashboard" }, { label: "Discover", href: "/discover" }, { label: "Missions", href: "/missions" }, { label: "Activity", href: "/activity" }, { label: "Payments", href: "/payments" },
 ];
-
 const manageLinks: Array<{ label: Exclude<WorkspacePage, "Overview" | "Discover" | "Missions" | "Activity" | "Payments">; href: string; detail: string; icon: string }> = [
   { label: "Execution Wallet", href: "/execution-wallet", detail: "Choose how agents are allowed to act", icon: "◉" },
   { label: "Testnet", href: "/testnet", detail: "Safe BNB test environment", icon: "◎" },
   { label: "Register agent", href: "/agents/register", detail: "List an agent in the marketplace", icon: "+" },
   { label: "Permissions", href: "/permissions", detail: "Review and limit agent access", icon: "◈" },
 ];
-
 const compact = (value?: string | null) => (value ? `${value.slice(0, 6)}…${value.slice(-4)}` : "Wallet not connected");
-
 function currentPage(): WorkspacePage {
   const path = window.location.pathname;
-  if (path === "/discover") return "Discover";
-  if (path === "/app") return "Create mission";
-  if (path === "/missions" || path === "/mission" || path === "/missions/history") return "Missions";
-  if (path === "/activity") return "Activity";
-  if (path === "/payments") return "Payments";
-  if (path === "/execution-wallet") return "Wallet";
-  if (path === "/agents/register") return "Register agent";
-  if (path === "/permissions") return "Permissions";
-  if (path.startsWith("/testnet")) return "Testnet";
-  return "Overview";
+  if (path === "/discover") return "Discover"; if (path === "/app") return "Create mission";
+  if (path === "/missions" || path === "/mission" || path === "/missions/history") return "Missions"; if (path === "/activity") return "Activity"; if (path === "/payments") return "Payments";
+  if (path === "/execution-wallet") return "Wallet"; if (path === "/agents/register") return "Register agent"; if (path === "/permissions") return "Permissions"; if (path.startsWith("/testnet")) return "Testnet"; return "Overview";
 }
 
 export default function WorkspaceShell({ children }: { children: ReactNode }) {
@@ -39,104 +26,71 @@ export default function WorkspaceShell({ children }: { children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [wallet, setWallet] = useState("");
   const [scrolled, setScrolled] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
 
   useEffect(() => {
     const pop = () => setPage(currentPage());
     const close = () => setManageOpen(false);
     const onScroll = () => setScrolled(window.scrollY > 8);
-
+    const onWalletChanged = () => {
+      setAuthReady(false);
+      setWallet("");
+      void signOut().finally(() => window.location.assign("/"));
+    };
     window.addEventListener("popstate", pop);
     window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("agentmarket:wallet-changed", onWalletChanged);
     document.addEventListener("click", close);
     onScroll();
 
-    void fetch("/api/auth/me", { credentials: "include" })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((body) => setWallet(body?.user?.wallet_address || ""))
-      .catch(() => undefined);
+    void (async () => {
+      try {
+        const [connectedWallet, currentUser] = await Promise.all([getConnectedWalletAddress(), getCurrentUser()]);
+        if (!connectedWallet || !currentUser || connectedWallet.toLowerCase() !== currentUser.wallet_address.toLowerCase()) {
+          await signOut();
+          window.location.assign("/");
+          return;
+        }
+        setWallet(currentUser.wallet_address);
+        setAuthReady(true);
+      } catch {
+        await signOut();
+        window.location.assign("/");
+      }
+    })();
 
     return () => {
       window.removeEventListener("popstate", pop);
       window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("agentmarket:wallet-changed", onWalletChanged);
       document.removeEventListener("click", close);
     };
   }, []);
 
   const navigate = (href: string, next?: WorkspacePage) => {
-    setPage(next || currentPage());
-    setManageOpen(false);
-    setMobileOpen(false);
-    window.location.assign(href);
+    setPage(next || currentPage()); setManageOpen(false); setMobileOpen(false); window.location.assign(href);
   };
+
+  if (!authReady) {
+    return <div className="min-h-screen bg-paper text-ink antialiased font-body"><div className="mx-auto flex min-h-screen max-w-[1240px] items-center justify-center px-6"><span className="font-mono text-[10px] uppercase tracking-widest text-inksoft">Verifying wallet session…</span></div></div>;
+  }
 
   return (
     <div className="min-h-screen bg-paper text-ink antialiased font-body">
       <header className={`topbar sticky top-0 z-50 border-b border-line bg-paper/95 backdrop-blur transition-shadow duration-200 ${scrolled ? "shadow-[0_8px_24px_rgba(23,23,20,.05)]" : ""}`}>
         <div className="mx-auto flex h-[72px] max-w-[1240px] items-center justify-between gap-6 px-6 md:px-8">
-          <a href="/dashboard" className="flex shrink-0 items-center gap-2.5 no-underline" aria-label="AgentMarket home">
-            <span className="h-7 w-7 text-brass">
-              <svg viewBox="0 0 28 28" fill="none" aria-hidden="true"><rect x="1.5" y="1.5" width="25" height="25" rx="7" stroke="currentColor" strokeWidth="1.5"/><path d="M7 18L11.4 10.2L15.2 15L20.8 7.7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
-            </span>
-            <span className="font-display text-[16px] font-bold tracking-tight">AgentMarket</span>
-          </a>
-
+          <a href="/dashboard" className="flex shrink-0 items-center gap-2.5 no-underline" aria-label="AgentMarket home"><span className="h-7 w-7 text-brass"><svg viewBox="0 0 28 28" fill="none" aria-hidden="true"><rect x="1.5" y="1.5" width="25" height="25" rx="7" stroke="currentColor" strokeWidth="1.5"/><path d="M7 18L11.4 10.2L15.2 15L20.8 7.7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg></span><span className="font-display text-[16px] font-bold tracking-tight">AgentMarket</span></a>
           <nav className="hidden items-center gap-7 font-mono text-[11px] font-medium uppercase tracking-wide text-inksoft lg:flex" aria-label="Primary">
-            {primaryLinks.map((link) => (
-              <button key={link.label} type="button" onClick={() => navigate(link.href, link.label)} className={`nav-link relative pb-1 transition-colors ${page === link.label ? "text-ink current" : "hover:text-ink"}`}>
-                {link.label}
-              </button>
-            ))}
-            <div className="relative">
-              <button type="button" onClick={(event) => { event.stopPropagation(); setManageOpen((value) => !value); }} className={`nav-link relative flex items-center gap-1.5 pb-1 transition-colors ${manageOpen ? "text-ink current" : "hover:text-ink"}`} aria-expanded={manageOpen}>
-                Manage
-                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-              </button>
-              <div className={`dropdown-panel absolute left-0 top-[calc(100%+14px)] w-72 card-asym border border-line bg-paperhi p-2 shadow-[0_20px_50px_-24px_rgba(23,23,20,.35)] transition-all ${manageOpen ? "pointer-events-auto translate-y-0 scale-100 opacity-100" : "pointer-events-none -translate-y-1.5 scale-[.98] opacity-0"}`}>
-                {manageLinks.map((link) => (
-                  <button key={link.label} type="button" onClick={() => navigate(link.href, link.label)} className="flex w-full items-start gap-3 rounded-lg p-3 text-left hover:bg-paper">
-                    <span className="mt-0.5 text-brass">{link.icon}</span>
-                    <span>
-                      <span className="block text-[13px] font-semibold normal-case text-ink">{link.label}</span>
-                      <span className="block text-[11px] text-inksoft normal-case">{link.detail}</span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
+            {primaryLinks.map((link) => <button key={link.label} type="button" onClick={() => navigate(link.href, link.label)} className={`nav-link relative pb-1 transition-colors ${page === link.label ? "text-ink current" : "hover:text-ink"}`}>{link.label}</button>)}
+            <div className="relative"><button type="button" onClick={(event) => { event.stopPropagation(); setManageOpen((value) => !value); }} className={`nav-link relative flex items-center gap-1.5 pb-1 transition-colors ${manageOpen ? "text-ink current" : "hover:text-ink"}`} aria-expanded={manageOpen}>Manage<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button><div className={`dropdown-panel absolute left-0 top-[calc(100%+14px)] w-72 card-asym border border-line bg-paperhi p-2 shadow-[0_20px_50px_-24px_rgba(23,23,20,.35)] transition-all ${manageOpen ? "pointer-events-auto translate-y-0 scale-100 opacity-100" : "pointer-events-none -translate-y-1.5 scale-[.98] opacity-0"}`}>{manageLinks.map((link) => <button key={link.label} type="button" onClick={() => navigate(link.href, link.label)} className="flex w-full items-start gap-3 rounded-lg p-3 text-left hover:bg-paper"><span className="mt-0.5 text-brass">{link.icon}</span><span><span className="block text-[13px] font-semibold normal-case text-ink">{link.label}</span><span className="block text-[11px] text-inksoft normal-case">{link.detail}</span></span></button>)}</div></div>
           </nav>
-
-          <div className="hidden shrink-0 items-center gap-3 md:flex">
-            <span className="env-badge"><span className="am-dot-brass" /> BNB TESTNET</span>
-            <button type="button" onClick={() => navigate("/execution-wallet", "Wallet")} className="btn-asym max-w-[150px] truncate bg-ink px-3 py-2 font-mono text-[11px] font-semibold text-paperhi hover:bg-black" title={wallet || "Wallet not connected"}>
-              {compact(wallet)}
-            </button>
-            <button type="button" onClick={() => navigate("/app", "Create mission")} className="btn-asym flex items-center gap-2 bg-ink px-4 py-2.5 font-display text-[11px] font-bold text-paperhi hover:bg-black">
-              Create mission <span className="text-brasslt">+</span>
-            </button>
-          </div>
-
-          <button type="button" className="flex h-9 w-9 items-center justify-center border border-line bg-paperhi btn-asym lg:hidden" onClick={() => setMobileOpen((value) => !value)} aria-expanded={mobileOpen} aria-label="Open workspace navigation">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
-          </button>
+          <div className="hidden shrink-0 items-center gap-3 md:flex"><span className="env-badge"><span className="am-dot-brass" /> BNB TESTNET</span><button type="button" onClick={() => navigate("/execution-wallet", "Wallet")} className="btn-asym max-w-[150px] truncate bg-ink px-3 py-2 font-mono text-[11px] font-semibold text-paperhi hover:bg-black" title={wallet || "Wallet not connected"}>{compact(wallet)}</button><button type="button" onClick={() => navigate("/app", "Create mission")} className="btn-asym flex items-center gap-2 bg-ink px-4 py-2.5 font-display text-[11px] font-bold text-paperhi hover:bg-black">Create mission <span className="text-brasslt">+</span></button></div>
+          <button type="button" className="flex h-9 w-9 items-center justify-center border border-line bg-paperhi btn-asym lg:hidden" onClick={() => setMobileOpen((value) => !value)} aria-expanded={mobileOpen} aria-label="Open workspace navigation"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
         </div>
-
-        <div className={`mobile-menu border-t border-linesoft bg-paperhi px-6 py-5 lg:hidden ${mobileOpen ? "open" : "pointer-events-none hidden"}`}>
-          <div className="grid gap-1 font-mono text-[11px] uppercase tracking-wide">
-            {primaryLinks.map((link) => <button key={link.label} type="button" className="border-b border-linesoft py-2.5 text-left" onClick={() => navigate(link.href, link.label)}>{link.label}</button>)}
-            {manageLinks.map((link) => <button key={link.label} type="button" className="border-b border-linesoft py-2.5 text-left" onClick={() => navigate(link.href, link.label)}>{link.label}</button>)}
-            <button type="button" className="mt-2 bg-ink px-4 py-3 text-left font-display text-[11px] font-bold text-paperhi btn-asym" onClick={() => navigate("/app", "Create mission")}>Create mission <span className="text-brasslt">+</span></button>
-          </div>
-        </div>
+        <div className={`mobile-menu border-t border-linesoft bg-paperhi px-6 py-5 lg:hidden ${mobileOpen ? "open" : "pointer-events-none hidden"}`}><div className="grid gap-1 font-mono text-[11px] uppercase tracking-wide">{primaryLinks.map((link) => <button key={link.label} type="button" className="border-b border-linesoft py-2.5 text-left" onClick={() => navigate(link.href, link.label)}>{link.label}</button>)}{manageLinks.map((link) => <button key={link.label} type="button" className="border-b border-linesoft py-2.5 text-left" onClick={() => navigate(link.href, link.label)}>{link.label}</button>)}<button type="button" className="mt-2 bg-ink px-4 py-3 text-left font-display text-[11px] font-bold text-paperhi btn-asym" onClick={() => navigate("/app", "Create mission")}>Create mission <span className="text-brasslt">+</span></button></div></div>
       </header>
-
-      <div className="border-b border-line bg-paper">
-        <div className="mx-auto flex max-w-[1240px] items-center justify-between gap-4 px-6 py-3 md:px-8">
-          <span className="font-mono text-[9.5px] uppercase tracking-widest text-inksoft">Workspace / <b className="text-brass">{page}</b></span>
-          <span className="hidden font-mono text-[9.5px] uppercase tracking-widest text-inksoft sm:inline">BNB Testnet · Safe sandbox · test funds only</span>
-        </div>
-      </div>
+      <div className="border-b border-line bg-paper"><div className="mx-auto flex max-w-[1240px] items-center justify-between gap-4 px-6 py-3 md:px-8"><span className="font-mono text-[9.5px] uppercase tracking-widest text-inksoft">Workspace / <b className="text-brass">{page}</b></span><span className="hidden font-mono text-[9.5px] uppercase tracking-widest text-inksoft sm:inline">BNB Testnet · Safe sandbox · test funds only</span></div></div>
       <main className="min-h-[calc(100vh-108px)]">{children}</main>
     </div>
   );
 }
-
