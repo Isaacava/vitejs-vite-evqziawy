@@ -243,6 +243,22 @@ export async function createAltanaWallet(options: { replaceAfterRecoveryFailure?
   const result = await client.createPasskeyWallet({ name: RP_NAME, rpId: readiness.rpId });
   const resolved = normalizeResolution({ address: result.address, signer: result.signer });
   const funding = await fundAltanaWalletFromAgentMarketWallet(resolved.walletAddress);
+
+  // Onboarding must finish the newly created Altana wallet's first execute before
+  // persisting it as usable. Altana's SDK performs the initial KeyStore admin-key
+  // registration on the wallet's first execute; without that transaction the wallet
+  // can be funded and saved successfully but later passkey recovery finds no keys.
+  // This branch is intentionally scoped to the onboarding route so the existing
+  // Execution Wallet / mission-console creation flow remains unchanged.
+  if (window.location.pathname === '/onboarding') {
+    await client.execute({
+      wallet: resolved.wallet,
+      signer: resolved.signer,
+      chainId,
+      calls: [{ to: funding.senderAddress, data: '0x', value: 0n }],
+    });
+  }
+
   await persistAltanaWalletResolution(resolved, { replaceExisting: Boolean(existing) });
   cachedResolution = resolved;
   return { ...resolved, funding };
