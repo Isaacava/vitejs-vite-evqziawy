@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { parseMarketplaceIntent } from "../lib/intent.js";
-import { getAuthenticatedUser, serverClient } from "./authHandlers.js";
+import { getAuthenticatedUser, serverClient, setPrivateNoStore } from "./authHandlers.js";
 
 const TERMINAL = ["completed", "rejected", "cancelled", "expired", "terminal"];
 const ACTIVE = ["planning", "open", "funded", "accepted", "in_progress", "awaiting_review"];
@@ -8,6 +8,7 @@ const REVIEW = ["submitted", "awaiting_review"];
 const ESCROW = ["pending", "funded", "escrowed", "locked"];
 
 export async function dashboard(req: VercelRequest, res: VercelResponse) {
+  setPrivateNoStore(res);
   if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
   const auth = await getAuthenticatedUser(req);
   if (!auth) return res.status(401).json({ error: "Authentication required" });
@@ -24,7 +25,6 @@ export async function dashboard(req: VercelRequest, res: VercelResponse) {
     if (activityResult.error) throw new Error(activityResult.error.message);
     if (paymentsResult.error) throw new Error(paymentsResult.error.message);
     if (notificationsResult.error) throw new Error(notificationsResult.error.message);
-
     const missions = missionsResult.data || [];
     const missionIds = missions.map((m: any) => m.id);
     let taskRows: any[] = [];
@@ -59,7 +59,6 @@ export async function dashboard(req: VercelRequest, res: VercelResponse) {
     const recordedEscrow = (paymentsResult.data || []).filter((p: any) => ESCROW.includes(String(p.status).toLowerCase())).reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
     const fundedJobs = jobRows.filter((j: any) => ["funded", "accepted", "in_progress", "submitted"].includes(String(j.status)) || ["funded", "accepted", "in_progress", "submitted"].includes(String(j.chain_status))).reduce((sum: number, j: any) => sum + Number(j.budget || 0), 0);
     const escrow = recordedEscrow > 0 ? recordedEscrow : fundedJobs;
-
     return res.status(200).json({ user: auth.user, stats: { active, completed, awaitingReview, escrow }, missions: missionViews, activity: activityResult.data || [], payments: paymentsResult.data || [], notifications: notificationsResult.data || [] });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : "Unable to load dashboard" });
