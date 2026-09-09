@@ -5,6 +5,7 @@ import { BSC_RPC_URL } from "./network";
 type WalletProvider = EIP1193Provider & {
   disconnect?: () => Promise<void>;
   connect?: (args?: { chains?: number[] }) => Promise<void>;
+  on?: (event: string, listener: (...args: any[]) => void) => void;
   request: (args: any) => Promise<any>;
 };
 
@@ -37,6 +38,7 @@ const AUTH_API = "/api/auth";
 
 let walletConnectProvider: Eip1193Provider | null = null;
 let walletConnectInitPromise: Promise<Eip1193Provider> | null = null;
+let accountListenerBound = false;
 
 function normalizeChainId(value: unknown): number {
   const text = String(value ?? "").trim().toLowerCase();
@@ -51,6 +53,24 @@ async function chainIdOf(provider: WalletRequestProvider) {
 
 function providerConnected(provider: Eip1193Provider) {
   return Boolean((provider as Eip1193Provider & { connected?: boolean }).connected);
+}
+
+async function authRequest(action: "nonce" | "verify" | "me" | "logout", init?: RequestInit) {
+  return fetch(`${AUTH_API}?action=${action}`, { credentials: "include", ...init });
+}
+
+async function invalidateSessionAfterAccountChange() {
+  try { await authRequest("logout", { method: "POST", cache: "no-store" }); } catch { /* stale or already logged out */ }
+  window.dispatchEvent(new CustomEvent("agentmarket:wallet-changed"));
+}
+
+function bindWalletEvents(provider: Eip1193Provider) {
+  if (accountListenerBound || !provider.on) return;
+  provider.on("accountsChanged", () => { void invalidateSessionAfterAccountChange(); });
+  provider.on("chainChanged", (chainId: unknown) => {
+    if (normalizeChainId(chainId) !== AUTH_CHAIN_ID) window.dispatchEvent(new CustomEvent("agentmarket:chain-changed"));
+  });
+  accountListenerBound = true;
 }
 
 async function getWalletConnectProvider() {
@@ -74,6 +94,7 @@ async function getWalletConnectProvider() {
     }).then((provider) => provider as unknown as Eip1193Provider);
   }
   walletConnectProvider = await walletConnectInitPromise;
+  bindWalletEvents(walletConnectProvider);
   return walletConnectProvider;
 }
 
@@ -82,25 +103,13 @@ export async function ensureExpectedChain(provider: WalletRequestProvider) {
   if (current === AUTH_CHAIN_ID) return;
 
   try {
-    await provider.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: AUTH_CHAIN_ID_HEX }],
-    });
+    await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: AUTH_CHAIN_ID_HEX }] });
   } catch (error) {
-    const code = typeof error === "object" && error && "code" in error
-      ? Number((error as { code?: unknown }).code)
-      : 0;
-
+    const code = typeof error === "object" && error && "code" in error ? Number((error as { code?: unknown }).code) : 0;
     if (code !== 4902) {
-      throw new Error(
-        `Wallet is on chain ${current || "unknown"}. AgentMarket Testnet requires BSC Testnet (chain 97). Approve the network switch in your wallet.`,
-      );
+      throw new Error(`Wallet is on chain ${current || "unknown"}. AgentMarket Testnet requires BSC Testnet (chain 97). Approve the network switch in your wallet.`);
     }
-
-    await provider.request({
-      method: "wallet_addEthereumChain",
-      params: [TESTNET_CHAIN_CONFIG],
-    });
+    await provider.request({ method: "wallet_addEthereumChain", params: [TESTNET_CHAIN_CONFIG] });
   }
 
   if (await chainIdOf(provider) !== AUTH_CHAIN_ID) {
@@ -110,29 +119,31 @@ export async function ensureExpectedChain(provider: WalletRequestProvider) {
 
 export async function connectWallet() {
   let provider = await getWalletConnectProvider();
-
   try {
-    if (!providerConnected(provider) && provider.connect) {
-      await provider.connect({ chains: [AUTH_CHAIN_ID] });
-    }
+    if (!providerConnected(provider) && provider.connect) await provider.connect({ chains: [AUTH_CHAIN_ID] });
     await ensureExpectedChain(provider);
   } catch (error) {
     try { await provider.disconnect?.(); } catch { /* stale WalletConnect session */ }
     walletConnectProvider = null;
     walletConnectInitPromise = null;
+    accountListenerBound = false;
     provider = await getWalletConnectProvider();
-    if (provider.connect) {
-      await provider.connect({ chains: [AUTH_CHAIN_ID] });
-    }
+    if (provider.connect) await provider.connect({ chains: [AUTH_CHAIN_ID] });
     await ensureExpectedChain(provider);
   }
 
   const accounts = (await provider.request({ method: "eth_accounts" })) as string[];
   const wallet = accounts?.[0];
   if (!wallet) throw new Error("No WalletConnect account was selected.");
-
+  bindWalletEvents(provider);
   walletConnectProvider = provider;
   return { provider, address: wallet };
+}
+
+export async function getConnectedWalletAddress() {
+  const provider = await getWalletConnectProvider();
+  const accounts = (await provider.request({ method: "eth_accounts" })) as string[];
+  return accounts?.[0] || null;
 }
 
 export async function ensureWalletConnectedProvider() {
@@ -145,18 +156,12 @@ export async function getWalletProvider() {
 }
 
 export function getConnectedWalletProvider() {
-  if (!walletConnectProvider) {
-    throw new Error("WalletConnect session is not initialized. Connect your AgentMarket wallet first.");
-  }
+  if (!walletConnectProvider) throw new Error("WalletConnect session is not initialized. Connect your AgentMarket wallet first.");
   return walletConnectProvider;
 }
 
 export function getWalletProviderOrThrow() {
   return getConnectedWalletProvider();
-}
-
-async function authRequest(action: "nonce" | "verify" | "me" | "logout", init?: RequestInit) {
-  return fetch(`${AUTH_API}?action=${action}`, { credentials: "include", ...init });
 }
 
 export async function connectWalletAndSignIn() {
@@ -179,24 +184,29 @@ export async function connectWalletAndSignIn() {
   });
   const verified = await verifyResponse.json();
   if (!verifyResponse.ok) throw new Error(verified?.error || "Testnet wallet signature verification failed");
-
   return verified.user as AuthUser;
 }
 
 export async function getCurrentUser() {
-  const response = await authRequest("me");
+  const wallet = await getConnectedWalletAddress();
+  if (!wallet) return null;
+  const response = await authRequest("me", {
+    headers: { "X-AgentMarket-Wallet": wallet },
+    cache: "no-store",
+  });
   if (!response.ok) return null;
   const data = (await response.json()) as { authenticated: boolean; user?: AuthUser };
   return data.authenticated ? data.user || null : null;
 }
 
 export async function signOut() {
-  try { await authRequest("logout", { method: "POST" }); }
+  try { await authRequest("logout", { method: "POST", cache: "no-store" }); }
   finally {
     const activeWalletConnectProvider = walletConnectProvider;
     try { await activeWalletConnectProvider?.disconnect?.(); } catch { /* stale session */ }
     walletConnectProvider = null;
     walletConnectInitPromise = null;
+    accountListenerBound = false;
   }
 }
 
@@ -204,5 +214,6 @@ export async function resetWalletConnectSession() {
   try { await walletConnectProvider?.disconnect?.(); } catch { /* stale session */ }
   walletConnectProvider = null;
   walletConnectInitPromise = null;
+  accountListenerBound = false;
   return getWalletConnectProvider();
 }
