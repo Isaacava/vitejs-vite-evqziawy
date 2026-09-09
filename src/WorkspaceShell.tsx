@@ -45,14 +45,25 @@ export default function WorkspaceShell({ children }: { children: ReactNode }) {
 
     void (async () => {
       try {
-        const [connectedWallet, currentUser] = await Promise.all([getConnectedWalletAddress(), getCurrentUser()]);
-        if (!connectedWallet || !currentUser || connectedWallet.toLowerCase() !== currentUser.wallet_address.toLowerCase()) {
+        const currentUser = await getCurrentUser();
+        if (!currentUser) {
           await signOut();
           window.location.assign("/");
           return;
         }
+
         setWallet(currentUser.wallet_address);
         setAuthReady(true);
+
+        try {
+          const connectedWallet = await getConnectedWalletAddress();
+          if (connectedWallet && connectedWallet.toLowerCase() !== currentUser.wallet_address.toLowerCase()) {
+            await signOut();
+            window.location.assign("/");
+          }
+        } catch {
+          // WalletConnect restoration is best-effort after a valid server session.
+        }
       } catch {
         await signOut();
         window.location.assign("/");
