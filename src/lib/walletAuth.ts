@@ -26,7 +26,7 @@ export type AuthUser = {
 export const WALLETCONNECT_PROJECT_ID = "1dbe8fd5e4974ae7c80d074c4082b5a0";
 export const AUTH_CHAIN_ID = 97;
 const AUTH_CHAIN_ID_HEX = `0x${AUTH_CHAIN_ID.toString(16)}`;
-const STORAGE = "agentmarket-testnet-wc-v8";
+const STORAGE = "agentmarket-testnet-wc-v9";
 const TESTNET_CHAIN_CONFIG = {
   chainId: AUTH_CHAIN_ID_HEX,
   chainName: "BNB Smart Chain Testnet",
@@ -101,20 +101,14 @@ async function getWalletConnectProvider() {
 export async function ensureExpectedChain(provider: WalletRequestProvider) {
   const current = await chainIdOf(provider);
   if (current === AUTH_CHAIN_ID) return;
-
   try {
     await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: AUTH_CHAIN_ID_HEX }] });
   } catch (error) {
     const code = typeof error === "object" && error && "code" in error ? Number((error as { code?: unknown }).code) : 0;
-    if (code !== 4902) {
-      throw new Error(`Wallet is on chain ${current || "unknown"}. AgentMarket Testnet requires BSC Testnet (chain 97). Approve the network switch in your wallet.`);
-    }
+    if (code !== 4902) throw new Error(`Wallet is on chain ${current || "unknown"}. AgentMarket Testnet requires BSC Testnet (chain 97). Approve the network switch in your wallet.`);
     await provider.request({ method: "wallet_addEthereumChain", params: [TESTNET_CHAIN_CONFIG] });
   }
-
-  if (await chainIdOf(provider) !== AUTH_CHAIN_ID) {
-    throw new Error("Wallet did not switch to BSC Testnet (chain 97). Please approve the Testnet network and try again.");
-  }
+  if (await chainIdOf(provider) !== AUTH_CHAIN_ID) throw new Error("Wallet did not switch to BSC Testnet (chain 97). Please approve the Testnet network and try again.");
 }
 
 export async function connectWallet() {
@@ -131,7 +125,6 @@ export async function connectWallet() {
     if (provider.connect) await provider.connect({ chains: [AUTH_CHAIN_ID] });
     await ensureExpectedChain(provider);
   }
-
   const accounts = (await provider.request({ method: "eth_accounts" })) as string[];
   const wallet = accounts?.[0];
   if (!wallet) throw new Error("No WalletConnect account was selected.");
@@ -146,9 +139,7 @@ export async function getConnectedWalletAddress() {
   return accounts?.[0] || null;
 }
 
-export async function ensureWalletConnectedProvider() {
-  return connectWallet();
-}
+export async function ensureWalletConnectedProvider() { return connectWallet(); }
 
 export async function getWalletProvider() {
   const { provider } = await ensureWalletConnectedProvider();
@@ -160,13 +151,10 @@ export function getConnectedWalletProvider() {
   return walletConnectProvider;
 }
 
-export function getWalletProviderOrThrow() {
-  return getConnectedWalletProvider();
-}
+export function getWalletProviderOrThrow() { return getConnectedWalletProvider(); }
 
 export async function connectWalletAndSignIn() {
   const { provider, address: wallet } = await connectWallet();
-
   const challengeResponse = await authRequest("nonce", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -174,9 +162,7 @@ export async function connectWalletAndSignIn() {
   });
   const challenge = await challengeResponse.json();
   if (!challengeResponse.ok) throw new Error(challenge?.error || "Unable to start Testnet wallet sign-in");
-
   const signature = await provider.request({ method: "personal_sign", params: [challenge.message, wallet] });
-
   const verifyResponse = await authRequest("verify", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -188,12 +174,7 @@ export async function connectWalletAndSignIn() {
 }
 
 export async function getCurrentUser() {
-  const wallet = await getConnectedWalletAddress();
-  if (!wallet) return null;
-  const response = await authRequest("me", {
-    headers: { "X-AgentMarket-Wallet": wallet },
-    cache: "no-store",
-  });
+  const response = await authRequest("me", { cache: "no-store" });
   if (!response.ok) return null;
   const data = (await response.json()) as { authenticated: boolean; user?: AuthUser };
   return data.authenticated ? data.user || null : null;
