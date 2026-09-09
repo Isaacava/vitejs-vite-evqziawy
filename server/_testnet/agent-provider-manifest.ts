@@ -9,7 +9,7 @@ export type AgentProviderOperation = {
   inputSchema?: JsonObject | null;
   outputSchema?: JsonObject | null;
   authentication?: JsonObject | null;
-  async?: boolean | string;
+  async?: unknown;
   metadata: JsonObject;
 };
 
@@ -90,7 +90,7 @@ function normalizeOperation(value: unknown, manifestUrl: string): AgentProviderO
     inputSchema: Object.keys(object(raw.input_schema ?? raw.inputSchema)).length ? object(raw.input_schema ?? raw.inputSchema) : null,
     outputSchema: Object.keys(object(raw.output_schema ?? raw.outputSchema)).length ? object(raw.output_schema ?? raw.outputSchema) : null,
     authentication: Object.keys(object(raw.authentication ?? raw.auth)).length ? object(raw.authentication ?? raw.auth) : null,
-    async: raw.async === true ? true : raw.async === false ? false : undefined,
+    async: raw.async === true ? true : raw.async === false ? false : raw.async,
     metadata: object(raw.metadata),
   };
 }
