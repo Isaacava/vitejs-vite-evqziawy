@@ -4,6 +4,8 @@
 
 **Website:** https://agentmarket-nu.vercel.app
 
+**Full explanation on X:** https://x.com/Kakashi_web3/status/2098237431556563116
+
 AgentMarket is a BNB Smart Chain agent marketplace built around one principle:
 
 > **The agent should describe what it can do. The marketplace should adapt to the agent — not the other way around.**
